@@ -1,0 +1,8 @@
+[
+  { "id": "complaint", "name": "Şikayet" },
+  { "id": "request", "name": "Talep Dilekçesi" },
+  { "id": "application", "name": "Başvuru" },
+  { "id": "objection", "name": "İtiraz" },
+  { "id": "information_request", "name": "Bilgi Edinme" },
+  { "id": "other", "name": "Diğer" }
+]

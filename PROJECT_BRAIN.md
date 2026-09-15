@@ -207,6 +207,8 @@ Kabul edilmeyen dosyalar (desteklenmeyen tür, 50 MB üstü) için satır oluşt
 
 **`POST /api/documents/classify`** — girdi: `multipart/form-data` içinde en fazla 50 MB boyutunda tek bir PDF veya DOCX dosyası.
 
+Ayrıca iş mantığı içermeyen operasyonel **`GET /health`** → `{"status": "ok"}`.
+
 Başarılı yanıt en az şu alanları içerir:
 
 ```json
@@ -276,12 +278,12 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
-- Tek endpoint: `POST /api/documents/classify`
+- Tek iş endpoint'i: `POST /api/documents/classify` (ayrıca operasyonel `GET /health`)
 - Basit React + Vite yükleme ve sonuç ekranı
 
 ## 12. Açıkça kapsam dışı
 
-OCR · `.doc` ve PDF/DOCX dışındaki dosya türleri · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · ek endpoint'ler · ek tablolar · kuyruk / arka plan işleri
+OCR · `.doc` ve PDF/DOCX dışındaki dosya türleri · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · ek iş endpoint'leri · ek tablolar · kuyruk / arka plan işleri
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 

@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** MVP mimarisi ve kararları tamamlandı; henüz uygulama kodu yok. Aşağıdaki akış ve API **planlanan** davranışı anlatır.
+> **Durum:** Backend iskeleti hazır (yalnızca `GET /health`); sınıflandırma akışı henüz uygulanmadı. Aşağıdaki akış ve classify API'si **planlanan** davranışı anlatır.
 
 ## MVP Akışı
 
@@ -56,7 +56,9 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 ## API
 
-> Endpoint henüz **implementasyon aşamasındadır**; aşağıdakiler planlanan sözleşmedir.
+Şu anda çalışan tek endpoint: **`GET /health`** → `{"status": "ok"}`.
+
+> Classify endpoint'i henüz **implementasyon aşamasındadır**; aşağıdakiler planlanan sözleşmedir.
 
 **`POST /api/documents/classify`** — `multipart/form-data` içinde tek bir PDF veya DOCX dosyası.
 
@@ -74,8 +76,21 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
 ## Proje Durumu
 
 - **Tamamlandı:** MVP mimarisi ve ürün/teknik kararlar.
-- **Sıradaki aşama:** backend geliştirmesi (FastAPI iskeleti, veritabanı modeli ve Alembic migration'ları).
-- Henüz çalıştırılabilir backend veya frontend bulunmuyor.
+- **Tamamlandı:** Backend iskeleti. FastAPI uygulaması çalıştırılabiliyor, `GET /health` çalışıyor; belge türü ve kurum katalogları eklendi.
+- **Henüz yok:** veritabanı, dosya işleme (PDF/DOCX), Gemini entegrasyonu, `POST /api/documents/classify` ve frontend.
+- **Sıradaki aşama:** veritabanı (SQLAlchemy modeli ve Alembic migration'ları).
+
+### Backend'i yerelde çalıştırma
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+`.venv\Scripts\activate` Windows komutudur; macOS/Linux'ta `source .venv/bin/activate` kullanılır. Kontrol için `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür. Bu aşamada `.env` dosyası gerekmez.
 
 Ayrıntılı proje dokümantasyonu:
 

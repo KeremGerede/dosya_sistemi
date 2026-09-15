@@ -133,9 +133,9 @@
 
 ## API ve mimari
 
-### D-019 — Tek endpoint: `POST /api/documents/classify`
-- **Karar:** MVP'de yalnızca bu endpoint vardır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF veya DOCX dosyası.
-- **Gerekçe:** Tüm akışı tek çağrıda karşılar; entegrasyon yüzeyi küçük ve net kalır.
+### D-019 — Tek iş endpoint'i: `POST /api/documents/classify`, ayrıca operasyonel `GET /health`
+- **Karar:** MVP'de iş endpoint'i olarak yalnızca `POST /api/documents/classify` vardır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF veya DOCX dosyası. Buna ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
+- **Gerekçe:** Tüm akışı tek çağrıda karşılar; entegrasyon yüzeyi küçük ve net kalır. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
 
 ### D-032 — Classify yanıt alanları
 - **Karar:** Başarılı yanıt en az `document_id`, `file_name`, `file_type`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `status` alanlarını içerir. `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında dönmez.

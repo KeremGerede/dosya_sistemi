@@ -1,0 +1,47 @@
+[
+  {
+    "id": "fen_isleri",
+    "name": "Fen İşleri Müdürlüğü",
+    "description": "Yol, kaldırım, asfalt, parke taşı, merdiven ve istinat duvarı gibi altyapı ve üstyapıların yapım, bakım ve onarımı."
+  },
+  {
+    "id": "park_bahceler",
+    "name": "Park ve Bahçeler Müdürlüğü",
+    "description": "Park, yeşil alan, çocuk oyun alanı ve açık hava spor aletleri; ağaç dikimi, budama, kesimi ve peyzaj bakımı."
+  },
+  {
+    "id": "temizlik_isleri",
+    "name": "Temizlik İşleri Müdürlüğü",
+    "description": "Çöp ve atık toplama, çöp konteynerleri, sokak ve cadde süpürme/yıkama, moloz ve iri atık kaldırma."
+  },
+  {
+    "id": "zabita",
+    "name": "Zabıta Müdürlüğü",
+    "description": "İşyeri denetimi, seyyar satıcı, kaldırım ve yol işgali, gürültü ve çevre rahatsızlığı, pazar yeri düzeni, belediye kurallarına aykırılıklar."
+  },
+  {
+    "id": "imar_sehircilik",
+    "name": "İmar ve Şehircilik Müdürlüğü",
+    "description": "İmar planı ve imar durumu, yapı ruhsatı ve iskân, ruhsatsız/kaçak yapı, parselasyon ve numarataj işlemleri."
+  },
+  {
+    "id": "sosyal_hizmetler",
+    "name": "Sosyal Hizmetler Müdürlüğü",
+    "description": "İhtiyaç sahibi, yaşlı, engelli ve dezavantajlı kişilere yönelik gıda, nakdi yardım, evde bakım ve sosyal destek talepleri."
+  },
+  {
+    "id": "kultur_sosyal_isler",
+    "name": "Kültür ve Sosyal İşler Müdürlüğü",
+    "description": "Kültür-sanat etkinlikleri, konser, festival, kurs ve atölyeler; kültür merkezi ve salon kullanım talepleri."
+  },
+  {
+    "id": "mali_hizmetler",
+    "name": "Mali Hizmetler Müdürlüğü",
+    "description": "Emlak vergisi, çevre temizlik vergisi, belediye harç ve borçları; ödeme, borç sorgulama, taksitlendirme ve iade işlemleri."
+  },
+  {
+    "id": "yazi_isleri",
+    "name": "Yazı İşleri Müdürlüğü",
+    "description": "Evrak kayıt ve resmi yazışmalar; belediye meclisi ve encümen kararları, karar örneği ve resmi belge talepleri."
+  }
+]
