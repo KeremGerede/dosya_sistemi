@@ -58,10 +58,12 @@
 ### D-035 — Yapılandırma: ortam değişkenleri + `backend/.env`, ayrı config katmanı yok
 - **Karar:**
   - Yapılandırma ortam değişkenlerinden okunur. `app/settings.py` değerleri modül düzeyinde okur. `backend/.env` varsa python-dotenv ile yüklenir; ortamda zaten tanımlı değişkenler ezilmez.
-  - `DATABASE_URL` zorunludur; tanımlı değilse `app.settings` import edilirken açık bir `RuntimeError` fırlatılır. Alembic de aynı `DATABASE_URL`'i kullanır; `alembic.ini` içinde bağlantı adresi tutulmaz.
+  - Zorunlu değişkenler `settings.require_env(name)` ile okunur; tanımlı değilse açık bir `RuntimeError` fırlatılır.
+  - `DATABASE_URL`, `app.settings` import edilirken zorunludur. Alembic de aynı `DATABASE_URL`'i kullanır; `alembic.ini` içinde bağlantı adresi tutulmaz.
+  - `GEMINI_API_KEY` ve `GEMINI_MODEL`, `app/llm/gemini_client.py` yüklenirken zorunludur (D-031). `settings.py` import'unda aranmazlar; böylece Alembic ve veritabanı araçları Gemini yapılandırması gerektirmez.
   - Config sınıfı, pydantic-settings veya ek soyutlama yoktur.
   - Modül adı `settings.py`'dir; `app/config/` katalog klasörüyle isim çakışmasını önler.
-- **Gerekçe:** `.env.example` → `.env` akışıyla uyumlu en küçük çözüm. Bağlantı bilgisi tek yerden okunur. Eksik yapılandırma, sessizce yanlış bir bağlantıya düşmek yerine açık hatayla fark edilir (D-031 ile aynı yaklaşım).
+- **Gerekçe:** `.env.example` → `.env` akışıyla uyumlu en küçük çözüm. Değerler tek yerden, aynı yardımcıyla okunur. Eksik yapılandırma, sessizce yanlış bir bağlantıya veya modele düşmek yerine açık hatayla fark edilir. Her zorunlu değişken yalnızca onu kullanan modül yüklenirken istenir.
 
 ### D-036 — Geliştirme ortamı: PostgreSQL 18 Docker Compose'da, backend ve frontend yerelde
 - **Karar:**
@@ -86,7 +88,10 @@
 
 ### D-009 — Pydantic ile structured output
 - **Karar:** Model `document_type`, `institution_id`, `needs_review`, `review_reason` alanlarını Pydantic şemasına uygun döndürür.
-- **Gerekçe:** Serbest metin ayrıştırma yok; çıktı tipli ve doğrulanabilir.
+  - Temel şema `app/schemas/classification.py` içindedir ve `needs_review` tutarlılık kurallarını doğrular.
+  - İzinli `document_type` / `institution_id` değerleri çalışma zamanında katalog JSON'larından (`Literal`) üretilir; katalog ID'leri kodda ayrıca yazılmaz.
+  - Aynı model hem Gemini'ye `response_schema` olarak verilir hem de backend'de yanıtı doğrular.
+- **Gerekçe:** Serbest metin ayrıştırma yok; çıktı tipli ve doğrulanabilir. Kataloglar tek kaynak olarak kalır; şema ile doğrulama birbirinden ayrışamaz.
 
 ### D-010 — Model katalog dışına çıkamaz, belirsizlikte zorla atama yapılmaz
 - **Karar:** Model yalnızca kataloglardaki ID'lerden seçer. Makul eşleşme yoksa `institution_id = null` ve `needs_review = true`. Backend katalog dışı değerleri kabul etmez; böyle bir yanıt geçersiz çıktı sayılır ve retry edilir (D-033).
@@ -97,7 +102,7 @@
 - **Gerekçe:** Maliyet ve gecikme sınırlanır; dilekçe ve başvurularda belge türü ve konu çoğunlukla metnin başında yer alır.
 
 ### D-031 — Gemini modeli ortam değişkeninden okunur, eksikse fail fast
-- **Karar:** Model adı `GEMINI_MODEL` ortam değişkeninden okunur; `.env.example` içindeki değer `gemini-3.5-flash-lite`. Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` tanımlı değilse uygulama başlangıçta açık bir yapılandırma hatasıyla durur; sessizce varsayılan bir modele düşülmez.
+- **Karar:** Model adı `GEMINI_MODEL` ortam değişkeninden okunur; `.env.example` içindeki değer `gemini-3.5-flash-lite`. Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` (ve `GEMINI_API_KEY`) tanımlı değilse `app/llm/gemini_client.py` yüklenirken, yani uygulama başlangıcında, açık bir yapılandırma hatası verilir (D-035); sessizce varsayılan bir modele düşülmez.
 - **Gerekçe:** Sınıflandırma için hızlı ve düşük maliyetli bir model yeterli; model kod değişikliği olmadan değiştirilebilir. Eksik yapılandırma istek sırasında değil başlangıçta fark edilir ve hangi modelin kullanıldığı her zaman açıktır.
 
 ### D-033 — Gemini çağrısı: 30 sn timeout, geçici hatalarda en fazla 3 deneme
@@ -108,6 +113,8 @@
   - Bekleme: 1. başarısız denemeden sonra 1 saniye, 2. başarısız denemeden sonra 2 saniye.
   - 3 denemenin tamamı başarısızsa (hata veya hâlâ geçersiz çıktı) belge `status = failed` kaydedilir, kullanıcıya genel bir hata mesajıyla `502` döner (D-034), teknik detaylar loglanır; ham Gemini/API hata detayları gösterilmez.
   - Farklı bir Gemini modeline veya başka bir LLM'e fallback yoktur.
+  - Retry politikası yalnızca `classification_service` içinde uygulanır. google-genai SDK'nın kendi retry'ı kapalıdır (`HttpRetryOptions(attempts=1)`), automatic function calling kapalıdır. Her deneme tam bir gerçek HTTP isteğidir; toplam 3'ü aşmaz. SDK sürümü yükseltilirse bu davranış yeniden doğrulanmalıdır.
+  - Timeout SDK'ya `HttpOptions(timeout=30_000)` olarak verilir; birim milisaniyedir.
 - **Gerekçe:** Geçici ağ/servis hatalarında ve tekrar denemede düzelebilecek geçersiz model çıktısında belge gereksiz yere `failed` olmaz; kalıcı hatalarda tekrar denemek yalnızca süreyi uzatır. Timeout ve kısa beklemeler senkron isteğin en kötü durum süresini sınırlar (Gemini aşaması ~93 sn). Fallback MVP için gereksiz karmaşıklık getirir.
 
 ## Kataloglar

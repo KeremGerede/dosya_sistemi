@@ -33,7 +33,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 | Backend | Python, FastAPI |
 | PDF metin çıkarımı | PyMuPDF |
 | DOCX metin çıkarımı | python-docx |
-| LLM | Google Gemini API (structured output, Pydantic şema) |
+| LLM | Google Gemini API, `google-genai` SDK (structured output, Pydantic şema) |
 | Veri doğrulama | Pydantic |
 | ORM / DB | SQLAlchemy, PostgreSQL |
 | Migration | Alembic |
@@ -45,11 +45,11 @@ Ortam değişkenleri:
 
 | Değişken | Açıklama |
 |---|---|
-| `GEMINI_API_KEY` | Gemini API anahtarı |
+| `GEMINI_API_KEY` | **Zorunlu.** Gemini API anahtarı; yalnızca `.env`'de tutulur |
 | `GEMINI_MODEL` | **Zorunlu.** Sınıflandırma modeli; `.env.example` değeri: `gemini-3.5-flash-lite` |
 | `DATABASE_URL` | **Zorunlu.** PostgreSQL bağlantı adresi; yerel geliştirme: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi` |
 
-Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` tanımlı değilse uygulama başlangıçta açık bir yapılandırma hatasıyla durur (fail fast); sessizce bir modele düşülmez. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
+Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_KEY` veya `GEMINI_MODEL` tanımlı değilse Gemini istemcisi yüklenirken (uygulama başlangıcı) açık bir yapılandırma hatası verilir (fail fast); sessizce bir modele düşülmez. `DATABASE_URL` `settings.py` yüklenirken kontrol edilir. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
 
 ## 4. Mimari ve klasör yapısı
 
@@ -61,12 +61,12 @@ backend/
   alembic/                              # Alembic migration'ları
   app/
     main.py                             # FastAPI uygulaması, router kaydı
-    settings.py                         # ortam değişkenleri (backend/.env), DATABASE_URL zorunlu
+    settings.py                         # ortam değişkenleri (backend/.env), require_env(); DATABASE_URL zorunlu
     database.py                         # engine, session
-    api/documents.py                    # POST /api/documents/classify — akışı sırayla çağırır
+    api/documents.py                    # POST /api/documents/classify — akışı sırayla çağırır, status belirler
     services/file_service.py            # kabul kontrolü, storage'a kaydetme, PDF/DOCX metin çıkarımı
-    services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, status belirleme
-    llm/gemini_client.py                # Gemini SDK çağrısının ince sarmalayıcısı (timeout + retry dahil)
+    services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, retry politikası (D-033)
+    llm/gemini_client.py                # google-genai ince sarmalayıcısı: tek istek, 30 sn timeout, SDK retry kapalı
     schemas/classification.py           # LLM çıktı şeması + API yanıt şeması
     models/document.py                  # SQLAlchemy Document modeli
     config/document_types.json          # belge türü kataloğu
@@ -160,6 +160,7 @@ Başlangıç kurum kataloğu (kod oluşturulduktan sonra tek kaynak `institution
 - **Girdi:** Normalize edilmiş metnin en fazla ilk 50.000 karakteri + her iki katalog (id, name, description). Sınırı aşan kısım gönderilmez; chunking, RAG veya çok parçalı işleme yoktur.
 - **Tek çağrı:** Belge türü ve kurum aynı çağrıda belirlenir. Şemadaki enum değerleri kataloglardan üretilir.
 - **Timeout ve retry:** Retry aynı çağrının tekrarıdır, ek bir sınıflandırma adımı değildir.
+  - Retry politikası yalnızca `classification_service`'te uygulanır; SDK'nın kendi retry'ı kapalıdır. Toplam gerçek API isteği 3'ü aşmaz.
   - Her Gemini çağrısı için 30 sn timeout; toplam en fazla 3 deneme.
   - Retry edilir: network hataları, timeout, `429`, `5xx` ve geçersiz model çıktısı (structured output şemasına uymayan veya katalog dışı değer içeren yanıt — geçici model hatası sayılır).
   - Retry edilmez: `400`, `401`, `403` gibi kalıcı istemci/yapılandırma hataları. Belge hemen `failed` kaydedilir, `502` döner.

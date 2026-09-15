@@ -6,6 +6,13 @@ from dotenv import load_dotenv
 # backend/.env varsa yüklenir; ortamda zaten tanımlı değişkenler ezilmez.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL ortam değişkeni tanımlı değil. Örnek için backend/.env.example dosyasına bakın.")
+
+def require_env(name: str) -> str:
+    """Zorunlu ortam değişkenini döndürür; tanımlı değilse açık bir hatayla durur (fail fast)."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"{name} ortam değişkeni tanımlı değil. Örnek için backend/.env.example dosyasına bakın.")
+    return value
+
+
+DATABASE_URL = require_env("DATABASE_URL")
