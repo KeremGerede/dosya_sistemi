@@ -6,7 +6,7 @@
 
 ## Mevcut aşama
 
-**Aşama 2 — Veritabanı altyapısı tamamlandı.** PostgreSQL 18 Docker Compose ile çalışıyor. `documents` tablosunu oluşturan Alembic migration'ı gerçek veritabanında uygulandı; SQLAlchemy bağlantısı doğrulandı. İş mantığı yok: dosya işleme, Gemini ve classify endpoint'i sonraki aşamalarda gelecek.
+**Aşama 3 — Dosya işleme (`file_service`) tamamlandı.** PDF/DOCX tür doğrulama, 50 MB kontrolü, storage'a kaydetme, metin çıkarımı, normalizasyon ve 10 karakter kontrolü hazır ve testli. Henüz API'ye veya veritabanına bağlı değil. Gemini, classify endpoint'i ve frontend sonraki aşamalarda gelecek.
 
 ## Repo durumu
 
@@ -15,14 +15,15 @@
 - Dosyalar:
   - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Mevcut durum olarak backend iskeleti, `GET /health` ve veritabanı altyapısı anlatılır; classify akışı ve API'si planlanan davranış olarak yer alır.
   - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
-  - `.gitignore` — Python önbellekleri, sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
+  - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
-  - `backend/` — FastAPI iskeleti (Aşama 1) ve veritabanı altyapısı (Aşama 2).
+  - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3).
 - `frontend/` henüz yok.
 - Geliştirme akışı (D-036):
   - İlk kurulum, `backend/` içinde: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` → `.env.example`'ı `.env` olarak kopyala.
   - Günlük: Docker Desktop'ı başlat → repo kökünde `docker compose up -d` → `backend/` içinde venv'i aktif et → `alembic upgrade head` → `uvicorn app.main:app --reload`.
   - Durdurma: `docker compose down` (veriler `dosya_sistemi_pgdata` volume'unda kalır).
+  - Testler: `backend/` içinde venv aktifken `pytest` (`pytest.ini`: `pythonpath = .`, `testpaths = tests`). `file_service` testleri veritabanı veya Docker gerektirmez.
 
 ## Tamamlanan işler
 
@@ -86,9 +87,33 @@
   - Önceki offline kontroller: `DATABASE_URL` yoksa açık hata; offline SQL, model DDL'i ile birebir aynı.
 - [x] `README.md` geliştirme ortamı ve proje durumuna göre güncellendi.
 
+**Aşama 3 — Dosya işleme**
+
+- [x] `app/services/file_service.py`: HTTP yanıtı üretmez, veritabanına yazmaz. Sabitler `MAX_FILE_SIZE` (50 × 1024 × 1024 bayt), `MIN_TEXT_LENGTH` (10), `STORAGE_DIR` (`backend/storage`), `FILE_TYPES`.
+  - Exception'lar (hiyerarşi yok; API katmanında eşlenecek): `FileTooLargeError` → 413, `UnsupportedFileTypeError` → 415, `TextExtractionError` → `failed` + 422.
+  - `check_file_size(size)`: 50 MB üstünde `FileTooLargeError`.
+  - `detect_file_type(file_name, content) -> "pdf" | "docx"`: uzantı ve içerik birlikte kontrol edilir, content-type'a güvenilmez. PDF: `.pdf` + `%PDF` ile başlama. DOCX: `.docx` + geçerli ZIP + `[Content_Types].xml` içinde WordprocessingML ana belge türü + `word/document.xml`. Aksi halde `UnsupportedFileTypeError`.
+  - `save_file(content, document_id, file_type) -> file_reference`: `backend/storage/<document_id>.<pdf|docx>`; klasör yoksa oluşturulur. Yol yalnızca UUID ve izinli uzantıdan oluşur (geçersiz UUID/tür → `ValueError`), kullanıcı dosya adı kullanılmaz, var olan dosyanın üzerine yazılmaz (`xb`).
+  - `extract_text(content, file_type) -> str`: PDF'te PyMuPDF ile tüm sayfalar sırayla; DOCX'te python-docx ile paragraflar ve tablo hücreleri belge sırasıyla (birleştirilmiş hücreler tek kez). Normalize edilmiş TAM metin döner; 50.000 karakter kesmesi ve OCR yok. Bozuk/şifreli/okunamayan dosya → `TextExtractionError`.
+  - `normalize_text(text)`: ardışık whitespace tek boşluğa, baş/son kırpılır.
+  - `check_text_length(text)`: normalize metin 10 karakterden kısaysa `TextExtractionError`.
+- [x] `tests/test_file_service.py` (24 test, sentetik küçük PDF/DOCX/ZIP bellekte üretilir; storage testleri geçici klasöre yazar):
+  - geçerli PDF ve DOCX kabulü ve metin çıkarımı; DOCX tablo hücreleri ve birleştirilmiş hücrenin tek kez alınması
+  - 10 karakter sınırı (boş sayfalı PDF ve kısa DOCX dahil)
+  - yanlış uzantı ve uzantı–içerik uyuşmazlığı; `.pdf` ama PDF olmayan içerik; `.docx` ama DOCX olmayan içerik/ZIP
+  - bozuk PDF, şifreli PDF, bozuk DOCX → `TextExtractionError`
+  - storage adı `document_id`'den oluşur; kullanıcı dosya adı (`../../gizli/dilekce.pdf`) yol olarak kullanılmaz
+  - tam metin kesilmeden döner (60.000 karakter); normalizasyon; 50 MB sınırı (`MAX_FILE_SIZE ± 1` ile, büyük dosya yazmadan)
+- [x] `pytest.ini`; `requirements.txt`: `PyMuPDF==1.28.2`, `python-docx==1.2.0`, `pytest==9.1.1`; `.gitignore`: `.pytest_cache/`.
+- [x] `STORAGE_DIR` ortam değişkeni kaldırıldı (`.env.example`, `PROJECT_BRAIN.md`). Storage konumu D-017'ye göre sabit: `backend/storage/`.
+- [x] Doğrulama:
+  - `pytest`: 24 passed; gerçek `backend/storage`'da yalnızca `.gitkeep` kaldı.
+  - Veritabanı import'ları çalışıyor; `alembic current` = `2ab2daa5828a (head)`. Container ve migration'lar değişmedi.
+  - `uvicorn app.main:app` ile `GET /health` → `200 {"status": "ok"}`.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Sıradaki aşamaya (dosya işleme) başlamak için onay bekleniyor.
+- Yok. Sıradaki aşamaya (Gemini sınıflandırma) başlamak için onay bekleniyor.
 
 ## Bilinen problemler ve riskler
 
@@ -100,8 +125,11 @@
 - `DATABASE_URL` zorunluluğu `app.settings` / `app.database` import edildiğinde devreye girer. `main.py` henüz veritabanını import etmediği için `/health` `DATABASE_URL` olmadan da çalışır; classify endpoint'i eklendiğinde uygulama başlangıcında zorunlu hale gelecek.
 - `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerler uygulama katmanında kontrol edilecek.
 - Şu anda yalnızca `DATABASE_URL` okunuyor. `GEMINI_MODEL` için başlangıç kontrolü (D-031) Gemini aşamasında eklenecek.
-- `STORAGE_DIR=storage` değeri `backend/` klasörüne göre göreli; uygulama `backend/` içinden çalıştırılmalı.
-- `tests/` şimdilik boş; test bağımlılıkları (ör. pytest) ilk test yazıldığında eklenecek.
+- Storage konumu için ortam değişkeni yok. `file_service`, D-017'ye göre `backend/storage/` yolunu kod içinde kullanır (çalışma dizininden bağımsız).
+- DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz.
+- DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
+- `check_file_size` boyutu çağırandan alır. Endpoint aşamasında boyut, dosya tamamen okunmadan/storage'a yazılmadan kontrol edilmeli.
+- `pytest`, ayrı bir dev requirements dosyası olmadığı için `requirements.txt` içinde.
 - Kurum açıklamaları ilk taslaktır; gerçek örnek belgelerle test edilip iyileştirilmeli.
 - Katalogda olmayan birimlere ait belgeler (ör. ulaşım, veteriner hizmetleri, su/kanalizasyon) `needs_review`'a düşecektir. Bu beklenen davranıştır; sık görülürse katalog genişletilir.
 - 50.000 karakteri aşan belgelerde yalnızca ilk 50.000 karakter değerlendirilir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
@@ -118,11 +146,14 @@
 
 Onay alındıktan sonra:
 
-1. `file_service`: kabul kontrolü (tür + 50 MB), `document_id` üretimi ve `backend/storage/<document_id>.<uzanti>` olarak kaydetme, PDF/DOCX metin çıkarımı, normalizasyon ve 10 karakter kontrolü.
-2. `classification_service` + `gemini_client`:
+1. `classification_service` + `gemini_client`:
    - başlangıçta `GEMINI_MODEL` kontrolü (fail fast)
    - prompt, 50.000 karakter sınırı, structured output, katalog doğrulaması
    - 30 sn timeout; en fazla 3 denemeli retry (network, timeout, `429`, `5xx`, geçersiz çıktı; 1 sn / 2 sn bekleme; `400`/`401`/`403` retry'sız)
    - `status` belirleme
-3. `POST /api/documents/classify` endpoint'i: veritabanı session kullanımı, başarılı yanıt, `413`/`415` red, `422` (belge içeriği) / `502` (Gemini) `failed` yanıtları; örnek PDF/DOCX belgelerle Docker PostgreSQL üzerinde uçtan uca doğrulama.
-4. Frontend: React + Vite ile yükleme ve sonuç ekranı.
+2. `POST /api/documents/classify` endpoint'i:
+   - `file_service` akışı: `check_file_size` → `detect_file_type` → `document_id` (uuid4) → `save_file` → `extract_text` → `check_text_length`
+   - exception → HTTP eşlemesi: `FileTooLargeError` → 413, `UnsupportedFileTypeError` → 415, `TextExtractionError` → `failed` + 422
+   - veritabanı session kullanımı, başarılı yanıt, `502` (Gemini) `failed` yanıtı
+   - örnek PDF/DOCX belgelerle Docker PostgreSQL üzerinde uçtan uca doğrulama
+3. Frontend: React + Vite ile yükleme ve sonuç ekranı.

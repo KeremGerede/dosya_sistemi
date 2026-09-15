@@ -48,7 +48,6 @@ Ortam değişkenleri:
 | `GEMINI_API_KEY` | Gemini API anahtarı |
 | `GEMINI_MODEL` | **Zorunlu.** Sınıflandırma modeli; `.env.example` değeri: `gemini-3.5-flash-lite` |
 | `DATABASE_URL` | **Zorunlu.** PostgreSQL bağlantı adresi; yerel geliştirme: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi` |
-| `STORAGE_DIR` | Yüklenen orijinal dosyaların klasörü; varsayılan `backend/storage/` |
 
 Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` tanımlı değilse uygulama başlangıçta açık bir yapılandırma hatasıyla durur (fail fast); sessizce bir modele düşülmez. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
 
@@ -196,7 +195,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 | `id` | UUID, birincil anahtar | API yanıtında `document_id` olarak döner |
 | `file_name` | string, not null | Yüklenen dosyanın orijinal adı |
 | `file_type` | string, not null | `pdf` \| `docx` |
-| `file_reference` | string, not null | Saklanan dosyanın `STORAGE_DIR`'e göre göreli yolu |
+| `file_reference` | string, not null | Saklanan dosyanın `backend/storage/` klasörüne göre göreli yolu (`<document_id>.<uzanti>`) |
 | `extracted_text` | text, null | Çıkarılan metnin tamamı; hiç metin çıkmadıysa `null` |
 | `document_type` | string, null | Katalog `id`; `failed` ise `null` |
 | `institution_id` | string, null | Katalog `id`; eşleşme yoksa veya `failed` ise `null` |
