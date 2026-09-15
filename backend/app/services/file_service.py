@@ -74,6 +74,11 @@ def save_file(content: bytes, document_id: uuid.UUID, file_type: str) -> str:
     return file_reference
 
 
+def delete_file(file_reference: str) -> None:
+    """save_file ile yazılmış dosyayı siler (ör. kaydı veritabanına yazılamayan orphan dosya)."""
+    (STORAGE_DIR / file_reference).unlink(missing_ok=True)
+
+
 def extract_text(content: bytes, file_type: str) -> str:
     """Normalize edilmiş TAM metni döndürür. Kesme (50.000 karakter) ve OCR yapılmaz."""
     if file_type not in FILE_TYPES:

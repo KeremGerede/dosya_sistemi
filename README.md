@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend'de veritabanı altyapısı, PDF/DOCX dosya işleme ve Gemini sınıflandırma katmanı hazır ve testli. Bunları uçtan uca bağlayan `POST /api/documents/classify` endpoint'i ve frontend **henüz yok**. Aşağıdaki akış ve classify API'si **planlanan** uçtan uca davranışı anlatır.
+> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend **henüz yok**.
 
 ## MVP Akışı
 
@@ -58,20 +58,19 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 ## API
 
-Şu anda çalışan tek endpoint: **`GET /health`** → `{"status": "ok"}`.
+Çalışan endpoint'ler: **`GET /health`** → `{"status": "ok"}` ve **`POST /api/documents/classify`**.
 
-> Classify endpoint'i **henüz implement edilmedi**; aşağıdakiler planlanan sözleşmedir.
+**`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF veya DOCX dosyası.
 
-**`POST /api/documents/classify`** — `multipart/form-data` içinde tek bir PDF veya DOCX dosyası.
-
-Planlanan yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `status` (`classified` | `needs_review` | `failed`).
+Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `status` (`classified` | `needs_review` | `failed`). `422` ve `502` yanıtlarında ayrıca genel bir `message` alanı bulunur. Dosyanın storage yolu ve çıkarılan metin veritabanında saklanır, yanıtta dönmez.
 
 | HTTP kodu | Anlamı |
 |---|---|
+| `200` | Sınıflandırıldı (`status`: `classified` veya `needs_review`) |
 | `413` | Dosya 50 MB sınırını aşıyor (kayıt oluşturulmaz) |
 | `415` | Desteklenmeyen dosya türü (kayıt oluşturulmaz) |
-| `422` | Belge içeriği işlenemedi / yeterli metin çıkarılamadı |
-| `502` | Gemini ile sınıflandırma tamamlanamadı |
+| `422` | Belge içeriği işlenemedi / yeterli metin çıkarılamadı (`failed` kaydı) |
+| `502` | Gemini ile sınıflandırma tamamlanamadı (`failed` kaydı) |
 
 Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
 
@@ -86,8 +85,9 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
   - Belge türü ve kurum aynı çağrıda sınıflandırılır.
   - Retry/timeout politikası uygulanmış: 30 sn timeout, en fazla 3 deneme, 1 sn / 2 sn bekleme.
   - `gemini-3.5-flash-lite` gerçek API smoke testiyle doğrulandı.
-- **Henüz yok:** `POST /api/documents/classify` endpoint'i (dosya işleme ve sınıflandırma henüz API'ye ve veritabanına bağlı değil) ve frontend.
-- **Sıradaki aşama:** `POST /api/documents/classify` endpoint'i.
+- **Aşama 5 — tamamlandı:** `POST /api/documents/classify` endpoint'i; backend ana MVP akışı tamamlandı. Upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt akışı, gerçek Docker PostgreSQL ve gerçek Gemini ile uçtan uca doğrulandı.
+- **Henüz yok:** frontend.
+- **Sıradaki aşama:** React + Vite frontend (yükleme ve sonuç ekranı).
 
 ### Geliştirme ortamı
 
@@ -103,7 +103,7 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). `.env` Git'e girmez.
+`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). Uygulama bu üç değişken olmadan başlamaz. `.env` Git'e girmez.
 
 Günlük geliştirme akışı:
 
@@ -112,8 +112,9 @@ Günlük geliştirme akışı:
 3. `backend/` içinde sanal ortamı aktif et: `.venv\Scripts\activate`.
 4. `alembic upgrade head`.
 5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
+6. Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` (ya da `http://127.0.0.1:8000/docs`).
 
-Testler `backend/` içinde `pytest` ile çalışır; veritabanı, Docker veya gerçek Gemini API gerektirmez.
+Testler `backend/` içinde `pytest` ile çalışır; Docker PostgreSQL veya gerçek Gemini API gerektirmez (endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır).
 
 PostgreSQL'i durdurmak için repo kökünde `docker compose down` çalıştırılır. Bu komut container'ı durdurup kaldırır ama veriler Docker volume'unda (`dosya_sistemi_pgdata`) kalır; sonraki `docker compose up -d` aynı veritabanıyla devam eder.
 

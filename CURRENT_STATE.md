@@ -6,24 +6,25 @@
 
 ## Mevcut aşama
 
-**Aşama 4 — Gemini sınıflandırma katmanı tamamlandı.** `gemini_client`, `classification_service` ve structured output şeması hazır. Unit ve SDK/HTTP seviyesi testlerle doğrulandı; tek bir gerçek Gemini smoke testi başarılı. Henüz API'ye veya veritabanına bağlı değil. Classify endpoint'i ve frontend sonraki aşamalarda gelecek.
+**Aşama 5 — `POST /api/documents/classify` endpoint'i tamamlandı.** Backend ana MVP akışı uçtan uca çalışıyor: upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt. Endpoint testleri geçti; gerçek Docker PostgreSQL + gerçek Gemini ile tek belgelik smoke testi başarılı. Frontend henüz yok.
 
 ## Repo durumu
 
 - Git reposu, `main` dalı (remote: `origin`).
 - Karar geçmişi `docs: define initial MVP architecture and decisions` commit'inden itibaren Git'te izlenir.
 - Dosyalar:
-  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Mevcut durum olarak backend iskeleti, `GET /health` ve veritabanı altyapısı anlatılır; classify akışı ve API'si planlanan davranış olarak yer alır.
+  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının tamamlandığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu ve frontend'in henüz olmadığı anlatılır.
   - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
   - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
-  - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4).
+  - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4), classify endpoint'i ve testleri (Aşama 5).
 - `frontend/` henüz yok.
 - Geliştirme akışı (D-036):
   - İlk kurulum, `backend/` içinde: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` → `.env.example`'ı `.env` olarak kopyala.
   - Günlük: Docker Desktop'ı başlat → repo kökünde `docker compose up -d` → `backend/` içinde venv'i aktif et → `alembic upgrade head` → `uvicorn app.main:app --reload`.
   - Durdurma: `docker compose down` (veriler `dosya_sistemi_pgdata` volume'unda kalır).
-  - Testler: `backend/` içinde venv aktifken `pytest` (`pytest.ini`: `pythonpath = .`, `testpaths = tests`). Testler veritabanı, Docker veya gerçek Gemini API gerektirmez. `tests/conftest.py` sahte `GEMINI_API_KEY`/`GEMINI_MODEL` (ve yoksa sahte `DATABASE_URL`) ayarlar; `.env`'deki gerçek anahtar testlere girmez.
+  - Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` veya `http://127.0.0.1:8000/docs`.
+  - Testler: `backend/` içinde venv aktifken `pytest` (`pytest.ini`: `pythonpath = .`, `testpaths = tests`). Testler Docker PostgreSQL veya gerçek Gemini API gerektirmez. `tests/conftest.py` sahte `GEMINI_API_KEY`/`GEMINI_MODEL` (ve yoksa sahte `DATABASE_URL`) ayarlar; `.env`'deki gerçek anahtar testlere girmez. Endpoint testleri geçici SQLite veritabanı (`get_db` override) ve sahte `classify_text` kullanır.
 
 ## Tamamlanan işler
 
@@ -145,9 +146,39 @@
 - [x] Kararlar: D-009 (katalogdan üretilen structured output modeli), D-031 ve D-035 (Gemini değişkenleri `gemini_client` yüklenirken zorunlu), D-033 (retry tek yerde, SDK retry/AFC kapalı, timeout birimi). `PROJECT_BRAIN.md` §3, §4 ve §7'de ilgili satırlar güncellendi.
 - [x] Doğrulama: `pytest` 68 passed (24 dosya servisi + 44 sınıflandırma); `GET /health` 200; `alembic current` = `2ab2daa5828a (head)`.
 
+**Aşama 5 — `POST /api/documents/classify` endpoint'i**
+
+- [x] `app/api/documents.py` (router `main.py`'ye eklendi). Senkron `def` endpoint; FastAPI thread pool'da çalıştırır (D-020). Akış:
+  1. Upload'dan en fazla `MAX_FILE_SIZE + 1` bayt okunur (Content-Length'e güvenilmez).
+  2. `check_file_size` → 413; `detect_file_type` → 415. Bu iki durumda kayıt ve storage dosyası yok.
+  3. `uuid4()` → `save_file` → `extract_text` → `check_text_length`.
+  4. `classification_service.classify_text(tam metin)`; `needs_review` → `status` = `needs_review` / `classified`.
+  5. `Document` kaydı yazılır, commit başarılıysa yanıt döner.
+  - `TextExtractionError` → `failed` kaydı (`extracted_text` = kısa metin varsa o, yoksa null) + 422. `ClassificationError` → `failed` kaydı (tam metin) + 502. İki durumda da dosya storage'da kalır.
+  - Beklenmeyen hata (ör. commit hatası): bu isteğin storage dosyası silinir, `rollback`, exception yükselir → standart 500 (`Internal Server Error`, detay yok).
+  - Loglar: belge kimliği, status ve hata türü; belge metni, dosya içeriği ve API anahtarı loglanmaz.
+- [x] `app/schemas/classification.py`: `ClassifyResponse` (D-032 alanları; `file_reference`/`extracted_text` yok) ve `FailedClassifyResponse` (+ `message`). Mesajlar: 422 "Belgeden sınıflandırma için yeterli metin çıkarılamadı.", 502 "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."; 413/415 FastAPI `{"detail": ...}` ile genel mesaj.
+- [x] `app/database.py`: `get_db()` dependency (istek başına session, sonunda kapanır); engine `hide_parameters=True` (SQL hatalarında parametre değerleri, ör. belge metni, log/mesajlara girmez).
+- [x] `app/services/file_service.py`: `delete_file(file_reference)` (orphan dosya temizliği için).
+- [x] `app/main.py`: `logging.basicConfig(level=INFO)` ve documents router kaydı.
+- [x] `requirements.txt`: `python-multipart==0.0.32` (FastAPI dosya yükleme için; venv'de çalışan sürüm, `pip check` temiz).
+- [x] Testler (`tests/test_documents_api.py`, 22 test; SQLite + `get_db` override, geçici storage, sahte `classify_text`; beklenmeyen gerçek sınıflandırma çağrısı testi düşürür):
+  - PDF ve DOCX → 200 `classified`; `needs_review` → 200; yanıtta `file_reference`/`extracted_text` yok; DB'de tam metin ve `file_reference`; storage dosyası yüklenenle aynı; 60.000 karakter tam metin DB'ye ve sınıflandırmaya gider
+  - 413 (sınır üstü) ve sınırda kabul; upload yalnızca `MAX_FILE_SIZE + 1` bayt okunur; 415 (txt, doc, sahte PDF/DOCX); dosya yok → FastAPI 422 doğrulama hatası. Hepsinde kayıt ve dosya yok
+  - 422 (kısa metin / metinsiz PDF / bozuk PDF) ve 502: `failed` kaydı, sınıflandırma alanları null, `needs_review=false`, dosya storage'da, genel mesaj, ham hata detayı yanıtta yok
+  - Kötü amaçlı dosya adı (`../../gizli/dilekce.pdf`) yalnızca `file_name`'de; storage adı `document_id` ile eşleşir
+  - Commit hatası (classified / text-failed / classification-failed akışlarında): 500, rollback, DB'de kayıt yok, orphan dosya silinmiş; loglarda belge metni yok
+  - Production engine `hide_parameters=True`
+- [x] Gerçek uçtan uca smoke testi (Docker PostgreSQL + gerçek Gemini, tek sentetik DOCX, anahtar ve metin gösterilmedi):
+  - `uvicorn` + HTTP upload → `200` / `classified` / `request` / `park_bahceler`, 1,61 sn, 1 gerçek Gemini isteği
+  - DB kaydında tam metin ve `file_reference` doğru, storage dosyası yüklenenle aynı; loglarda anahtar ve belge metni yok
+  - Kayıt ve dosya test sonunda silindi (DB 0 satır, storage yalnızca `.gitkeep`; psql ile bağımsız kontrol)
+- [x] `README.md`: classify çalışan endpoint, backend ana MVP akışı tamamlandı, sıradaki aşama frontend.
+- [x] Doğrulama: `pytest` 90 passed (24 + 44 + 22); `GET /health` 200; `alembic current` = `2ab2daa5828a (head)`; Docker PostgreSQL healthy.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Sıradaki aşamaya (`POST /api/documents/classify` endpoint'i) başlamak için onay bekleniyor.
+- Yok. Sıradaki aşamaya (frontend) başlamak için onay bekleniyor.
 
 ## Bilinen problemler ve riskler
 
@@ -156,17 +187,21 @@
 - `DATABASE_URL`'de `localhost` kullanılmamalı: port yalnızca IPv4 `127.0.0.1`'e açık ve `localhost` önce `::1` olarak denendiğinde bağlantı asılı kalıyor (Aşama 2'de `alembic current` bu yüzden takıldı). `127.0.0.1` kullanılıyor.
 - PostgreSQL 18 image'ında volume `/var/lib/postgresql` yoluna bağlanır. Eski sürümlerdeki `/var/lib/postgresql/data` yolu kullanılmamalı.
 - Backend ve migration komutları için Docker Desktop çalışıyor ve `docker compose up -d` yapılmış olmalı.
-- `DATABASE_URL` zorunluluğu `app.settings` / `app.database` import edildiğinde devreye girer. `main.py` henüz veritabanını import etmediği için `/health` `DATABASE_URL` olmadan da çalışır; classify endpoint'i eklendiğinde uygulama başlangıcında zorunlu hale gelecek.
+- `main.py` artık documents router'ını import ettiği için `DATABASE_URL`, `GEMINI_API_KEY` ve `GEMINI_MODEL` uygulama başlangıcında zorunludur; biri eksikse uygulama (ve `/health`) başlamaz (D-031, D-035).
 - `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerler uygulama katmanında kontrol edilecek.
-- `GEMINI_API_KEY`/`GEMINI_MODEL` kontrolü `gemini_client` import edildiğinde yapılır. `main.py` henüz Gemini katmanını import etmediği için `/health` bu değişkenler olmadan da çalışır; classify endpoint'i eklendiğinde uygulama başlangıcında zorunlu hale gelecek.
 - Retry/timeout davranışı google-genai 2.23.0 kaynak koduna göre doğrulandı. SDK sürümü yükseltilirse `tests/test_classification_service.py` içindeki gerçek SDK + MockTransport testleri mutlaka çalıştırılmalı.
 - `temperature=0` kullanılıyor; smoke testinde sorun çıkmadı. Sınıflandırma kalitesi gerçek belgelerle gözlemlenmeli.
-- Başarısız denemelerde uyarı logu API hata detayını içerir (anahtar değil). Belge metni loglanmaz. Uygulama geneli log yapılandırması endpoint aşamasında ele alınacak.
+- Log yapılandırması `main.py`'de tek satır `basicConfig(INFO)`; httpx istek satırları (URL, anahtar yok) da INFO'da görünür. Başarısız Gemini denemelerinde uyarı logu API hata detayını içerir (anahtar değil). Belge metni loglanmaz; SQL hatalarında parametreler gizlidir.
 - Kataloglar modül yüklenirken okunur; katalog değişikliği için uygulama yeniden başlatılmalı. `other` belge türü katalogdan çıkarılırsa servis yapılandırma hatasıyla yüklenmez.
 - Storage konumu için ortam değişkeni yok. `file_service`, D-017'ye göre `backend/storage/` yolunu kod içinde kullanır (çalışma dizininden bağımsız).
 - DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz.
 - DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
-- `check_file_size` boyutu çağırandan alır. Endpoint aşamasında boyut, dosya tamamen okunmadan/storage'a yazılmadan kontrol edilmeli.
+- Endpoint upload'dan en fazla `MAX_FILE_SIZE + 1` bayt okur. Ancak Starlette/python-multipart, endpoint çalışmadan önce multipart gövdesini geçici dosyaya aktarır; yani 50 MB üstü bir yükleme yine de ağdan alınıp geçici diske yazılır. Uygulama seviyesinde gövde boyutu sınırı yok; gerçek dağıtımda sunucu/reverse proxy seviyesinde gövde sınırı konmalı.
+- Dosya gönderilmediğinde FastAPI'nin standart 422 doğrulama yanıtı (`{"detail": [...]}`) döner; bu, kabul sonrası `failed` 422 gövdesinden (`document_id` + `message`) farklıdır. İstemci ikisini gövdeden ayırt etmeli.
+- Endpoint senkron ve thread pool'da çalışır; Gemini aşaması en kötü durumda ~93 sn bir thread'i meşgul eder. Eşzamanlı istek kapasitesi thread pool boyutuyla sınırlıdır (MVP için kabul edilebilir).
+- Commit sunucuda başarılı olup istemci tarafında hata gibi görünürse (ör. bağlantı commit sırasında koparsa) dosya silinip kayıt kalabilir; nadir bir durum, MVP'de ayrıca ele alınmadı.
+- Endpoint testleri SQLite kullanır (`create_all` yalnızca testte); PostgreSQL'e özgü davranış gerçek smoke testle doğrulandı, otomatik testlerde yoktur.
+- `pytest` çalışırken Starlette/anyio kaynaklı 2 deprecation uyarısı çıkıyor (TestClient için `httpx2` önerisi); testleri etkilemiyor.
 - `pytest`, ayrı bir dev requirements dosyası olmadığı için `requirements.txt` içinde.
 - Kurum açıklamaları ilk taslaktır; gerçek örnek belgelerle test edilip iyileştirilmeli.
 - Katalogda olmayan birimlere ait belgeler (ör. ulaşım, veteriner hizmetleri, su/kanalizasyon) `needs_review`'a düşecektir. Bu beklenen davranıştır; sık görülürse katalog genişletilir.
@@ -183,10 +218,4 @@
 
 Onay alındıktan sonra:
 
-1. `POST /api/documents/classify` endpoint'i:
-   - `file_service` akışı: `check_file_size` → `detect_file_type` → `document_id` (uuid4) → `save_file` → `extract_text` → `check_text_length`
-   - sınıflandırma: `classification_service.classify_text(text)`; `status` = `needs_review` / `classified`
-   - exception → HTTP eşlemesi: `FileTooLargeError` → 413, `UnsupportedFileTypeError` → 415, `TextExtractionError` → `failed` + 422, `ClassificationError` → `failed` + 502
-   - veritabanı session kullanımı, başarılı ve `failed` yanıt şemaları, log yapılandırması
-   - örnek PDF/DOCX belgelerle Docker PostgreSQL üzerinde uçtan uca doğrulama
-2. Frontend: React + Vite ile yükleme ve sonuç ekranı.
+1. Frontend: React + Vite ile yükleme ve sonuç ekranı (yerel çalışır, D-036). Senkron endpoint ~93 sn'ye kadar sürebileceği için istek zaman aşımı buna göre ayarlanmalı.

@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, model_validator
 
 
@@ -24,3 +26,22 @@ class ClassificationResult(BaseModel):
             if self.review_reason is not None:
                 raise ValueError("needs_review=false iken review_reason null olmalı")
         return self
+
+
+class ClassifyResponse(BaseModel):
+    """POST /api/documents/classify başarılı yanıtı (D-032). file_reference ve extracted_text dönmez."""
+
+    document_id: uuid.UUID
+    file_name: str
+    file_type: str
+    document_type: str | None
+    institution_id: str | None
+    needs_review: bool
+    review_reason: str | None
+    status: str
+
+
+class FailedClassifyResponse(ClassifyResponse):
+    """Kabul sonrası failed yanıtı (D-034): aynı alanlar + genel kullanıcı mesajı."""
+
+    message: str
