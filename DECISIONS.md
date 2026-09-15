@@ -47,13 +47,32 @@
 - **Karar:** Backend: Python + FastAPI. Frontend: React + Vite.
 - **Gerekçe:** Hızlı geliştirme; FastAPI ve Pydantic doğal uyum sağlar; Vite hafif ve hızlı bir frontend kurulumu sunar.
 
-### D-006 — PostgreSQL kullanılacak
-- **Karar:** Veritabanı PostgreSQL, erişim SQLAlchemy ile.
-- **Gerekçe:** Güvenilir ve yaygın; ileride entegrasyon ve genişleme için sağlam temel.
+### D-006 — PostgreSQL, senkron SQLAlchemy ve psycopg 3
+- **Karar:** Veritabanı PostgreSQL'dir. Erişim senkron SQLAlchemy 2.x ile yapılır (`create_engine` + `sessionmaker`, async engine yok). Sürücü psycopg 3'tür (`postgresql+psycopg://` bağlantı adresi, `psycopg[binary]` paketi).
+- **Gerekçe:** PostgreSQL güvenilir ve yaygın; ileride entegrasyon ve genişleme için sağlam temel. Senkron erişim, D-020'deki senkron işleme ile uyumlu ve MVP için en basit yol. psycopg 3, SQLAlchemy 2'nin desteklediği güncel PostgreSQL sürücüsü; binary paketi Windows'ta derleme gerektirmeden kurulur.
 
 ### D-030 — Alembic ile migration yönetimi
 - **Karar:** Veritabanı şeması SQLAlchemy modelleriyle birlikte Alembic migration'larıyla yönetilir. `Base.metadata.create_all` kalıcı migration yöntemi olarak kullanılmaz.
 - **Gerekçe:** Şema değişiklikleri baştan izlenebilir ve tekrarlanabilir olur; mevcut veri kaybedilmeden şema güncellenebilir.
+
+### D-035 — Yapılandırma: ortam değişkenleri + `backend/.env`, ayrı config katmanı yok
+- **Karar:**
+  - Yapılandırma ortam değişkenlerinden okunur. `app/settings.py` değerleri modül düzeyinde okur. `backend/.env` varsa python-dotenv ile yüklenir; ortamda zaten tanımlı değişkenler ezilmez.
+  - `DATABASE_URL` zorunludur; tanımlı değilse `app.settings` import edilirken açık bir `RuntimeError` fırlatılır. Alembic de aynı `DATABASE_URL`'i kullanır; `alembic.ini` içinde bağlantı adresi tutulmaz.
+  - Config sınıfı, pydantic-settings veya ek soyutlama yoktur.
+  - Modül adı `settings.py`'dir; `app/config/` katalog klasörüyle isim çakışmasını önler.
+- **Gerekçe:** `.env.example` → `.env` akışıyla uyumlu en küçük çözüm. Bağlantı bilgisi tek yerden okunur. Eksik yapılandırma, sessizce yanlış bir bağlantıya düşmek yerine açık hatayla fark edilir (D-031 ile aynı yaklaşım).
+
+### D-036 — Geliştirme ortamı: PostgreSQL 18 Docker Compose'da, backend ve frontend yerelde
+- **Karar:**
+  - Geliştirme ortamında PostgreSQL, repo kökündeki `docker-compose.yml` ile çalışır. Compose'da yalnızca `postgres` servisi vardır:
+    - image `postgres:18`, container `dosya-sistemi-postgres`, veritabanı `dosya_sistemi`
+    - Docker tarafından yönetilen `dosya_sistemi_pgdata` volume'u, `/var/lib/postgresql` yoluna bağlanır (PostgreSQL 18+ image düzeni)
+  - Host portu `127.0.0.1:5433`, container portu `5432`. Bu makinede 5432'yi yerel bir Windows PostgreSQL servisi kullandığı için 5433 seçildi; port yalnızca localhost'a açıktır.
+  - `DATABASE_URL` host olarak `127.0.0.1` kullanır (`postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi`). `localhost` önce IPv6 (`::1`) olarak denendiğinde bağlantı asılı kalıyor.
+  - `postgres` / `postgres` kullanıcı ve parolası yalnızca yerel geliştirme içindir.
+  - FastAPI backend ve React/Vite frontend yerel makinede çalışır; şimdilik containerize edilmez. Compose'a başka servis (FastAPI, frontend, pgAdmin vb.) eklenmez.
+- **Gerekçe:** Veritabanı makineye kurulum gerektirmeden, tek komutla ve tekrarlanabilir şekilde ayağa kalkar; veriler container kaldırılsa da volume'da kalır. Backend ve frontend yerelde hot reload ile hızlı geliştirilir; bunları containerize etmek MVP'de gereksiz katman ekler. Ayrı host portu, yerel PostgreSQL servisiyle çakışmayı ve yanlış veritabanına bağlanma riskini önler.
 
 ## LLM
 

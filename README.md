@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend iskeleti hazır (yalnızca `GET /health`); sınıflandırma akışı henüz uygulanmadı. Aşağıdaki akış ve classify API'si **planlanan** davranışı anlatır.
+> **Durum:** Backend iskeleti (yalnızca `GET /health`) ve veritabanı altyapısı (PostgreSQL 18 + Alembic) hazır; sınıflandırma akışı henüz uygulanmadı. Aşağıdaki akış ve classify API'si **planlanan** davranışı anlatır.
 
 ## MVP Akışı
 
@@ -43,6 +43,8 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 **Frontend:** React · Vite
 
+**Geliştirme ortamı:** PostgreSQL 18 Docker Compose ile çalışır; backend (ve ileride frontend) yerel makinede çalışır.
+
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MB**.
@@ -77,20 +79,37 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
 
 - **Tamamlandı:** MVP mimarisi ve ürün/teknik kararlar.
 - **Tamamlandı:** Backend iskeleti. FastAPI uygulaması çalıştırılabiliyor, `GET /health` çalışıyor; belge türü ve kurum katalogları eklendi.
-- **Henüz yok:** veritabanı, dosya işleme (PDF/DOCX), Gemini entegrasyonu, `POST /api/documents/classify` ve frontend.
-- **Sıradaki aşama:** veritabanı (SQLAlchemy modeli ve Alembic migration'ları).
+- **Tamamlandı:** Veritabanı altyapısı. PostgreSQL 18 (Docker Compose), SQLAlchemy `Document` modeli ve `documents` tablosunu oluşturan Alembic migration'ı.
+- **Henüz yok:** dosya işleme (PDF/DOCX), Gemini entegrasyonu, `POST /api/documents/classify` ve frontend.
+- **Sıradaki aşama:** dosya işleme (kabul kontrolü, storage, PDF/DOCX metin çıkarımı).
 
-### Backend'i yerelde çalıştırma
+### Geliştirme ortamı
+
+- **PostgreSQL 18** repo kökündeki `docker-compose.yml` ile çalışır. Host portu `5433`'tür (5432 kullanan yerel PostgreSQL kurulumlarıyla çakışmaması için) ve yalnızca `127.0.0.1`'e açıktır.
+- **Backend** yerel makinede çalışır; **frontend** de ileride yerel makinede çalışacaktır. Şimdilik ikisi de container'da değildir.
+
+İlk kurulum (bir kez, `backend/` içinde):
 
 ```bash
-cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+copy .env.example .env
 ```
 
-`.venv\Scripts\activate` Windows komutudur; macOS/Linux'ta `source .venv/bin/activate` kullanılır. Kontrol için `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür. Bu aşamada `.env` dosyası gerekmez.
+`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` Git'e girmez.
+
+Günlük geliştirme akışı:
+
+1. Docker Desktop'ı başlat.
+2. Repo kökünde `docker compose up -d`.
+3. `backend/` içinde sanal ortamı aktif et: `.venv\Scripts\activate`.
+4. `alembic upgrade head`.
+5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
+
+PostgreSQL'i durdurmak için repo kökünde `docker compose down` çalıştırılır. Bu komut container'ı durdurup kaldırır ama veriler Docker volume'unda (`dosya_sistemi_pgdata`) kalır; sonraki `docker compose up -d` aynı veritabanıyla devam eder.
+
+Komutlar Windows içindir; macOS/Linux'ta `source .venv/bin/activate` ve `cp .env.example .env` kullanılır.
 
 Ayrıntılı proje dokümantasyonu:
 

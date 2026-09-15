@@ -1,0 +1,24 @@
+# Yalnızca yerel geliştirme için PostgreSQL. Backend ve frontend yerel makinede çalışır (D-036).
+services:
+  postgres:
+    image: postgres:18
+    container_name: dosya-sistemi-postgres
+    environment:
+      POSTGRES_DB: dosya_sistemi
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres # yalnızca yerel geliştirme
+    ports:
+      # Host 5432 yerel Windows PostgreSQL servisinde olduğu için 5433; yalnızca localhost'a açık.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # PostgreSQL 18+ image'ında veri /var/lib/postgresql/18/docker altında; volume üst dizine bağlanır.
+      - dosya_sistemi_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dosya_sistemi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dosya_sistemi_pgdata:
+    name: dosya_sistemi_pgdata

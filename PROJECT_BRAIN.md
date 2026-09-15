@@ -39,6 +39,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 | Migration | Alembic |
 | Dosya depolama | Uygulamanın storage klasörü (dosya sistemi) |
 | Frontend | React, Vite |
+| Geliştirme veritabanı | PostgreSQL 18, Docker Compose (yalnızca yerel geliştirme) |
 
 Ortam değişkenleri:
 
@@ -46,7 +47,7 @@ Ortam değişkenleri:
 |---|---|
 | `GEMINI_API_KEY` | Gemini API anahtarı |
 | `GEMINI_MODEL` | **Zorunlu.** Sınıflandırma modeli; `.env.example` değeri: `gemini-3.5-flash-lite` |
-| `DATABASE_URL` | PostgreSQL bağlantı adresi |
+| `DATABASE_URL` | **Zorunlu.** PostgreSQL bağlantı adresi; yerel geliştirme: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi` |
 | `STORAGE_DIR` | Yüklenen orijinal dosyaların klasörü; varsayılan `backend/storage/` |
 
 Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` tanımlı değilse uygulama başlangıçta açık bir yapılandırma hatasıyla durur (fail fast); sessizce bir modele düşülmez. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
@@ -54,12 +55,14 @@ Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODE
 ## 4. Mimari ve klasör yapısı
 
 ```text
+docker-compose.yml                      # yalnızca yerel geliştirme PostgreSQL'i (tek servis)
 backend/
   .env.example                          # ortam değişkeni şablonu (GEMINI_MODEL varsayılanı dahil)
   alembic.ini
   alembic/                              # Alembic migration'ları
   app/
     main.py                             # FastAPI uygulaması, router kaydı
+    settings.py                         # ortam değişkenleri (backend/.env), DATABASE_URL zorunlu
     database.py                         # engine, session
     api/documents.py                    # POST /api/documents/classify — akışı sırayla çağırır
     services/file_service.py            # kabul kontrolü, storage'a kaydetme, PDF/DOCX metin çıkarımı
@@ -79,6 +82,13 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 - Endpoint doğrudan SQLAlchemy session kullanabilir; repository, factory veya ek servis katmanı eklenmez.
 - Yeni bir soyutlama katmanı için somut gerekçe ve `DECISIONS.md` kaydı gerekir.
 - Sayısal sınırlar (50 MB, 10 karakter, 50.000 karakter, 3 deneme, 30 sn timeout, 1/2 sn bekleme) kodda tek bir yerde tanımlanır.
+
+**Geliştirme ortamı** (D-036):
+
+- PostgreSQL 18 Docker Compose ile çalışır. Tek servis; veriler Docker yönetimindeki `dosya_sistemi_pgdata` volume'unda kalır. Host portu `127.0.0.1:5433`.
+- FastAPI backend yerel makinede çalışır (`backend/.venv`, `alembic upgrade head`, `uvicorn app.main:app --reload`).
+- React/Vite frontend de ileride yerel makinede çalışacak.
+- Backend ve frontend şimdilik containerize edilmez.
 
 ## 5. Dosya işleme ve depolama
 
