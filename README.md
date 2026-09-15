@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend iskeleti (yalnızca `GET /health`) ve veritabanı altyapısı (PostgreSQL 18 + Alembic) hazır; sınıflandırma akışı henüz uygulanmadı. Aşağıdaki akış ve classify API'si **planlanan** davranışı anlatır.
+> **Durum:** Backend'de veritabanı altyapısı, PDF/DOCX dosya işleme ve Gemini sınıflandırma katmanı hazır ve testli. Bunları uçtan uca bağlayan `POST /api/documents/classify` endpoint'i ve frontend **henüz yok**. Aşağıdaki akış ve classify API'si **planlanan** uçtan uca davranışı anlatır.
 
 ## MVP Akışı
 
@@ -39,7 +39,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 ## Teknoloji Yığını
 
-**Backend:** Python · FastAPI · PyMuPDF · python-docx · Google Gemini API · Pydantic · SQLAlchemy · PostgreSQL · Alembic
+**Backend:** Python · FastAPI · PyMuPDF · python-docx · Google Gemini API (`google-genai`) · Pydantic · SQLAlchemy · PostgreSQL · Alembic
 
 **Frontend:** React · Vite
 
@@ -60,7 +60,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 Şu anda çalışan tek endpoint: **`GET /health`** → `{"status": "ok"}`.
 
-> Classify endpoint'i henüz **implementasyon aşamasındadır**; aşağıdakiler planlanan sözleşmedir.
+> Classify endpoint'i **henüz implement edilmedi**; aşağıdakiler planlanan sözleşmedir.
 
 **`POST /api/documents/classify`** — `multipart/form-data` içinde tek bir PDF veya DOCX dosyası.
 
@@ -78,10 +78,16 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
 ## Proje Durumu
 
 - **Tamamlandı:** MVP mimarisi ve ürün/teknik kararlar.
-- **Tamamlandı:** Backend iskeleti. FastAPI uygulaması çalıştırılabiliyor, `GET /health` çalışıyor; belge türü ve kurum katalogları eklendi.
-- **Tamamlandı:** Veritabanı altyapısı. PostgreSQL 18 (Docker Compose), SQLAlchemy `Document` modeli ve `documents` tablosunu oluşturan Alembic migration'ı.
-- **Henüz yok:** dosya işleme (PDF/DOCX), Gemini entegrasyonu, `POST /api/documents/classify` ve frontend.
-- **Sıradaki aşama:** dosya işleme (kabul kontrolü, storage, PDF/DOCX metin çıkarımı).
+- **Aşama 1 — tamamlandı:** FastAPI backend iskeleti; `GET /health` çalışıyor, belge türü ve kurum katalogları eklendi.
+- **Aşama 2 — tamamlandı:** PostgreSQL 18 (Docker Compose), SQLAlchemy `Document` modeli ve `documents` tablosunu oluşturan Alembic migration'ı.
+- **Aşama 3 — tamamlandı:** PDF/DOCX dosya işleme. Tür ve 50 MB doğrulaması, `backend/storage/`'a kaydetme, metin çıkarımı, normalizasyon ve 10 karakter kontrolü mevcut.
+- **Aşama 4 — tamamlandı:** Gemini sınıflandırma katmanı.
+  - Structured output entegrasyonu mevcut; izinli ID'ler kataloglardan gelir.
+  - Belge türü ve kurum aynı çağrıda sınıflandırılır.
+  - Retry/timeout politikası uygulanmış: 30 sn timeout, en fazla 3 deneme, 1 sn / 2 sn bekleme.
+  - `gemini-3.5-flash-lite` gerçek API smoke testiyle doğrulandı.
+- **Henüz yok:** `POST /api/documents/classify` endpoint'i (dosya işleme ve sınıflandırma henüz API'ye ve veritabanına bağlı değil) ve frontend.
+- **Sıradaki aşama:** `POST /api/documents/classify` endpoint'i.
 
 ### Geliştirme ortamı
 
@@ -97,7 +103,7 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` Git'e girmez.
+`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). `.env` Git'e girmez.
 
 Günlük geliştirme akışı:
 
@@ -106,6 +112,8 @@ Günlük geliştirme akışı:
 3. `backend/` içinde sanal ortamı aktif et: `.venv\Scripts\activate`.
 4. `alembic upgrade head`.
 5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
+
+Testler `backend/` içinde `pytest` ile çalışır; veritabanı, Docker veya gerçek Gemini API gerektirmez.
 
 PostgreSQL'i durdurmak için repo kökünde `docker compose down` çalıştırılır. Bu komut container'ı durdurup kaldırır ama veriler Docker volume'unda (`dosya_sistemi_pgdata`) kalır; sonraki `docker compose up -d` aynı veritabanıyla devam eder.
 
