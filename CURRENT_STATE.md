@@ -11,8 +11,10 @@
 ## Repo durumu
 
 - Git reposu, `main` dalı (remote: `origin`).
-- Commit'ler: `Initial commit` (README), `docs: define initial MVP architecture and decisions` (proje dokümantasyonu). Karar geçmişi bu commit'ten itibaren Git'te izlenir.
-- Dosyalar: `README.md` (yalnızca başlık), `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md`.
+- Karar geçmişi `docs: define initial MVP architecture and decisions` commit'inden itibaren Git'te izlenir; tüm dokümantasyon `origin/main`'e push edildi.
+- Dosyalar:
+  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, planlanan API, proje durumu, kapsam dışı. API ve akış henüz uygulanmamış, planlanan davranış olarak anlatılır.
+  - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
 - `backend/` ve `frontend/` henüz yok.
 
 ## Tamamlanan işler
@@ -36,6 +38,7 @@
   - Kalıcı Gemini hataları (`400`/`401`/`403`): retry yok → `failed` + `502`
   - Geçersiz model çıktısı (şemaya uymayan / katalog dışı): retry kapsamında → 3 deneme sonunda `failed` + `502` (D-033, D-034)
   - Dış hata ayrımı: `422` = belge içeriği işlenemedi, `502` = Gemini ile sınıflandırma tamamlanamadı
+- [x] `README.md` MVP kapsamı ve proje durumuna göre güncellendi.
 
 ## Üzerinde çalışılan işler
 
