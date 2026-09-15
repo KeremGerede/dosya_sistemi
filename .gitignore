@@ -12,3 +12,6 @@ venv/
 # Runtime storage (yüklenen dosyalar)
 backend/storage/*
 !backend/storage/.gitkeep
+
+# Graphify çıktıları (yeniden üretilebilir)
+graphify-out/
