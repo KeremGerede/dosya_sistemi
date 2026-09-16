@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend iskeleti kuruldu (React + Vite + TypeScript, `/api` proxy'si çalışıyor); yükleme ve sonuç ekranı henüz yok.
+> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yükleyip sınıflandırma yapılabiliyor; ayrıntılı sonuç ve hata ekranı henüz yok.
 
 ## MVP Akışı
 
@@ -88,8 +88,9 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
 - **Aşama 5 — tamamlandı:** `POST /api/documents/classify` endpoint'i; backend ana MVP akışı tamamlandı. Upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt akışı, gerçek Docker PostgreSQL ve gerçek Gemini ile uçtan uca doğrulandı.
 - **Aşama 6 — devam ediyor:** frontend.
   - Adım 1 tamamlandı: classify yanıtı katalog adlarını (`document_type_name`, `institution_name`) da döndürüyor.
-  - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si. Şimdilik yalnızca basit bir başlangıç ekranı var.
-- **Sıradaki adım:** yükleme ekranı (dosya seçimi, istek, yükleniyor durumu).
+  - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si.
+  - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu ve sade bir sonuç satırı.
+- **Sıradaki adım:** ayrıntılı sonuç ve hata ekranı (`needs_review`, `review_reason`, HTTP kodlarına göre mesajlar).
 
 ### Geliştirme ortamı
 
@@ -122,7 +123,7 @@ Günlük geliştirme akışı:
 4. `alembic upgrade head`.
 5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
 6. Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` (ya da `http://127.0.0.1:8000/docs`).
-7. Frontend için ayrı bir terminalde, `frontend/` içinde: `npm run dev` → `http://localhost:5173`. Backend'in 5. adımda çalışıyor olması gerekir; proxy sayesinde `http://localhost:5173/api/documents/classify` isteği backend'e ulaşır.
+7. Frontend için ayrı bir terminalde, `frontend/` içinde: `npm run dev` → `http://localhost:5173`. Backend'in 5. adımda çalışıyor olması gerekir; proxy sayesinde `http://localhost:5173/api/documents/classify` isteği backend'e ulaşır. Arayüzden PDF veya DOCX seçip **Sınıflandır** ile gönderebilirsiniz.
 
 Frontend production derlemesi `frontend/` içinde `npm run build` ile alınır (çıktı: `dist/`, Git'e girmez).
 

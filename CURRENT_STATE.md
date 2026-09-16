@@ -8,7 +8,7 @@
 
 **Aşama 5 — `POST /api/documents/classify` endpoint'i tamamlandı.** Backend ana MVP akışı uçtan uca çalışıyor: upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt. Endpoint testleri geçti; gerçek Docker PostgreSQL + gerçek Gemini ile tek belgelik smoke testi başarılı. Frontend henüz yok.
 
-Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Adım 1 tamamlandı:** classify yanıtı `document_type_name` ve `institution_name` alanlarını da döndürüyor. **Adım 2 tamamlandı:** `frontend/` iskeleti (React + Vite + TypeScript) kuruldu ve `/api` proxy'si gerçek classify isteğiyle doğrulandı. Frontend'de şimdilik yalnızca basit bir başlangıç ekranı var; yükleme ve sonuç ekranı sıradaki adım.
+Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Adım 1 tamamlandı:** classify yanıtı `document_type_name` ve `institution_name` alanlarını da döndürüyor. **Adım 2 tamamlandı:** `frontend/` iskeleti (React + Vite + TypeScript) kuruldu ve `/api` proxy'si gerçek classify isteğiyle doğrulandı. **Adım 3 tamamlandı:** yükleme ekranı çalışıyor — dosya seçimi, ön kontroller, 120 sn zaman aşımlı classify isteği ve yükleniyor durumu. Sonuç şimdilik tek satır olarak gösteriliyor; ayrıntılı sonuç ve hata ekranı sıradaki adım.
 
 ## Repo durumu
 
@@ -20,7 +20,7 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
   - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
   - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4), classify endpoint'i ve testleri (Aşama 5).
-  - `frontend/` — Vite React + TypeScript iskeleti (Aşama 6 · Adım 2): `index.html`, `src/main.tsx`, `src/App.tsx`, `src/App.css`, `src/index.css`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, şablondan gelen `.gitignore` ve `.oxlintrc.json`. `node_modules/` ve `dist/` `frontend/.gitignore` ile Git dışında.
+  - `frontend/` — Vite React + TypeScript uygulaması (Aşama 6 · Adım 2–3): `index.html`, `src/main.tsx`, `src/App.tsx` (yükleme akışının tamamı tek bileşende), `src/App.css`, `src/index.css`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, şablondan gelen `.gitignore` ve `.oxlintrc.json`. `node_modules/` ve `dist/` `frontend/.gitignore` ile Git dışında.
 - Geliştirme akışı (D-036):
   - İlk kurulum, `backend/` içinde: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` → `.env.example`'ı `.env` olarak kopyala.
   - Günlük: Docker Desktop'ı başlat → repo kökünde `docker compose up -d` → `backend/` içinde venv'i aktif et → `alembic upgrade head` → `uvicorn app.main:app --reload`.
@@ -209,9 +209,26 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 - [x] Backend regresyonu: `pytest` 92 passed, `GET /health` → `200`. Alembic ve şema değişmedi (`2ab2daa5828a (head)`).
 - [x] `README.md` güncellendi: frontend artık mevcut, kurulum/çalıştırma komutları ve proxy anlatımı eklendi, "frontend henüz yok" ifadeleri kaldırıldı.
 
+**Aşama 6 · Adım 3 — Yükleme ekranı (D-039, D-040)**
+
+- [x] `src/App.tsx`: tek bileşende dosya seçimi → ön kontrol → classify isteği → yükleniyor → sade sonuç/hata. Yeni bağımlılık eklenmedi; yerleşik `fetch`, `FormData` ve `AbortController` kullanıldı.
+  - Dosya seçimi: `accept=".pdf,.docx"`, tek dosya; seçilen dosyanın adı ve boyutu ekranda gösterilir.
+  - Ön kontrol (D-040): uzantı `.pdf`/`.docx` değilse "Yalnızca PDF veya DOCX dosyaları desteklenir.", boyut sınırı aşılırsa "Dosya boyutu 50 MB'ı aşamaz." Geçersiz dosyada gönder butonu kapalı kalır ve istek atılmaz. `MAX_FILE_SIZE` tek sabit olarak tanımlı; backend doğrulamaları (413/415) olduğu gibi duruyor.
+  - İstek: `POST /api/documents/classify`, `FormData` içinde `file` alanı, göreli yol (backend adresi kodda yok), `Content-Type` elle verilmiyor.
+  - Zaman aşımı (D-039): `REQUEST_TIMEOUT_MS = 120_000`, `AbortController` + `setTimeout`; `finally` içinde `clearTimeout` ve `loading = false`. Zaman aşımında "İşlem zaman aşımına uğradı. Lütfen tekrar deneyin."
+  - Yükleniyor: "Belge sınıflandırılıyor...", gönder butonu ve dosya seçici devre dışı; istek bitince ikisi de tekrar açılıyor.
+  - Yanıt tipi: `ClassifyResponse` (D-032'nin 10 alanı + opsiyonel `message`). Sonuç `result` state'inde saklanıyor; ekranda şimdilik "Sınıflandırma tamamlandı." ve tek satır tür/kurum/status.
+  - Hata state'i: `ClassifyError { message, httpStatus, body }` — kullanıcıya yalnızca genel Türkçe mesaj gösterilir, backend gövdesi Adım 4 için saklanır. Ayrım: zaman aşımı / ağ hatası / backend non-2xx.
+- [x] `src/App.css`: form, buton, dosya bilgisi, durum, hata ve sonuç için düz CSS. Kütüphane eklenmedi (ikon, toast, modal, drag-drop, router yok).
+- [x] Doğrulama — `npm run build` başarılı (`tsc -b` hatasız, 205 ms). Tarayıcıda gerçek UI ile:
+  - `.txt` seçimi → "Yalnızca PDF veya DOCX dosyaları desteklenir.", buton kapalı, istek gitmedi.
+  - 51 MB `.pdf` seçimi → "Dosya boyutu 50 MB'ı aşamaz.", buton kapalı, istek gitmedi.
+  - Geçerli sentetik PDF → yükleniyor durumu göründü, ardından `200`: "Talep Dilekçesi · Fen İşleri Müdürlüğü · classified" (1 gerçek Gemini isteği). Zincir: UI → `/api` → Vite proxy → FastAPI → Gemini → PostgreSQL → yanıt.
+- [x] Smoke temizliği: `documents` kaydı ve storage dosyası silindi (0 satır, yalnızca `.gitkeep`), geçici PDF scratch alanından kaldırıldı. Backend regresyonu: `pytest` 92 passed, `GET /health` → `200`. Backend kodu değişmedi.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Aşama 6 · Adım 2 tamamlandı; yükleme ekranına (Adım 3) başlamak için onay bekleniyor.
+- Yok. Aşama 6 · Adım 3 tamamlandı; sonuç ve hata ekranına (Adım 4) başlamak için onay bekleniyor.
 
 ## Bilinen problemler ve riskler
 
@@ -246,7 +263,9 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 - Vite proxy yalnızca geliştirme ortamı içindir (D-038). Frontend ve backend ayrı origin'lerde dağıtılacaksa CORS veya reverse proxy kararı ayrıca verilmelidir.
 - Vite dev sunucusu varsayılan ayarla yalnızca IPv6 `::1` (yani `localhost`) üzerinde dinliyor; `http://127.0.0.1:5173` bağlantı kuramıyor. Tarayıcı ve komut satırı testlerinde `http://localhost:5173` kullanılmalı. Gerekirse `vite.config.ts` içinde `server.host` sabitlenebilir (şimdilik yapılmadı).
 - Frontend'de şablondan gelen `oxlint` dev bağımlılığı ve `.oxlintrc.json` duruyor (`npm run lint`). Backend tarafında karşılık gelen bir linter yok; istenirse kaldırılabilir.
-- Frontend'de test altyapısı yok; Adım 2 doğrulaması build ve gerçek proxy smoke testiyle yapıldı.
+- Frontend'de test altyapısı yok; doğrulama build ve tarayıcıda gerçek akışla yapılıyor.
+- 120 sn zaman aşımı yolu gerçek bir 120 sn beklemeyle denenmedi; yalnızca kod yolu ve temizliği (`clearTimeout`, `loading` sıfırlama) incelendi. Yavaş yanıt senaryosu Adım 4'te hata UX'iyle birlikte ele alınabilir.
+- Backend `413`/`415`/`422`/`502`/`500` yanıtları şu an kullanıcıya tek bir genel mesajla gösteriliyor; HTTP kodu ve yanıt gövdesi `ClassifyError` içinde saklanıyor ve Adım 4'te ayrıştırılacak.
 
 ## Açık sorular
 
@@ -256,8 +275,7 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 
 ## Sıradaki geliştirme adımları
 
-**Aşama 6 — Frontend.** Adım 1 (backend ad alanları) ve Adım 2 (iskelet + proxy) tamamlandı. Onay alındıktan sonra kalan sıra:
+**Aşama 6 — Frontend.** Adım 1 (backend ad alanları), Adım 2 (iskelet + proxy) ve Adım 3 (yükleme ekranı) tamamlandı. Onay alındıktan sonra kalan sıra:
 
-3. Yükleme ekranı: dosya seçimi ve ön kontroller (D-040), 120 sn zaman aşımlı istek (D-039), yükleniyor durumu. → doğrulama: geçerli PDF/DOCX sonuç döndürür; 50 MB üstü dosya ve `.txt` gönderilmeden uyarılır.
 4. Sonuç ve hata ekranı: tür/kurum adları, `needs_review` ve `review_reason`; hata durumları 413, 415, dosya gönderilmediğindeki FastAPI 422, `failed` 422, 502, 500 ve zaman aşımı. → doğrulama: her durumda kullanıcıya anlaşılır bir mesaj gösterilir.
 5. Uçtan uca manuel test (Docker PostgreSQL + gerçek Gemini), ardından `CURRENT_STATE.md` ve `README.md` güncellenir.
