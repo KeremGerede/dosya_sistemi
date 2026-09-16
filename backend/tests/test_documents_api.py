@@ -20,13 +20,16 @@ from app.services import classification_service, file_service
 
 DOCUMENT_TYPES, INSTITUTIONS = classification_service.load_catalogs()
 DOCUMENT_TYPE = DOCUMENT_TYPES[0]["id"]
+DOCUMENT_TYPE_NAME = DOCUMENT_TYPES[0]["name"]
 INSTITUTION = INSTITUTIONS[0]["id"]
+INSTITUTION_NAME = INSTITUTIONS[0]["name"]
 CLASSIFY_URL = "/api/documents/classify"
 SECRET_MARKER = "GIZLI_BELGE_ICERIGI"  # loglarda görünmemesi gereken belge metni işareti
 PDF_TEXT = f"Sayin yetkili, sokagimizdaki copler toplanmiyor. {SECRET_MARKER}"
 DOCX_TEXT = f"Sayın yetkili, parktaki salıncak kırık. {SECRET_MARKER}"
 RESPONSE_FIELDS = {
-    "document_id", "file_name", "file_type", "document_type", "institution_id", "needs_review", "review_reason", "status",
+    "document_id", "file_name", "file_type", "document_type", "document_type_name", "institution_id", "institution_name",
+    "needs_review", "review_reason", "status",
 }
 TEXT_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
@@ -151,8 +154,10 @@ def test_valid_document_is_classified(client, session_factory, storage_dir, fake
     body = response.json()
     assert set(body) == RESPONSE_FIELDS  # file_reference ve extracted_text yanıtta yok
     assert body == {
-        "document_id": body["document_id"], "file_name": file_name, "file_type": file_type, "document_type": DOCUMENT_TYPE,
-        "institution_id": INSTITUTION, "needs_review": False, "review_reason": None, "status": "classified",
+        "document_id": body["document_id"], "file_name": file_name, "file_type": file_type,
+        "document_type": DOCUMENT_TYPE, "document_type_name": DOCUMENT_TYPE_NAME,
+        "institution_id": INSTITUTION, "institution_name": INSTITUTION_NAME,
+        "needs_review": False, "review_reason": None, "status": "classified",
     }
     [document] = all_documents(session_factory)
     assert str(document.id) == body["document_id"]
@@ -173,6 +178,8 @@ def test_needs_review_result_returns_200_with_needs_review_status(client, sessio
     assert (body["status"], body["needs_review"], body["institution_id"], body["review_reason"]) == (
         "needs_review", True, None, "Kurum belirsiz.",
     )
+    # Kurum atanmadığında ad da null; belge türü adı yine katalogdan gelir.
+    assert (body["institution_name"], body["document_type_name"]) == (None, classification_service.DOCUMENT_TYPE_NAMES["other"])
     [document] = all_documents(session_factory)
     assert (document.status, document.needs_review, document.institution_id, document.review_reason) == (
         "needs_review", True, None, "Kurum belirsiz.",
@@ -279,9 +286,10 @@ def test_text_extraction_failure_returns_422_with_failed_record(client, session_
     body = response.json()
     assert set(body) == RESPONSE_FIELDS | {"message"}
     assert body["message"] == TEXT_FAILED_MESSAGE
-    assert (body["status"], body["document_type"], body["institution_id"], body["needs_review"], body["review_reason"]) == (
-        "failed", None, None, False, None,
-    )
+    assert (
+        body["status"], body["document_type"], body["document_type_name"], body["institution_id"], body["institution_name"],
+        body["needs_review"], body["review_reason"],
+    ) == ("failed", None, None, None, None, False, None)
     [document] = all_documents(session_factory)
     assert str(document.id) == body["document_id"]
     assert (document.status, document.document_type, document.institution_id, document.needs_review, document.review_reason) == (
@@ -303,9 +311,10 @@ def test_classification_error_returns_502_with_failed_record(client, session_fac
     assert set(body) == RESPONSE_FIELDS | {"message"}
     assert body["message"] == CLASSIFICATION_FAILED_MESSAGE
     assert "ham Gemini" not in response.text and "API_KEY_INVALID" not in response.text
-    assert (body["status"], body["document_type"], body["institution_id"], body["needs_review"], body["review_reason"]) == (
-        "failed", None, None, False, None,
-    )
+    assert (
+        body["status"], body["document_type"], body["document_type_name"], body["institution_id"], body["institution_name"],
+        body["needs_review"], body["review_reason"],
+    ) == ("failed", None, None, None, None, False, None)
     [document] = all_documents(session_factory)
     assert (document.status, document.document_type, document.institution_id, document.needs_review, document.review_reason) == (
         "failed", None, None, False, None,
@@ -316,6 +325,19 @@ def test_classification_error_returns_502_with_failed_record(client, session_fac
 
 
 # --- Tutarlılık ---
+
+
+def test_response_names_are_read_from_catalogs_and_not_stored(client, session_factory, fake_classify, monkeypatch):
+    fake_classify(classification())
+    monkeypatch.setitem(classification_service.DOCUMENT_TYPE_NAMES, DOCUMENT_TYPE, "Katalogdan Gelen Tür")
+    monkeypatch.setitem(classification_service.INSTITUTION_NAMES, INSTITUTION, "Katalogdan Gelen Kurum")
+
+    body = upload(client, "dilekce.docx", make_docx(DOCX_TEXT)).json()
+
+    assert (body["document_type_name"], body["institution_name"]) == ("Katalogdan Gelen Tür", "Katalogdan Gelen Kurum")
+    assert (body["document_type"], body["institution_id"]) == (DOCUMENT_TYPE, INSTITUTION)  # ID davranışı değişmez
+    [document] = all_documents(session_factory)
+    assert not hasattr(document, "document_type_name") and not hasattr(document, "institution_name")  # adlar DB'ye yazılmaz
 
 
 def test_user_file_name_is_not_used_as_storage_path(client, session_factory, storage_dir, fake_classify, tmp_path):

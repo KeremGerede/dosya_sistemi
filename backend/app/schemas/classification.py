@@ -35,7 +35,9 @@ class ClassifyResponse(BaseModel):
     file_name: str
     file_type: str
     document_type: str | None
+    document_type_name: str | None
     institution_id: str | None
+    institution_name: str | None
     needs_review: bool
     review_reason: str | None
     status: str

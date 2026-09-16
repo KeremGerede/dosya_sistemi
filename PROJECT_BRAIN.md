@@ -38,7 +38,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 | ORM / DB | SQLAlchemy, PostgreSQL |
 | Migration | Alembic |
 | Dosya depolama | Uygulamanın storage klasörü (dosya sistemi) |
-| Frontend | React, Vite |
+| Frontend | React, Vite, TypeScript (npm, düz CSS) |
 | Geliştirme veritabanı | PostgreSQL 18, Docker Compose (yalnızca yerel geliştirme) |
 
 Ortam değişkenleri:
@@ -86,7 +86,7 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 
 - PostgreSQL 18 Docker Compose ile çalışır. Tek servis; veriler Docker yönetimindeki `dosya_sistemi_pgdata` volume'unda kalır. Host portu `127.0.0.1:5433`.
 - FastAPI backend yerel makinede çalışır (`backend/.venv`, `alembic upgrade head`, `uvicorn app.main:app --reload`).
-- React/Vite frontend de ileride yerel makinede çalışacak.
+- React/Vite frontend de yerel makinede çalışacak. İstekler `/api/...` göreli yollarına yapılır; Vite dev sunucusu bunları `http://127.0.0.1:8000` adresine proxy'ler, backend'e CORS middleware eklenmez (D-038).
 - Backend ve frontend şimdilik containerize edilmez.
 
 ## 5. Dosya işleme ve depolama
@@ -227,12 +227,16 @@ Başarılı yanıt en az şu alanları içerir:
   "file_name": "dilekce.docx",
   "file_type": "docx",
   "document_type": "complaint",
+  "document_type_name": "Şikayet",
   "institution_id": "temizlik_isleri",
+  "institution_name": "Temizlik İşleri Müdürlüğü",
   "needs_review": false,
   "review_reason": null,
   "status": "classified"
 }
 ```
+
+`document_type_name` ve `institution_name`, ID'ye karşılık gelen katalog `name` değerleridir; yanıt üretilirken kataloglardan okunur, veritabanında saklanmaz. `institution_id` `null` ise `institution_name` de `null` olur. İstemci gösterim için katalogları kopyalamaz (D-032).
 
 `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında **dönmez**.
 
@@ -255,7 +259,9 @@ Kabul sonrası `failed` yanıt gövdesi, başarılı yanıttaki alanları ve gen
   "file_name": "dilekce.pdf",
   "file_type": "pdf",
   "document_type": null,
+  "document_type_name": null,
   "institution_id": null,
+  "institution_name": null,
   "needs_review": false,
   "review_reason": null,
   "status": "failed",
@@ -289,7 +295,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
 - Tek iş endpoint'i: `POST /api/documents/classify` (ayrıca operasyonel `GET /health`)
-- Basit React + Vite yükleme ve sonuç ekranı
+- Basit React + Vite + TypeScript yükleme ve sonuç ekranı (Vite proxy ile `/api`, 120 sn istek zaman aşımı)
 
 ## 12. Açıkça kapsam dışı
 

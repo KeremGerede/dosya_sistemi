@@ -90,6 +90,10 @@ def build_output_model(document_types: list[dict], institutions: list[dict]) -> 
 DOCUMENT_TYPES, INSTITUTIONS = load_catalogs()
 OUTPUT_MODEL = build_output_model(DOCUMENT_TYPES, INSTITUTIONS)
 
+# ID → katalogdaki görünen ad (D-032). Yanıt üretilirken okunur; veritabanına yazılmaz.
+DOCUMENT_TYPE_NAMES = {item["id"]: item["name"] for item in DOCUMENT_TYPES}
+INSTITUTION_NAMES = {item["id"]: item["name"] for item in INSTITUTIONS}
+
 
 def build_prompt(text: str) -> str:
     """Normalize edilmiş metnin yalnızca ilk MAX_GEMINI_TEXT_LENGTH karakteri prompt'a girer."""

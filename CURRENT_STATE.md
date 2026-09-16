@@ -1,12 +1,14 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-15
+> **Son güncelleme:** 2026-09-16
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
 ## Mevcut aşama
 
 **Aşama 5 — `POST /api/documents/classify` endpoint'i tamamlandı.** Backend ana MVP akışı uçtan uca çalışıyor: upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt. Endpoint testleri geçti; gerçek Docker PostgreSQL + gerçek Gemini ile tek belgelik smoke testi başarılı. Frontend henüz yok.
+
+Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Aşama 6 · Adım 1 tamamlandı:** classify yanıtı artık `document_type_name` ve `institution_name` alanlarını da döndürüyor. Sıradaki adım `frontend/` iskeleti.
 
 ## Repo durumu
 
@@ -176,9 +178,28 @@
 - [x] `README.md`: classify çalışan endpoint, backend ana MVP akışı tamamlandı, sıradaki aşama frontend.
 - [x] Doğrulama: `pytest` 90 passed (24 + 44 + 22); `GET /health` 200; `alembic current` = `2ab2daa5828a (head)`; Docker PostgreSQL healthy.
 
+**Aşama 6 öncesi kararlar (yalnızca dokümantasyon)**
+
+- [x] `DECISIONS.md`: `## Frontend` bölümü eklendi — D-037 (React + Vite + TypeScript, npm, düz CSS; Tailwind/Redux/UI kütüphanesi yok), D-038 (Vite proxy `/api` → `http://127.0.0.1:8000`, CORS middleware yok), D-039 (frontend isteğinde 120 sn zaman aşımı), D-040 (frontend'de uzantı ve 50 MB ön kontrolü; otorite backend).
+- [x] `DECISIONS.md`: D-032 güncellendi — yanıta `document_type_name` ve `institution_name` eklenir; adlar katalog `name` değerlerinden türetilir, veritabanında saklanmaz; `institution_id = null` ve `failed` durumunda ad alanları `null`; mevcut ID alanları değişmez. D-005'e D-037 referansı eklendi.
+- [x] `PROJECT_BRAIN.md`: §3 frontend yığını, §4 geliştirme ortamında proxy notu, §9 başarılı ve `failed` yanıt örnekleri + adların kaynağı, §11 frontend satırı güncellendi.
+- [x] Kararlar alındığında kod ve testler değiştirilmedi; uygulama Aşama 6 · Adım 1'de yapıldı.
+
+**Aşama 6 · Adım 1 — Classify yanıtına katalog adları (D-032)**
+
+- [x] `app/services/classification_service.py`: kataloglar yüklendikten sonra `DOCUMENT_TYPE_NAMES` ve `INSTITUTION_NAMES` (ID → `name`) sözlükleri. Yeni servis, repository veya soyutlama eklenmedi.
+- [x] `app/schemas/classification.py`: `ClassifyResponse`'a `document_type_name` ve `institution_name` (`str | None`). `FailedClassifyResponse` miras aldığı için ayrıca değişmedi.
+- [x] `app/api/documents.py`: `_response_body` adları bu sözlüklerden `.get(...)` ile okur; ID `null` ise ad da `null` olur, `failed` yanıtlarda iki alan da `null`.
+- [x] Veritabanı modeli, migration ve `documents` tablosu değişmedi; adlar saklanmaz, her yanıtta katalogdan okunur.
+- [x] Testler (2 yeni test, mevcut beş test yeni sözleşmeye göre güncellendi):
+  - `tests/test_documents_api.py` (23): classified yanıtta adlar doğru; `needs_review` + `institution_id = null` → `institution_name = null`, tür adı yine dolu; `failed` 422 ve 502'de iki ad da `null`; ID alanlarının davranışı değişmedi; yanıtta hâlâ `file_reference` ve `extracted_text` yok; adlar katalog sözlüğünden okunuyor (sözlük değiştirilince yanıt değişiyor) ve `Document` kaydında ad alanı yok.
+  - `tests/test_classification_service.py` (45): ad sözlükleri katalog JSON'larıyla birebir aynı.
+- [x] `README.md` yanıt alanları güncellendi.
+- [x] Doğrulama: `pytest` 92 passed (24 + 45 + 23); `GET /health` → `200 {"status": "ok"}`; `/openapi.json` içinde `ClassifyResponse` ve `FailedClassifyResponse` yeni alanları içeriyor; `alembic current` = `2ab2daa5828a (head)`; Docker PostgreSQL `Up (healthy)`. Gerçek Gemini smoke testi tekrarlanmadı: değişiklik yalnızca yanıt ve katalog eşlemesi seviyesinde.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Sıradaki aşamaya (frontend) başlamak için onay bekleniyor.
+- Yok. Aşama 6 · Adım 1 tamamlandı; `frontend/` iskeletine (Adım 2) başlamak için onay bekleniyor.
 
 ## Bilinen problemler ve riskler
 
@@ -207,6 +228,10 @@
 - Katalogda olmayan birimlere ait belgeler (ör. ulaşım, veteriner hizmetleri, su/kanalizasyon) `needs_review`'a düşecektir. Bu beklenen davranıştır; sık görülürse katalog genişletilir.
 - 50.000 karakteri aşan belgelerde yalnızca ilk 50.000 karakter değerlendirilir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
 - İşlem senkron: en kötü durumda Gemini aşaması yaklaşık 93 sn sürer (3 × 30 sn timeout + 1 sn + 2 sn bekleme). Frontend ve varsa reverse proxy istek zaman aşımları bundan uzun olmalı.
+- Katalog dosyaları değiştirilirse görünen adlar da değişir; kataloglar modül yüklenirken okunduğu için uygulama yeniden başlatılmalıdır. Veritabanındaki eski kayıtlar ID tuttuğu için bu kayıtların adı da yeni katalogdan üretilir.
+- Frontend'in 120 sn zaman aşımı (D-039) yalnızca istemci tarafını keser; backend işlemeye devam edip kaydı yazabilir, yani kullanıcı hata görse de belge sınıflandırılmış olabilir. Ayrıca yükleme süresi 93 sn'lik en kötü duruma eklenir; sınıra yakın büyük dosyalarda 120 sn yetmeyebilir.
+- 50 MB sınırı D-040 ile frontend'de de yer alacak; sınır değişirse `file_service.MAX_FILE_SIZE` ile birlikte güncellenmelidir.
+- Vite proxy yalnızca geliştirme ortamı içindir (D-038). Frontend ve backend ayrı origin'lerde dağıtılacaksa CORS veya reverse proxy kararı ayrıca verilmelidir.
 
 ## Açık sorular
 
@@ -216,6 +241,9 @@
 
 ## Sıradaki geliştirme adımları
 
-Onay alındıktan sonra:
+**Aşama 6 — Frontend.** Adım 1 (backend ad alanları) tamamlandı. Onay alındıktan sonra kalan sıra:
 
-1. Frontend: React + Vite ile yükleme ve sonuç ekranı (yerel çalışır, D-036). Senkron endpoint ~93 sn'ye kadar sürebileceği için istek zaman aşımı buna göre ayarlanmalı.
+2. `frontend/` iskeleti: Vite React + TypeScript şablonu, npm, düz CSS; `vite.config.ts` içinde `/api` → `http://127.0.0.1:8000` proxy (D-037, D-038). → doğrulama: dev sunucu açılır, backend çalışırken proxy üzerinden classify isteği 200 döner.
+3. Yükleme ekranı: dosya seçimi ve ön kontroller (D-040), 120 sn zaman aşımlı istek (D-039), yükleniyor durumu. → doğrulama: geçerli PDF/DOCX sonuç döndürür; 50 MB üstü dosya ve `.txt` gönderilmeden uyarılır.
+4. Sonuç ve hata ekranı: tür/kurum adları, `needs_review` ve `review_reason`; hata durumları 413, 415, dosya gönderilmediğindeki FastAPI 422, `failed` 422, 502, 500 ve zaman aşımı. → doğrulama: her durumda kullanıcıya anlaşılır bir mesaj gösterilir.
+5. Uçtan uca manuel test (Docker PostgreSQL + gerçek Gemini), ardından `CURRENT_STATE.md` ve `README.md` güncellenir.

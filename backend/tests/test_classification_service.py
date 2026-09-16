@@ -92,6 +92,12 @@ def test_catalogs_are_loaded_from_config_files():
     assert all(set(item) == {"id", "name", "description"} for item in INSTITUTIONS)
 
 
+def test_catalog_name_maps_match_catalog_files():
+    """Gösterim adları katalog dosyalarından türetilir; kodda ayrı bir eşleme tutulmaz (D-032)."""
+    assert classification_service.DOCUMENT_TYPE_NAMES == {item["id"]: item["name"] for item in DOCUMENT_TYPES}
+    assert classification_service.INSTITUTION_NAMES == {item["id"]: item["name"] for item in INSTITUTIONS}
+
+
 def write_catalogs(config_dir: Path, document_type_ids: list[str]) -> None:
     config_dir.mkdir()
     document_types = [{"id": item_id, "name": item_id} for item_id in document_type_ids]

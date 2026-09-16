@@ -44,7 +44,7 @@
 ## Teknoloji
 
 ### D-005 — Backend ve frontend yığını
-- **Karar:** Backend: Python + FastAPI. Frontend: React + Vite.
+- **Karar:** Backend: Python + FastAPI. Frontend: React + Vite (detaylar: D-037).
 - **Gerekçe:** Hızlı geliştirme; FastAPI ve Pydantic doğal uyum sağlar; Vite hafif ve hızlı bir frontend kurulumu sunar.
 
 ### D-006 — PostgreSQL, senkron SQLAlchemy ve psycopg 3
@@ -164,8 +164,11 @@
 - **Gerekçe:** Tüm akışı tek çağrıda karşılar; entegrasyon yüzeyi küçük ve net kalır. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
 
 ### D-032 — Classify yanıt alanları
-- **Karar:** Başarılı yanıt en az `document_id`, `file_name`, `file_type`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `status` alanlarını içerir. `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında dönmez.
-- **Gerekçe:** `file_reference` iç depolama bilgisidir; `extracted_text` büyük olabilir ve sınıflandırma sonucunu kullanan istemcinin ihtiyacı değildir.
+- **Karar:** Başarılı yanıt en az `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `status` alanlarını içerir. `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında dönmez.
+  - `document_type_name` ve `institution_name`, ID'ye karşılık gelen katalog `name` değerleridir; yanıt üretilirken backend'de zaten yüklü olan kataloglardan okunur, veritabanında saklanmaz.
+  - `institution_id = null` ise `institution_name = null`. `failed` yanıtlarda (D-034) her iki ad alanı da `null`'dır.
+  - ID alanlarının adı, anlamı ve davranışı değişmez; ad alanları yalnızca gösterim içindir.
+- **Gerekçe:** `file_reference` iç depolama bilgisidir; `extracted_text` büyük olabilir ve sınıflandırma sonucunu kullanan istemcinin ihtiyacı değildir. Ad alanları sayesinde istemci Türkçe adları göstermek için katalogları kopyalamak zorunda kalmaz; kataloglar backend'de tek kaynak olarak kalır (D-012). Adlar ID'den türetilebildiği için veritabanına yazılmaz.
 
 ### D-034 — Kabul sonrası `failed` yanıtı
 - **Karar:** Kabul edilmiş bir belge `failed` olduğunda yanıt gövdesi D-032'deki alanları (`status = "failed"`, sınıflandırma alanları `null`, `needs_review = false`) ve genel bir `message` alanını içerir. HTTP kodu:
@@ -197,3 +200,21 @@
 ### D-025 — MVP'de authentication ve admin paneli yok
 - **Karar:** Kimlik doğrulama/yetkilendirme ve admin paneli kapsam dışı.
 - **Gerekçe:** MVP sınıflandırma akışını kanıtlamaya odaklanır; auth ihtiyacı entegrasyon gereksinimleriyle birlikte belirlenecek.
+
+## Frontend
+
+### D-037 — Frontend yığını: React + Vite + TypeScript, npm, düz CSS
+- **Karar:** Frontend React + Vite ile **TypeScript** kullanılarak yazılır. Paket yöneticisi **npm**. Stil için **düz CSS** kullanılır. Tailwind, UI bileşen kütüphanesi, Redux veya ek state management kütüphanesi eklenmez; gereken durum React'in kendi state'iyle tutulur.
+- **Gerekçe:** Tek sayfalık yükleme ve sonuç ekranı için ek kütüphane gereksiz katman olur (D-024). TypeScript, API yanıt alanlarındaki uyuşmazlığı çalışma zamanı yerine derleme zamanında yakalar.
+
+### D-038 — Geliştirmede frontend–backend iletişimi Vite proxy ile, CORS middleware yok
+- **Karar:** Frontend istekleri `/api/...` göreli yollarına yapılır; Vite dev sunucusu bu yolları `http://127.0.0.1:8000` adresine proxy'ler. Frontend kodunda backend adresi sabit yazılmaz. Bu aşamada FastAPI'ye CORS middleware eklenmez. Proxy hedefinde `localhost` değil `127.0.0.1` kullanılır (D-036 ile aynı gerekçe).
+- **Gerekçe:** Tarayıcı için istekler aynı origin'den gider, bu yüzden CORS gerekmez ve backend değişmeden kalır. Dağıtımda frontend ile backend ayrı origin'lerde sunulacaksa bu karar güncellenerek CORS ele alınır.
+
+### D-039 — Frontend istek zaman aşımı: 120 saniye
+- **Karar:** Frontend, classify isteği için 120 saniye zaman aşımı uygular. Süre dolarsa istek iptal edilir ve kullanıcıya genel bir hata mesajı gösterilir.
+- **Gerekçe:** Senkron akışın en kötü durumu yaklaşık 93 saniyedir (D-033); 120 saniye bunun üzerine pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir.
+
+### D-040 — Frontend'de dosya ön kontrolü; otorite backend'de
+- **Karar:** Dosya seçildiğinde frontend uzantının `.pdf` veya `.docx` olduğunu ve boyutun 50 MB'ı aşmadığını kontrol eder; uymayan dosya gönderilmeden kullanıcıya uyarı gösterilir. Bu kontrol yalnızca kullanıcı deneyimi içindir: kabul kararı backend'e aittir (D-001, D-028), backend doğrulamaları kaldırılmaz ve `413` / `415` yanıtları frontend'de ayrıca işlenir.
+- **Gerekçe:** Kullanıcı yanlış veya büyük dosyada anında geri bildirim alır; gereksiz yükleme ve sunucu işi önlenir. İstemci kontrolü atlatılabileceği için güvenlik sınırı sayılmaz. 50 MB sınırı bu nedenle frontend'de de yazılır; sınır değişirse iki yer birlikte güncellenmelidir.

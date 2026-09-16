@@ -62,7 +62,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 **`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF veya DOCX dosyası.
 
-Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `status` (`classified` | `needs_review` | `failed`). `422` ve `502` yanıtlarında ayrıca genel bir `message` alanı bulunur. Dosyanın storage yolu ve çıkarılan metin veritabanında saklanır, yanıtta dönmez.
+Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `status` (`classified` | `needs_review` | `failed`). `422` ve `502` yanıtlarında ayrıca genel bir `message` alanı bulunur. `document_type_name` ve `institution_name` katalog dosyalarındaki `name` değerleridir; ID `null` ise ilgili ad da `null` olur. Dosyanın storage yolu ve çıkarılan metin veritabanında saklanır, yanıtta dönmez.
 
 | HTTP kodu | Anlamı |
 |---|---|

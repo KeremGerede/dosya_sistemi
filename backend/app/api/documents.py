@@ -111,8 +111,11 @@ def _response_body(document: Document, message: str | None) -> ClassifyResponse:
         "document_id": document.id,
         "file_name": document.file_name,
         "file_type": document.file_type,
+        # Adlar kataloglardan okunur (D-032); ID null ise ad da null olur.
         "document_type": document.document_type,
+        "document_type_name": classification_service.DOCUMENT_TYPE_NAMES.get(document.document_type),
         "institution_id": document.institution_id,
+        "institution_name": classification_service.INSTITUTION_NAMES.get(document.institution_id),
         "needs_review": document.needs_review,
         "review_reason": document.review_reason,
         "status": document.status,
