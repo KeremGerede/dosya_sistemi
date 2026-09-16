@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend **henüz yok**.
+> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend iskeleti kuruldu (React + Vite + TypeScript, `/api` proxy'si çalışıyor); yükleme ve sonuç ekranı henüz yok.
 
 ## MVP Akışı
 
@@ -41,9 +41,9 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 **Backend:** Python · FastAPI · PyMuPDF · python-docx · Google Gemini API (`google-genai`) · Pydantic · SQLAlchemy · PostgreSQL · Alembic
 
-**Frontend:** React · Vite
+**Frontend:** React · Vite · TypeScript (npm, düz CSS)
 
-**Geliştirme ortamı:** PostgreSQL 18 Docker Compose ile çalışır; backend (ve ileride frontend) yerel makinede çalışır.
+**Geliştirme ortamı:** PostgreSQL 18 Docker Compose ile çalışır; backend ve frontend yerel makinede çalışır.
 
 ## Temel MVP Kuralları
 
@@ -86,13 +86,16 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
   - Retry/timeout politikası uygulanmış: 30 sn timeout, en fazla 3 deneme, 1 sn / 2 sn bekleme.
   - `gemini-3.5-flash-lite` gerçek API smoke testiyle doğrulandı.
 - **Aşama 5 — tamamlandı:** `POST /api/documents/classify` endpoint'i; backend ana MVP akışı tamamlandı. Upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt akışı, gerçek Docker PostgreSQL ve gerçek Gemini ile uçtan uca doğrulandı.
-- **Henüz yok:** frontend.
-- **Sıradaki aşama:** React + Vite frontend (yükleme ve sonuç ekranı).
+- **Aşama 6 — devam ediyor:** frontend.
+  - Adım 1 tamamlandı: classify yanıtı katalog adlarını (`document_type_name`, `institution_name`) da döndürüyor.
+  - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si. Şimdilik yalnızca basit bir başlangıç ekranı var.
+- **Sıradaki adım:** yükleme ekranı (dosya seçimi, istek, yükleniyor durumu).
 
 ### Geliştirme ortamı
 
 - **PostgreSQL 18** repo kökündeki `docker-compose.yml` ile çalışır. Host portu `5433`'tür (5432 kullanan yerel PostgreSQL kurulumlarıyla çakışmaması için) ve yalnızca `127.0.0.1`'e açıktır.
-- **Backend** yerel makinede çalışır; **frontend** de ileride yerel makinede çalışacaktır. Şimdilik ikisi de container'da değildir.
+- **Backend** ve **frontend** yerel makinede çalışır; ikisi de container'da değildir.
+- Frontend, backend'e `/api/...` göreli yollarıyla istek atar. Vite dev sunucusu bu istekleri `http://127.0.0.1:8000` adresine proxy'ler, bu yüzden backend'de CORS ayarı yoktur ve frontend kodunda backend adresi yazılı değildir.
 
 İlk kurulum (bir kez, `backend/` içinde):
 
@@ -101,6 +104,12 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
+```
+
+Frontend için ilk kurulum (bir kez, `frontend/` içinde):
+
+```bash
+npm install
 ```
 
 `.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). Uygulama bu üç değişken olmadan başlamaz. `.env` Git'e girmez.
@@ -113,8 +122,11 @@ Günlük geliştirme akışı:
 4. `alembic upgrade head`.
 5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
 6. Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` (ya da `http://127.0.0.1:8000/docs`).
+7. Frontend için ayrı bir terminalde, `frontend/` içinde: `npm run dev` → `http://localhost:5173`. Backend'in 5. adımda çalışıyor olması gerekir; proxy sayesinde `http://localhost:5173/api/documents/classify` isteği backend'e ulaşır.
 
-Testler `backend/` içinde `pytest` ile çalışır; Docker PostgreSQL veya gerçek Gemini API gerektirmez (endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır).
+Frontend production derlemesi `frontend/` içinde `npm run build` ile alınır (çıktı: `dist/`, Git'e girmez).
+
+Testler `backend/` içinde `pytest` ile çalışır; Docker PostgreSQL veya gerçek Gemini API gerektirmez (endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır). Frontend'de henüz test yoktur.
 
 PostgreSQL'i durdurmak için repo kökünde `docker compose down` çalıştırılır. Bu komut container'ı durdurup kaldırır ama veriler Docker volume'unda (`dosya_sistemi_pgdata`) kalır; sonraki `docker compose up -d` aynı veritabanıyla devam eder.
 

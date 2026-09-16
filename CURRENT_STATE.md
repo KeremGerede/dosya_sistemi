@@ -8,24 +8,25 @@
 
 **Aşama 5 — `POST /api/documents/classify` endpoint'i tamamlandı.** Backend ana MVP akışı uçtan uca çalışıyor: upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt. Endpoint testleri geçti; gerçek Docker PostgreSQL + gerçek Gemini ile tek belgelik smoke testi başarılı. Frontend henüz yok.
 
-Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Aşama 6 · Adım 1 tamamlandı:** classify yanıtı artık `document_type_name` ve `institution_name` alanlarını da döndürüyor. Sıradaki adım `frontend/` iskeleti.
+Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Adım 1 tamamlandı:** classify yanıtı `document_type_name` ve `institution_name` alanlarını da döndürüyor. **Adım 2 tamamlandı:** `frontend/` iskeleti (React + Vite + TypeScript) kuruldu ve `/api` proxy'si gerçek classify isteğiyle doğrulandı. Frontend'de şimdilik yalnızca basit bir başlangıç ekranı var; yükleme ve sonuç ekranı sıradaki adım.
 
 ## Repo durumu
 
 - Git reposu, `main` dalı (remote: `origin`).
 - Karar geçmişi `docs: define initial MVP architecture and decisions` commit'inden itibaren Git'te izlenir.
 - Dosyalar:
-  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının tamamlandığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu ve frontend'in henüz olmadığı anlatılır.
+  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının tamamlandığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu, frontend iskeletinin kurulduğu ve yükleme ekranının henüz olmadığı anlatılır; frontend kurulum/çalıştırma komutlarını ve proxy'yi içerir.
   - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
   - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
   - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4), classify endpoint'i ve testleri (Aşama 5).
-- `frontend/` henüz yok.
+  - `frontend/` — Vite React + TypeScript iskeleti (Aşama 6 · Adım 2): `index.html`, `src/main.tsx`, `src/App.tsx`, `src/App.css`, `src/index.css`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, şablondan gelen `.gitignore` ve `.oxlintrc.json`. `node_modules/` ve `dist/` `frontend/.gitignore` ile Git dışında.
 - Geliştirme akışı (D-036):
   - İlk kurulum, `backend/` içinde: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` → `.env.example`'ı `.env` olarak kopyala.
   - Günlük: Docker Desktop'ı başlat → repo kökünde `docker compose up -d` → `backend/` içinde venv'i aktif et → `alembic upgrade head` → `uvicorn app.main:app --reload`.
   - Durdurma: `docker compose down` (veriler `dosya_sistemi_pgdata` volume'unda kalır).
   - Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` veya `http://127.0.0.1:8000/docs`.
+  - Frontend: ilk kurulum `frontend/` içinde `npm install`; geliştirme `npm run dev` → `http://localhost:5173` (backend ayrı terminalde çalışır durumda olmalı); derleme `npm run build`.
   - Testler: `backend/` içinde venv aktifken `pytest` (`pytest.ini`: `pythonpath = .`, `testpaths = tests`). Testler Docker PostgreSQL veya gerçek Gemini API gerektirmez. `tests/conftest.py` sahte `GEMINI_API_KEY`/`GEMINI_MODEL` (ve yoksa sahte `DATABASE_URL`) ayarlar; `.env`'deki gerçek anahtar testlere girmez. Endpoint testleri geçici SQLite veritabanı (`get_db` override) ve sahte `classify_text` kullanır.
 
 ## Tamamlanan işler
@@ -197,9 +198,20 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 - [x] `README.md` yanıt alanları güncellendi.
 - [x] Doğrulama: `pytest` 92 passed (24 + 45 + 23); `GET /health` → `200 {"status": "ok"}`; `/openapi.json` içinde `ClassifyResponse` ve `FailedClassifyResponse` yeni alanları içeriyor; `alembic current` = `2ab2daa5828a (head)`; Docker PostgreSQL `Up (healthy)`. Gerçek Gemini smoke testi tekrarlanmadı: değişiklik yalnızca yanıt ve katalog eşlemesi seviyesinde.
 
+**Aşama 6 · Adım 2 — Frontend iskeleti ve Vite proxy (D-037, D-038)**
+
+- [x] `frontend/` standart Vite React + TypeScript şablonuyla oluşturuldu (`npm create vite@latest frontend -- --template react-ts`). Node v26.7.0, npm 11.19.0; React 19.2, Vite 8.3, TypeScript 6.0. Uygulama bağımlılıkları yalnızca `react` ve `react-dom`; router, state kütüphanesi, UI kütüphanesi, Tailwind veya HTTP istemcisi eklenmedi.
+- [x] Vite demo içeriği temizlendi: `src/assets/`, `public/` (demo ikonları ve favicon) ve şablon `README.md` silindi; `App.tsx` sade bir başlangıç ekranı (başlık + kısa açıklama), `App.css` ve `index.css` düz CSS. `index.html` başlığı "Belge Sınıflandırma", `lang="tr"`.
+- [x] `vite.config.ts`: `server.proxy` ile `/api` → `http://127.0.0.1:8000` (D-038). Uygulama kodunda backend adresi yok; FastAPI'ye CORS middleware eklenmedi, backend kodu değişmedi.
+- [x] `npm install` (0 güvenlik açığı) ve `npm run build` (`tsc -b && vite build`) başarılı: 17 modül, ~0,5 sn, `dist/` çıktısı.
+- [x] Proxy smoke testi (gerçek zincir: curl → Vite 5173 → `/api` proxy → FastAPI 8000 → metin çıkarımı → Gemini → PostgreSQL → yanıt): geçici sentetik DOCX ile `200`, `status = classified`, `document_type = complaint` / `document_type_name = Şikayet`, `institution_id = temizlik_isleri` / `institution_name = Temizlik İşleri Müdürlüğü`, `needs_review = false`, `review_reason = null`; 1 gerçek Gemini isteği, 1,29 sn.
+- [x] Smoke testi temizliği: `documents` kaydı ve storage dosyası silindi (tabloda 0 satır, `backend/storage/` içinde yalnızca `.gitkeep`), geçici belge scratch alanından kaldırıldı. Repoda test dosyası bırakılmadı.
+- [x] Backend regresyonu: `pytest` 92 passed, `GET /health` → `200`. Alembic ve şema değişmedi (`2ab2daa5828a (head)`).
+- [x] `README.md` güncellendi: frontend artık mevcut, kurulum/çalıştırma komutları ve proxy anlatımı eklendi, "frontend henüz yok" ifadeleri kaldırıldı.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Aşama 6 · Adım 1 tamamlandı; `frontend/` iskeletine (Adım 2) başlamak için onay bekleniyor.
+- Yok. Aşama 6 · Adım 2 tamamlandı; yükleme ekranına (Adım 3) başlamak için onay bekleniyor.
 
 ## Bilinen problemler ve riskler
 
@@ -232,6 +244,9 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 - Frontend'in 120 sn zaman aşımı (D-039) yalnızca istemci tarafını keser; backend işlemeye devam edip kaydı yazabilir, yani kullanıcı hata görse de belge sınıflandırılmış olabilir. Ayrıca yükleme süresi 93 sn'lik en kötü duruma eklenir; sınıra yakın büyük dosyalarda 120 sn yetmeyebilir.
 - 50 MB sınırı D-040 ile frontend'de de yer alacak; sınır değişirse `file_service.MAX_FILE_SIZE` ile birlikte güncellenmelidir.
 - Vite proxy yalnızca geliştirme ortamı içindir (D-038). Frontend ve backend ayrı origin'lerde dağıtılacaksa CORS veya reverse proxy kararı ayrıca verilmelidir.
+- Vite dev sunucusu varsayılan ayarla yalnızca IPv6 `::1` (yani `localhost`) üzerinde dinliyor; `http://127.0.0.1:5173` bağlantı kuramıyor. Tarayıcı ve komut satırı testlerinde `http://localhost:5173` kullanılmalı. Gerekirse `vite.config.ts` içinde `server.host` sabitlenebilir (şimdilik yapılmadı).
+- Frontend'de şablondan gelen `oxlint` dev bağımlılığı ve `.oxlintrc.json` duruyor (`npm run lint`). Backend tarafında karşılık gelen bir linter yok; istenirse kaldırılabilir.
+- Frontend'de test altyapısı yok; Adım 2 doğrulaması build ve gerçek proxy smoke testiyle yapıldı.
 
 ## Açık sorular
 
@@ -241,9 +256,8 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 
 ## Sıradaki geliştirme adımları
 
-**Aşama 6 — Frontend.** Adım 1 (backend ad alanları) tamamlandı. Onay alındıktan sonra kalan sıra:
+**Aşama 6 — Frontend.** Adım 1 (backend ad alanları) ve Adım 2 (iskelet + proxy) tamamlandı. Onay alındıktan sonra kalan sıra:
 
-2. `frontend/` iskeleti: Vite React + TypeScript şablonu, npm, düz CSS; `vite.config.ts` içinde `/api` → `http://127.0.0.1:8000` proxy (D-037, D-038). → doğrulama: dev sunucu açılır, backend çalışırken proxy üzerinden classify isteği 200 döner.
 3. Yükleme ekranı: dosya seçimi ve ön kontroller (D-040), 120 sn zaman aşımlı istek (D-039), yükleniyor durumu. → doğrulama: geçerli PDF/DOCX sonuç döndürür; 50 MB üstü dosya ve `.txt` gönderilmeden uyarılır.
 4. Sonuç ve hata ekranı: tür/kurum adları, `needs_review` ve `review_reason`; hata durumları 413, 415, dosya gönderilmediğindeki FastAPI 422, `failed` 422, 502, 500 ve zaman aşımı. → doğrulama: her durumda kullanıcıya anlaşılır bir mesaj gösterilir.
 5. Uçtan uca manuel test (Docker PostgreSQL + gerçek Gemini), ardından `CURRENT_STATE.md` ve `README.md` güncellenir.
