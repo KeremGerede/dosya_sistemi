@@ -178,12 +178,15 @@
   - ID alanlarının adı, anlamı ve davranışı değişmez; ad alanları yalnızca gösterim içindir.
 - **Gerekçe:** `file_reference` iç depolama bilgisidir; `extracted_text` büyük olabilir ve sınıflandırma sonucunu kullanan istemcinin ihtiyacı değildir. Ad alanları sayesinde istemci Türkçe adları göstermek için katalogları kopyalamak zorunda kalmaz; kataloglar backend'de tek kaynak olarak kalır (D-012). Adlar ID'den türetilebildiği için veritabanına yazılmaz.
 
-### D-034 — Kabul sonrası `failed` yanıtı
-- **Karar:** Kabul edilmiş bir belge `failed` olduğunda yanıt gövdesi D-032'deki alanları (`status = "failed"`, sınıflandırma alanları `null`, `needs_review = false`) ve genel bir `message` alanını içerir. HTTP kodu:
-  - `422` → belge içeriği işlenemedi: metin çıkarılamadı veya yeterli metin yok.
-  - `502` → Gemini ile sınıflandırma tamamlanamadı: geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen kalıcı hata (`400`/`401`/`403`) oluştu.
-  - Kabul sonrası başka HTTP hata kodu kullanılmaz; hatanın ayrıntılı nedeni yalnızca loglanır.
-- **Gerekçe:** Dışarıdan hata ayrımı basit kalır: sorun belgede mi yoksa sınıflandırma servisinde mi, HTTP kodundan anlaşılır. İstemci kaydın kimliğini alır; teknik hata detayları yanıta girmez.
+### D-034 — Kabul sonrası `failed` yanıtı ve HTTP durum kodları
+- **Karar:**
+  - Kabul edilmiş bir belge `failed` olduğunda kayıt ve storage dosyası saklanır; yanıt gövdesi D-032'deki alanları (`status = "failed"`, sınıflandırma alanları `null`, `needs_review = false`) ve genel bir `message` alanını içerir. HTTP kodu:
+    - `422` → belge içeriği işlenemedi: metin çıkarılamadı veya yeterli metin yok.
+    - `502` → Gemini ile sınıflandırma tamamlanamadı: geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen bir hata (ör. `400`/`401`/`403` ya da Gemini aşamasında beklenmeyen bir hata) oluştu.
+  - Kabul sonrası kayıt yazılamazsa (ör. veritabanı bağlantı/commit hatası) `failed` kaydı da oluşmaz: işlem geri alınır, bu isteğin storage dosyası silinir ve ayrıntısız `500` (`Internal Server Error`) döner.
+  - Diğer yanıtlar: başarılı sınıflandırma `200` (D-032; `status` `classified` veya `needs_review`). Kabul öncesi redlerde kayıt ve dosya oluşmaz (D-004): `413` (D-028) ve `415` (D-001) genel mesajlı `{"detail": "..."}` gövdesiyle, istek doğrulanamazsa (ör. `file` alanı yok) FastAPI'nin standart `422` gövdesiyle (`{"detail": [...]}`) döner. İki `422`, gövdedeki `status` alanıyla ayırt edilir.
+  - Endpoint bunların dışında HTTP kodu üretmez; çerçevenin standart yanıtları (ör. çok parçalı gövde ayrıştırılamazsa `400`, yanlış HTTP metodu için `405`) endpoint çalışmadan döner. Hatanın ayrıntılı nedeni yalnızca loglanır; iç hata ayrıntısı (exception, stack trace, Gemini/kütüphane mesajı) yanıta girmez.
+- **Gerekçe:** Dışarıdan hata ayrımı basit kalır: sorun belgede mi yoksa sınıflandırma servisinde mi, HTTP kodundan anlaşılır. İstemci `failed` kaydının kimliğini alır; teknik hata detayları yanıta girmez. `500` bilinçli bir hata sınıfı değildir; kaydın yazılamadığı beklenmeyen durumda yarım kayıt veya yetim dosya bırakılmaz.
 
 ### D-020 — Senkron işleme
 - **Karar:** Endpoint dosyayı kaydetme, metin çıkarımı, Gemini çağrısı (retry dahil) ve veritabanı kaydını aynı istek içinde yapıp sonucu döndürür; kuyruk veya arka plan işi yok.

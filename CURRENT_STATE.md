@@ -263,6 +263,11 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - [x] `docker compose start postgres` sonrası container 5 sn'de healthy; `alembic current` head, `SELECT 1` 0,05 sn, `documents` 0 satır, `backend/storage` yalnızca `.gitkeep`, `GET /health` → `200`. Backend yeni ayarla yeniden başlatıldı.
 - [x] Commit hatasında rollback, yetim dosya silme ve ayrıntısız `500` davranışı kod olarak değişmedi; `test_db_commit_failure_rolls_back_and_removes_orphan_file` bunu doğrulamaya devam ediyor.
 
+**D-034 HTTP durum kodu sözleşmesi netleştirildi (yalnızca dokümantasyon)**
+
+- [x] D-034, gerçek runtime davranışıyla hizalandı: kabul sonrası kayıt yazılamazsa ayrıntısız `500`; Gemini aşamasındaki beklenmeyen hatalar da `502`; `200`, `413`, `415`, doğrulama `422` ve çerçevenin standart yanıtları (`400`, `405`). Eski "kabul sonrası başka HTTP hata kodu kullanılmaz" ifadesi kaldırıldı. `PROJECT_BRAIN.md` §9 senkronize edildi; kod ve testler değişmedi.
+- [x] Doğrulama: endpoint kodu ve testler okundu; süreç içinde sahte ortam ve geçici SQLite ile yanlış metot → `405`, boundary'siz çok parçalı gövde → `400`, dosya yok → `422`, `.txt` → `415` (kayıt ve dosya yok), Gemini aşamasında beklenmeyen hata → `502` + `failed` kaydı (ham ayrıntı yanıtta yok). `pytest` 94 passed.
+
 ## Üzerinde çalışılan işler
 
 - Aşama 6 · Adım 5: geliştirme ortamı hazır (Docker PostgreSQL, backend `127.0.0.1:8000`, Vite `http://localhost:5173`); kullanıcının gerçek belgelerle manuel testleri bekleniyor.
@@ -309,7 +314,6 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - PostgreSQL kapalıyken bağlantı denemesi `connect_timeout=10` (D-041) ile yaklaşık 10 sn'de `ConnectionTimeout` veriyor; classify isteği bu durumda kaydı yazamadığı için genel `500` döner ve yetim storage dosyası silinir (düz TCP bağlantısı daha erken reddedilebilse de — bu makinedeki ölçümde ~2 sn — psycopg bu durumda kendi `connect_timeout` süresi dolana kadar bekleyebiliyor; ölçülen hata süresi bu yüzden ~10 sn oldu). Metin çıkarımı ve Gemini aşaması veritabanından önce çalıştığı için toplam süre bunlara ek olarak uzar. `GET /health` veritabanına bakmadığı için bu durumda da `200` döner.
 - `connect_timeout` yalnızca `DATABASE_URL` içinde tanımlı. Parametresi olmayan eski bir yerel `.env`, psycopg'un varsayılan ~130 sn beklemesine döner; `.env` şablonla uyumlu tutulmalıdır.
 - Geliştirmede backend kapalıyken Vite proxy'si boş gövdeli `502` döndürüyor; kullanıcı "Sunucuya ulaşılamadı" yerine "Belge şu anda sınıflandırılamadı…" mesajını görüyor. Yalnızca geliştirme ortamını etkiler.
-- `DECISIONS.md` D-034'teki "kabul sonrası başka HTTP hata kodu kullanılmaz" ifadesi `failed` kayıtlarını kapsıyor; kayıt yazılamadığında (ör. commit hatası) dönen `500` bunun dışında kalıyor. Karar metni değiştirilmedi.
 
 ## Açık sorular
 
