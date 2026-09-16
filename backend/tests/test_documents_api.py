@@ -399,5 +399,15 @@ def test_db_commit_failure_rolls_back_and_removes_orphan_file(client, session_fa
     assert SECRET_MARKER not in caplog.text
 
 
+def test_openapi_documents_both_422_bodies():
+    responses = app.openapi()["paths"][CLASSIFY_URL]["post"]["responses"]
+
+    schema_422 = responses["422"]["content"]["application/json"]["schema"]
+    assert {item["$ref"].rsplit("/", 1)[-1] for item in schema_422["anyOf"]} == {
+        "FailedClassifyResponse", "ValidationErrorResponse",
+    }
+    assert responses["502"]["content"]["application/json"]["schema"]["$ref"].endswith("/FailedClassifyResponse")
+
+
 def test_production_engine_hides_sql_parameters():
     assert database.engine.hide_parameters is True

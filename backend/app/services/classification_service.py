@@ -114,8 +114,9 @@ def classify_text(text: str) -> ClassificationResult:
         except Exception as exc:
             retry = _is_retryable(exc) and attempt < MAX_ATTEMPTS
             logger.warning(
-                "Gemini denemesi %d/%d başarısız (%s, %s): %s",
-                attempt, MAX_ATTEMPTS, type(exc).__name__, "yeniden denenecek" if retry else "yeniden denenmeyecek", exc,
+                "Gemini denemesi %d/%d başarısız (%s%s, %s).",
+                attempt, MAX_ATTEMPTS, type(exc).__name__, _log_detail(exc),
+                "yeniden denenecek" if retry else "yeniden denenmeyecek",
             )
             if not retry:
                 raise ClassificationError("Belge Gemini ile sınıflandırılamadı.") from exc
@@ -128,7 +129,18 @@ def _parse_output(raw_output: str | None) -> ClassificationResult:
     try:
         return OUTPUT_MODEL.model_validate_json(raw_output)
     except ValidationError as exc:
-        raise InvalidModelOutputError(str(exc)) from exc
+        # Mesaja model çıktısı (ör. review_reason) girmez; yalnızca alan ve hata türü tutulur.
+        summary = ", ".join(f"{'.'.join(map(str, error['loc'])) or 'model'}:{error['type']}" for error in exc.errors())
+        raise InvalidModelOutputError(f"Model çıktısı şemaya uymuyor ({summary})") from exc
+
+
+def _log_detail(exc: Exception) -> str:
+    """Log için güvenli ek bağlam: ham API yanıtı, model çıktısı ve belge metni yazılmaz."""
+    if isinstance(exc, genai_errors.APIError):
+        return f" HTTP {exc.code}"
+    if isinstance(exc, InvalidModelOutputError):
+        return f": {exc}"
+    return ""
 
 
 def _is_retryable(exc: Exception) -> bool:

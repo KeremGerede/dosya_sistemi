@@ -80,13 +80,13 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 - Daha basit bir alternatif varsa tercih edilir (ör. `gemini_client.py` tek fonksiyondan ibaret kalırsa `classification_service.py` içine katlanabilir).
 - Endpoint doğrudan SQLAlchemy session kullanabilir; repository, factory veya ek servis katmanı eklenmez.
 - Yeni bir soyutlama katmanı için somut gerekçe ve `DECISIONS.md` kaydı gerekir.
-- Sayısal sınırlar (50 MB, 10 karakter, 50.000 karakter, 3 deneme, 30 sn timeout, 1/2 sn bekleme) kodda tek bir yerde tanımlanır.
+- Sayısal sınırlar (50 MB, 10 karakter, 50.000 karakter, 3 deneme, 30 sn timeout, 1/2 sn bekleme) kodda tek bir yerde tanımlanır. Tek istisna: 50 MB sınırı D-040 gereği frontend ön kontrolünde de tanımlıdır; ikisi birlikte güncellenir.
 
 **Geliştirme ortamı** (D-036):
 
 - PostgreSQL 18 Docker Compose ile çalışır. Tek servis; veriler Docker yönetimindeki `dosya_sistemi_pgdata` volume'unda kalır. Host portu `127.0.0.1:5433`.
 - FastAPI backend yerel makinede çalışır (`backend/.venv`, `alembic upgrade head`, `uvicorn app.main:app --reload`).
-- React/Vite frontend de yerel makinede çalışacak. İstekler `/api/...` göreli yollarına yapılır; Vite dev sunucusu bunları `http://127.0.0.1:8000` adresine proxy'ler, backend'e CORS middleware eklenmez (D-038).
+- React/Vite frontend de yerel makinede çalışır. İstekler `/api/...` göreli yollarına yapılır; Vite dev sunucusu bunları `http://127.0.0.1:8000` adresine proxy'ler, backend'e CORS middleware eklenmez (D-038).
 - Backend ve frontend şimdilik containerize edilmez.
 
 ## 5. Dosya işleme ve depolama
@@ -244,12 +244,13 @@ Hata ve red davranışı:
 
 | Durum | Veritabanı | İstemciye |
 |---|---|---|
-| Dosya gönderilmemiş | Kayıt yok | 4xx, genel mesaj |
+| Dosya gönderilmemiş (istek doğrulama hatası) | Kayıt yok | `422`, FastAPI'nin standart `{"detail": [...]}` gövdesi |
 | PDF/DOCX değil (`.doc` dahil) | Kayıt yok, dosya saklanmaz | `415`, genel mesaj |
 | 50 MB'ı aşıyor | Kayıt yok, dosya saklanmaz | `413`, genel mesaj |
 | Metin çıkarımı başarısız veya normalize metin < 10 karakter | `failed` kaydı | `422`, `failed` gövdesi |
 | Gemini geçici hatası (network, timeout, `429`, `5xx`) veya geçersiz model çıktısı, 3 deneme de başarısız | `failed` kaydı | `502`, `failed` gövdesi |
 | Gemini kalıcı hatası (`400`/`401`/`403`), retry yok | `failed` kaydı | `502`, `failed` gövdesi |
+| Beklenmeyen sunucu hatası (ör. kayıt veritabanına yazılamadı) | Kayıt yok, bu isteğin storage dosyası silinir | `500`, ayrıntı dönmez |
 
 Kabul sonrası `failed` yanıt gövdesi, başarılı yanıttaki alanları ve genel bir `message` alanını içerir:
 
@@ -273,7 +274,7 @@ Teknik hata detayları (exception, stack trace, kütüphane veya Gemini hata mes
 
 Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
-- **`422`** → belge içeriği işlenemedi / yeterli metin çıkarılamadı.
+- **`422`** → belge içeriği işlenemedi / yeterli metin çıkarılamadı (gövdede `status = "failed"`). Gövdesinde `status` olmayan 422, istek doğrulama hatasıdır; OpenAPI'de iki gövde de belgelenir.
 - **`502`** → Gemini ile sınıflandırma tamamlanamadı (nedeni ne olursa olsun; ayrıntı yalnızca loglarda).
 
 ## 10. Proje prensipleri

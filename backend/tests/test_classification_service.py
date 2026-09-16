@@ -281,6 +281,26 @@ def test_permanent_client_errors_are_not_retried(fake_gemini, sleeps, code):
     assert sleeps == []
 
 
+def test_failed_attempt_logs_hide_model_output_raw_api_body_and_document_text(fake_gemini, sleeps, caplog):
+    leaked_reason = "MODELIN_URETTIGI_GEREKCE"
+    fake_gemini(
+        model_output(needs_review=False, review_reason=leaked_reason),  # tutarsız çıktı
+        f'{{"document_type": "{leaked_reason}"',  # bozuk JSON
+        api_error(503),  # ham gövde: "ham hata 503"
+    )
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(ClassificationError):
+        classify_text(SAMPLE_TEXT)
+
+    assert leaked_reason not in caplog.text
+    assert "ham hata" not in caplog.text
+    assert SAMPLE_TEXT not in caplog.text
+    # Güvenli bağlam kalır: deneme numarası, hata türü, HTTP kodu ve şema hatası türü.
+    assert all(f"{attempt}/{MAX_ATTEMPTS}" in caplog.text for attempt in (1, 2, 3))
+    assert "InvalidModelOutputError" in caplog.text and "value_error" in caplog.text and "json_invalid" in caplog.text
+    assert "ServerError" in caplog.text and "HTTP 503" in caplog.text
+
+
 def test_error_message_is_generic_and_hides_raw_api_details(fake_gemini, sleeps):
     fake_gemini(api_error(401))
 

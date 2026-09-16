@@ -6,27 +6,27 @@
 
 ## Mevcut aşama
 
-**Aşama 5 — `POST /api/documents/classify` endpoint'i tamamlandı.** Backend ana MVP akışı uçtan uca çalışıyor: upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt. Endpoint testleri geçti; gerçek Docker PostgreSQL + gerçek Gemini ile tek belgelik smoke testi başarılı. Frontend henüz yok.
+**Aşama 6 · Adım 5 — gerçek belgelerle manuel test ve V1 final doğrulaması devam ediyor.** Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
-Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Adım 1 tamamlandı:** classify yanıtı `document_type_name` ve `institution_name` alanlarını da döndürüyor. **Adım 2 tamamlandı:** `frontend/` iskeleti (React + Vite + TypeScript) kuruldu ve `/api` proxy'si gerçek classify isteğiyle doğrulandı. **Adım 3 tamamlandı:** yükleme ekranı çalışıyor — dosya seçimi, ön kontroller, 120 sn zaman aşımlı classify isteği ve yükleniyor durumu. **Adım 4 tamamlandı:** sonuç ekranı (başarılı ve `needs_review` görünümü, Türkçe tür/kurum adları, inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları. Sıradaki adım gerçek belgelerle manuel test ve V1 final doğrulaması.
+Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı. Geliştirme ortamı manuel test için hazır; gerçek (anonimleştirilmiş) belgelerle testleri kullanıcı yapacak.
 
 ## Repo durumu
 
 - Git reposu, `main` dalı (remote: `origin`).
 - Karar geçmişi `docs: define initial MVP architecture and decisions` commit'inden itibaren Git'te izlenir.
 - Dosyalar:
-  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının tamamlandığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu, frontend iskeletinin kurulduğu ve yükleme ekranının henüz olmadığı anlatılır; frontend kurulum/çalıştırma komutlarını ve proxy'yi içerir.
+  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının ve frontend'in (yükleme, sonuç ve hata ekranı) çalıştığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu ve iki tür 422 dahil HTTP kodları anlatılır; frontend kurulum/çalıştırma/lint komutlarını ve proxy'yi içerir.
   - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
   - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
-  - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4), classify endpoint'i ve testleri (Aşama 5).
-  - `frontend/` — Vite React + TypeScript uygulaması (Aşama 6 · Adım 2–3): `index.html`, `src/main.tsx`, `src/App.tsx` (yükleme akışının tamamı tek bileşende), `src/App.css`, `src/index.css`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, şablondan gelen `.gitignore` ve `.oxlintrc.json`. `node_modules/` ve `dist/` `frontend/.gitignore` ile Git dışında.
+  - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4), classify endpoint'i ve testleri (Aşama 5), yanıttaki katalog adları (Aşama 6 · Adım 1).
+  - `frontend/` — Vite React + TypeScript uygulaması (Aşama 6 · Adım 2–4): `index.html`, `src/main.tsx`, `src/App.tsx` (yükleme, sonuç ve hata ekranının tamamı tek bileşende), `src/App.css`, `src/index.css`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, şablondan gelen `.gitignore` ve `.oxlintrc.json`. `node_modules/` ve `dist/` `frontend/.gitignore` ile Git dışında.
 - Geliştirme akışı (D-036):
   - İlk kurulum, `backend/` içinde: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` → `.env.example`'ı `.env` olarak kopyala.
   - Günlük: Docker Desktop'ı başlat → repo kökünde `docker compose up -d` → `backend/` içinde venv'i aktif et → `alembic upgrade head` → `uvicorn app.main:app --reload`.
   - Durdurma: `docker compose down` (veriler `dosya_sistemi_pgdata` volume'unda kalır).
   - Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` veya `http://127.0.0.1:8000/docs`.
-  - Frontend: ilk kurulum `frontend/` içinde `npm install`; geliştirme `npm run dev` → `http://localhost:5173` (backend ayrı terminalde çalışır durumda olmalı); derleme `npm run build`.
+  - Frontend: ilk kurulum `frontend/` içinde `npm install`; geliştirme `npm run dev` → `http://localhost:5173` (backend ayrı terminalde çalışır durumda olmalı); derleme `npm run build`; lint `npm run lint`.
   - Testler: `backend/` içinde venv aktifken `pytest` (`pytest.ini`: `pythonpath = .`, `testpaths = tests`). Testler Docker PostgreSQL veya gerçek Gemini API gerektirmez. `tests/conftest.py` sahte `GEMINI_API_KEY`/`GEMINI_MODEL` (ve yoksa sahte `DATABASE_URL`) ayarlar; `.env`'deki gerçek anahtar testlere girmez. Endpoint testleri geçici SQLite veritabanı (`get_db` override) ve sahte `classify_text` kullanır.
 
 ## Tamamlanan işler
@@ -200,7 +200,7 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 
 **Aşama 6 · Adım 2 — Frontend iskeleti ve Vite proxy (D-037, D-038)**
 
-- [x] `frontend/` standart Vite React + TypeScript şablonuyla oluşturuldu (`npm create vite@latest frontend -- --template react-ts`). Node v26.7.0, npm 11.19.0; React 19.2, Vite 8.3, TypeScript 6.0. Uygulama bağımlılıkları yalnızca `react` ve `react-dom`; router, state kütüphanesi, UI kütüphanesi, Tailwind veya HTTP istemcisi eklenmedi.
+- [x] `frontend/` standart Vite React + TypeScript şablonuyla oluşturuldu (`npm create vite@latest frontend -- --template react-ts`). Node v26.7.0, npm 11.19.0; `package-lock.json`'da React 19.3.0, Vite 8.3.0, TypeScript 6.0.3. Uygulama bağımlılıkları yalnızca `react` ve `react-dom`; router, state kütüphanesi, UI kütüphanesi, Tailwind veya HTTP istemcisi eklenmedi.
 - [x] Vite demo içeriği temizlendi: `src/assets/`, `public/` (demo ikonları ve favicon) ve şablon `README.md` silindi; `App.tsx` sade bir başlangıç ekranı (başlık + kısa açıklama), `App.css` ve `index.css` düz CSS. `index.html` başlığı "Belge Sınıflandırma", `lang="tr"`.
 - [x] `vite.config.ts`: `server.proxy` ile `/api` → `http://127.0.0.1:8000` (D-038). Uygulama kodunda backend adresi yok; FastAPI'ye CORS middleware eklenmedi, backend kodu değişmedi.
 - [x] `npm install` (0 güvenlik açığı) ve `npm run build` (`tsc -b && vite build`) başarılı: 17 modül, ~0,5 sn, `dist/` çıktısı.
@@ -242,28 +242,40 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
   - `needs_review` (kurum var/yok), 413, 415, doğrulama 422, `failed` 422 (mesajlı/mesajsız), 502 (failed gövdeli/JSON'suz), 500 ve ağ hatası: backend'e dokunmadan tarayıcıda `fetch` taklit edilerek gerçek bileşen üzerinden doğrulandı; hiçbir durumda teknik içerik ekrana çıkmadı. Doğrulama 422'sinin ve 415'in gerçek gövde şekli proxy üzerinden ayrıca kontrol edildi.
 - [x] Temizlik: 2 test kaydı (`failed` + `classified`) ve storage dosyaları silindi (0 satır, yalnızca `.gitkeep`); geçici PDF'ler kaldırıldı.
 
+**V1 öncesi audit ve polish pass (Aşama 6 · Adım 5 hazırlığı)**
+
+- [x] Read-only audit: kritik sorun yok. Kod aktif kararlarla uyumlu; sınırlar (50 MB, 10 karakter, 50.000 karakter, 3 deneme, 30 sn, 120 sn) kod ve kararlarda aynı; kapsam dışı özellik yok; kataloglar `PROJECT_BRAIN.md` §6 ile birebir aynı.
+- [x] Graphify ile kod/doküman graph'ı çıkarıldı (`graphify-out/`, Git dışında): backend bağımlılıkları yalnızca aşağı yönlü, import döngüsü ve Python↔TypeScript kenarı yok. Sağlık uyarıları (dış paket importları, `App.tsx`/`App.css` kimlik çakışması) graph kaynaklı false positive.
+- [x] OpenAPI 422 sözleşmesi: `app/api/documents.py` 422 yanıtını `FailedClassifyResponse | ValidationErrorResponse` olarak belgeliyor; `app/schemas/classification.py`'e yalnızca belge için `ValidationErrorResponse` (`detail` listesi) eklendi. Runtime davranışı değişmedi; canlı `/openapi.json`'da 422 için `anyOf` iki gövdeyi gösteriyor.
+- [x] Log güvenliği (`app/services/classification_service.py`): başarısız Gemini denemesinin uyarı logu artık ham API yanıtını (`APIError.details`) ve pydantic `input_value`'yu (model çıktısı, ör. `review_reason`) içermiyor. Kalan bağlam: deneme numarası, hata türü, API hatalarında HTTP kodu, geçersiz çıktıda alan:hata türü özeti. Sınıflandırma, retry ve hata eşlemesi değişmedi.
+- [x] Frontend erişilebilirlik (`src/App.tsx`, `src/App.css`): dosya seçici için görünür etiket ("Belge dosyası") ve `aria-describedby` ile bağlı sınır açıklaması ("PDF veya DOCX, en fazla 50 MB."); her zaman DOM'da duran `role="status"` bölgesi ("Belge sınıflandırılıyor..."); sonuç `aria-live="polite"` bölgesinde. Tasarım ve bağımlılıklar değişmedi.
+- [x] `backend/tests/.gitkeep` kaldırıldı (klasörde test dosyaları var). `oxlint` ve `.oxlintrc.json` korunuyor.
+- [x] Dokümantasyon temizliği: `CURRENT_STATE.md`, `README.md` ve `PROJECT_BRAIN.md`'deki eski ifadeler (frontend yok, yükleme ekranı yok, frontend gelecekte çalışacak, onay bekleniyor) güncellendi; API hata tablolarına doğrulama 422'si ve 500 eklendi. `DECISIONS.md` değişmedi.
+- [x] Testler: 2 yeni regresyon testi — başarısız deneme loglarında model çıktısı, ham API gövdesi ve belge metni yok (`test_classification_service.py`, 46); OpenAPI 422 iki gövdeyi belgeliyor (`test_documents_api.py`, 24).
+- [x] Doğrulama: `pytest` 94 passed (24 + 46 + 24); `pip check` temiz; `GET /health` → `200`; `npm run build` ve `npm run lint` (oxlint) temiz; tarayıcıda etiket, açıklama, `role="status"` ve `aria-live` davranışı doğrulandı (backend'e istek atılmadan). Gerçek Gemini çağrısı yapılmadı; `documents` tablosu 0 satır, `backend/storage/` içinde yalnızca `.gitkeep`.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Aşama 6 · Adım 4 tamamlandı; manuel gerçek belge testleri ve V1 final doğrulamasına (Adım 5) başlamak için onay bekleniyor.
+- Aşama 6 · Adım 5: geliştirme ortamı hazır (Docker PostgreSQL, backend `127.0.0.1:8000`, Vite `http://localhost:5173`); kullanıcının gerçek belgelerle manuel testleri bekleniyor.
 
 ## Bilinen problemler ve riskler
 
-- Bilinen teknik problem yok.
+- V1 için bilinen bir blocker yok. Aşağıdakiler kabul edilmiş riskler ve dikkat edilmesi gereken noktalardır.
 - Bu makinede host 5432'yi yerel bir Windows PostgreSQL 18 servisi (`postgresql-x64-18`) kullanıyor. Docker PostgreSQL bu yüzden 5433'te; `DATABASE_URL`'deki port 5433 olmalı, aksi halde yanlış veritabanına bağlanılabilir.
 - `DATABASE_URL`'de `localhost` kullanılmamalı: port yalnızca IPv4 `127.0.0.1`'e açık ve `localhost` önce `::1` olarak denendiğinde bağlantı asılı kalıyor (Aşama 2'de `alembic current` bu yüzden takıldı). `127.0.0.1` kullanılıyor.
 - PostgreSQL 18 image'ında volume `/var/lib/postgresql` yoluna bağlanır. Eski sürümlerdeki `/var/lib/postgresql/data` yolu kullanılmamalı.
-- Backend ve migration komutları için Docker Desktop çalışıyor ve `docker compose up -d` yapılmış olmalı.
+- Backend ve migration komutları için Docker Desktop çalışıyor ve `docker compose up -d` yapılmış olmalı; kapalıyken yapılan classify isteği aşağıda anlatıldığı gibi uzun süre bekler.
 - `main.py` artık documents router'ını import ettiği için `DATABASE_URL`, `GEMINI_API_KEY` ve `GEMINI_MODEL` uygulama başlangıcında zorunludur; biri eksikse uygulama (ve `/health`) başlamaz (D-031, D-035).
-- `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerler uygulama katmanında kontrol edilecek.
+- `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerleri uygulama katmanı belirliyor: `file_type` yalnızca `file_service.FILE_TYPES` değerlerinden, `status` yalnızca endpoint kodunda atanıyor.
 - Retry/timeout davranışı google-genai 2.23.0 kaynak koduna göre doğrulandı. SDK sürümü yükseltilirse `tests/test_classification_service.py` içindeki gerçek SDK + MockTransport testleri mutlaka çalıştırılmalı.
 - `temperature=0` kullanılıyor; smoke testinde sorun çıkmadı. Sınıflandırma kalitesi gerçek belgelerle gözlemlenmeli.
-- Log yapılandırması `main.py`'de tek satır `basicConfig(INFO)`; httpx istek satırları (URL, anahtar yok) da INFO'da görünür. Başarısız Gemini denemelerinde uyarı logu API hata detayını içerir (anahtar değil). Belge metni loglanmaz; SQL hatalarında parametreler gizlidir.
+- Log yapılandırması `main.py`'de tek satır `basicConfig(INFO)`; httpx istek satırları (URL, anahtar yok) da INFO'da görünür. Başarısız Gemini denemelerinin uyarı logunda yalnızca deneme numarası, hata türü, HTTP kodu ve şema hata türü bulunur; ham API yanıtı, model çıktısı ve belge metni loglanmaz. Metin çıkarımı hatalarında PDF/DOCX kütüphanesinin hata mesajı loglanır (belge metni değil). SQL hatalarında parametreler gizlidir.
 - Kataloglar modül yüklenirken okunur; katalog değişikliği için uygulama yeniden başlatılmalı. `other` belge türü katalogdan çıkarılırsa servis yapılandırma hatasıyla yüklenmez.
 - Storage konumu için ortam değişkeni yok. `file_service`, D-017'ye göre `backend/storage/` yolunu kod içinde kullanır (çalışma dizininden bağımsız).
 - DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz.
 - DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
 - Endpoint upload'dan en fazla `MAX_FILE_SIZE + 1` bayt okur. Ancak Starlette/python-multipart, endpoint çalışmadan önce multipart gövdesini geçici dosyaya aktarır; yani 50 MB üstü bir yükleme yine de ağdan alınıp geçici diske yazılır. Uygulama seviyesinde gövde boyutu sınırı yok; gerçek dağıtımda sunucu/reverse proxy seviyesinde gövde sınırı konmalı.
-- Dosya gönderilmediğinde FastAPI'nin standart 422 doğrulama yanıtı (`{"detail": [...]}`) döner; bu, kabul sonrası `failed` 422 gövdesinden (`document_id` + `message`) farklıdır. İstemci ikisini gövdeden ayırt etmeli.
+- Dosya gönderilmediğinde FastAPI'nin standart 422 doğrulama yanıtı (`{"detail": [...]}`) döner; bu, kabul sonrası `failed` 422 gövdesinden (`status = "failed"` + `message`) farklıdır. İkisi gövdedeki `status` alanıyla ayırt edilir (frontend böyle yapıyor); OpenAPI'de 422 için iki gövde de belgelenir (`FailedClassifyResponse`, `ValidationErrorResponse`).
 - Endpoint senkron ve thread pool'da çalışır; Gemini aşaması en kötü durumda ~93 sn bir thread'i meşgul eder. Eşzamanlı istek kapasitesi thread pool boyutuyla sınırlıdır (MVP için kabul edilebilir).
 - Commit sunucuda başarılı olup istemci tarafında hata gibi görünürse (ör. bağlantı commit sırasında koparsa) dosya silinip kayıt kalabilir; nadir bir durum, MVP'de ayrıca ele alınmadı.
 - Endpoint testleri SQLite kullanır (`create_all` yalnızca testte); PostgreSQL'e özgü davranış gerçek smoke testle doğrulandı, otomatik testlerde yoktur.
@@ -275,23 +287,35 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 - İşlem senkron: en kötü durumda Gemini aşaması yaklaşık 93 sn sürer (3 × 30 sn timeout + 1 sn + 2 sn bekleme). Frontend ve varsa reverse proxy istek zaman aşımları bundan uzun olmalı.
 - Katalog dosyaları değiştirilirse görünen adlar da değişir; kataloglar modül yüklenirken okunduğu için uygulama yeniden başlatılmalıdır. Veritabanındaki eski kayıtlar ID tuttuğu için bu kayıtların adı da yeni katalogdan üretilir.
 - Frontend'in 120 sn zaman aşımı (D-039) yalnızca istemci tarafını keser; backend işlemeye devam edip kaydı yazabilir, yani kullanıcı hata görse de belge sınıflandırılmış olabilir. Ayrıca yükleme süresi 93 sn'lik en kötü duruma eklenir; sınıra yakın büyük dosyalarda 120 sn yetmeyebilir.
-- 50 MB sınırı D-040 ile frontend'de de yer alacak; sınır değişirse `file_service.MAX_FILE_SIZE` ile birlikte güncellenmelidir.
+- 50 MB sınırı D-040 gereği frontend'de de yer alıyor (`frontend/src/App.tsx` `MAX_FILE_SIZE`); sınır değişirse `file_service.MAX_FILE_SIZE` ile birlikte güncellenmelidir.
+- Frontend `ClassifyResponse` tipi backend şemasıyla elle eşleştiriliyor; otomatik sözleşme testi yok. Yanıt alanları değişirse iki taraf birlikte güncellenmelidir.
+- PDF kabulünde `%PDF` imzası dosyanın ilk baytında aranıyor. İmzadan önce ek bayt bulunan nadir gerçek PDF'ler `415` alır; manuel testte gerçek bir PDF reddedilirse ilk şüphe bu.
+- Gemini yanıtı boş gelirse (ör. içerik güvenlik filtresine takılırsa) geçersiz çıktı sayılır, 3 kez denenir ve `502` ile biter; böyle bir belge `needs_review` yerine `failed` olur.
+- Arayüzde aynı dosyayla tekrar "Sınıflandır" denmesi yeni bir kayıt ve yeni bir Gemini çağrısı üretir (tekilleştirme yok).
+- Frontend'de favicon yok; geliştirmede `/favicon.ico` isteği 404 döner (kozmetik).
 - Vite proxy yalnızca geliştirme ortamı içindir (D-038). Frontend ve backend ayrı origin'lerde dağıtılacaksa CORS veya reverse proxy kararı ayrıca verilmelidir.
 - Vite dev sunucusu varsayılan ayarla yalnızca IPv6 `::1` (yani `localhost`) üzerinde dinliyor; `http://127.0.0.1:5173` bağlantı kuramıyor. Tarayıcı ve komut satırı testlerinde `http://localhost:5173` kullanılmalı. Gerekirse `vite.config.ts` içinde `server.host` sabitlenebilir (şimdilik yapılmadı).
 - Frontend'de şablondan gelen `oxlint` dev bağımlılığı ve `.oxlintrc.json` duruyor (`npm run lint`). Backend tarafında karşılık gelen bir linter yok; istenirse kaldırılabilir.
 - Frontend'de test altyapısı yok; doğrulama build ve tarayıcıda gerçek akışla yapılıyor.
 - PostgreSQL kapalıyken classify isteği backend'de yaklaşık 130 sn bekliyor (psycopg'un varsayılan bağlantı zaman aşımı; Windows'ta reddedilen bağlantı hemen hata vermiyor), sonra `500` dönüyor ve yetim dosya siliniyor. Bu sırada bir backend thread'i meşgul kalıyor; kullanıcı 120 sn'de zaman aşımı mesajını görüyor. `GET /health` veritabanına bakmadığı için bu durumda da `200` döner. Backend'de bağlantı zaman aşımı ayarı yok (MVP'de değiştirilmedi).
 - Geliştirmede backend kapalıyken Vite proxy'si boş gövdeli `502` döndürüyor; kullanıcı "Sunucuya ulaşılamadı" yerine "Belge şu anda sınıflandırılamadı…" mesajını görüyor. Yalnızca geliştirme ortamını etkiler.
-- Günlük akışta Docker Desktop'ın açık olduğu kontrol edilmeli; kapalıyken yapılan istek yukarıdaki gibi uzun süre bekler.
+- `DECISIONS.md` D-034'teki "kabul sonrası başka HTTP hata kodu kullanılmaz" ifadesi `failed` kayıtlarını kapsıyor; kayıt yazılamadığında (ör. commit hatası) dönen `500` bunun dışında kalıyor. Karar metni değiştirilmedi.
 
 ## Açık sorular
 
 İlgili geliştirme adımına başlamadan önce kullanıcıyla netleştirilir; karara bağlananlar `DECISIONS.md`'ye işlenir ve buradan silinir.
 
-Şu anda açık teknik soru yok.
+V1 final öncesi karar bekleyenler:
+
+- PostgreSQL bağlantı zaman aşımı: veritabanı kapalıyken ~130 sn bekleme kabul mü edilecek, yoksa `DATABASE_URL`'e `connect_timeout` mı eklenecek?
+- Manuel testlerde gerçek belgelerden oluşacak `documents` kayıtları ve storage dosyaları V1 final öncesi silinecek mi, saklanacak mı?
 
 ## Sıradaki geliştirme adımları
 
-**Aşama 6 — Frontend.** Adım 1 (backend ad alanları), Adım 2 (iskelet + proxy), Adım 3 (yükleme ekranı) ve Adım 4 (sonuç ve hata ekranı) tamamlandı. Onay alındıktan sonra kalan adım:
+**Aşama 6 · Adım 5 — Manuel gerçek belge testleri ve V1 final doğrulaması.** Adım 1–4, V1 öncesi audit ve polish pass tamamlandı. Kalan sıra:
 
-5. Manuel gerçek belge testleri ve V1 final doğrulaması: gerçek (anonimleştirilmiş) PDF/DOCX örnekleriyle sınıflandırma kalitesi ve `needs_review` davranışı gözlemlenir; Docker PostgreSQL + gerçek Gemini ile uçtan uca akış kontrol edilir; ardından `CURRENT_STATE.md` ve `README.md` güncellenir.
+1. Kullanıcı gerçek (anonimleştirilmiş) PDF/DOCX belgeleriyle manuel test matrisini uygular: net şikayet, farklı tür ve müdürlük, PDF ve DOCX, belirsiz kurum / `needs_review`, metinsiz belge, yeni belgeyle tekrar deneme, frontend ön kontrolü. Sonuçlar (tür, kurum, `needs_review`, inceleme nedeni, süre, doğruluk) birlikte değerlendirilir.
+2. Sınıflandırma sorunu çıkarsa önce kurum açıklamaları (katalog verisi) gözden geçirilir.
+3. Açık sorular karara bağlanır.
+4. Final kontroller: pytest, build, lint, health, alembic, DB/storage, git; `CURRENT_STATE.md` ve `README.md` V1 final durumuna getirilir.
+5. V1 final commit/push.

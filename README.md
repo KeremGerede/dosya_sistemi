@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor.
+> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. V1 final doğrulaması (gerçek belgelerle manuel test) devam ediyor.
 
 ## MVP Akışı
 
@@ -69,10 +69,11 @@ Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `doc
 | `200` | Sınıflandırıldı (`status`: `classified` veya `needs_review`) |
 | `413` | Dosya 50 MB sınırını aşıyor (kayıt oluşturulmaz) |
 | `415` | Desteklenmeyen dosya türü (kayıt oluşturulmaz) |
-| `422` | Belge içeriği işlenemedi / yeterli metin çıkarılamadı (`failed` kaydı) |
+| `422` | İki durum: (1) belge içeriği işlenemedi / yeterli metin çıkarılamadı — `failed` kaydı, gövdede `status: "failed"` ve `message`; (2) istek doğrulanamadı, ör. `file` alanı gönderilmedi — FastAPI'nin `{"detail": [...]}` gövdesi, kayıt oluşturulmaz |
 | `502` | Gemini ile sınıflandırma tamamlanamadı (`failed` kaydı) |
+| `500` | Beklenmeyen sunucu hatası, ör. kayıt veritabanına yazılamadı (ayrıntı dönmez; kayıt oluşmaz, yüklenen dosya silinir) |
 
-Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
+Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır. OpenAPI şeması `/docs` ve `/openapi.json` adreslerindedir; 422 için iki gövde de belgelenmiştir.
 
 ## Proje Durumu
 
@@ -86,12 +87,13 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
   - Retry/timeout politikası uygulanmış: 30 sn timeout, en fazla 3 deneme, 1 sn / 2 sn bekleme.
   - `gemini-3.5-flash-lite` gerçek API smoke testiyle doğrulandı.
 - **Aşama 5 — tamamlandı:** `POST /api/documents/classify` endpoint'i; backend ana MVP akışı tamamlandı. Upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt akışı, gerçek Docker PostgreSQL ve gerçek Gemini ile uçtan uca doğrulandı.
-- **Aşama 6 — devam ediyor:** frontend.
+- **Aşama 6 — son adımda:** frontend ve V1 doğrulaması.
   - Adım 1 tamamlandı: classify yanıtı katalog adlarını (`document_type_name`, `institution_name`) da döndürüyor.
   - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si.
   - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
   - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
-- **Sıradaki adım:** gerçek belgelerle manuel test ve V1 final doğrulaması.
+  - Adım 5 devam ediyor: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik) tamamlandı; gerçek belgelerle manuel test bekleniyor.
+- **Sıradaki adım:** manuel test sonuçlarının değerlendirilmesi, final kontroller ve V1 final commit'i.
 
 ### Geliştirme ortamı
 
@@ -124,9 +126,9 @@ Günlük geliştirme akışı:
 4. `alembic upgrade head`.
 5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
 6. Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` (ya da `http://127.0.0.1:8000/docs`).
-7. Frontend için ayrı bir terminalde, `frontend/` içinde: `npm run dev` → `http://localhost:5173`. Backend'in 5. adımda çalışıyor olması gerekir; proxy sayesinde `http://localhost:5173/api/documents/classify` isteği backend'e ulaşır. Arayüzden PDF veya DOCX seçip **Sınıflandır** ile gönderebilirsiniz.
+7. Frontend için ayrı bir terminalde, `frontend/` içinde: `npm run dev` → `http://localhost:5173`. Backend'in 5. adımda çalışıyor olması gerekir; proxy sayesinde `http://localhost:5173/api/documents/classify` isteği backend'e ulaşır. Arayüzden PDF veya DOCX seçip **Sınıflandır** ile gönderebilirsiniz. Adres olarak `localhost` kullanın; Vite varsayılan ayarla `127.0.0.1:5173` üzerinden erişilemiyor.
 
-Frontend production derlemesi `frontend/` içinde `npm run build` ile alınır (çıktı: `dist/`, Git'e girmez).
+Frontend production derlemesi `frontend/` içinde `npm run build` ile alınır (çıktı: `dist/`, Git'e girmez). Lint: `npm run lint` (oxlint).
 
 Testler `backend/` içinde `pytest` ile çalışır; Docker PostgreSQL veya gerçek Gemini API gerektirmez (endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır). Frontend'de henüz test yoktur.
 

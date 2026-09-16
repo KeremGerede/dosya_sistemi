@@ -139,7 +139,20 @@ function App() {
       </p>
 
       <form onSubmit={handleSubmit}>
-        <input type="file" accept=".pdf,.docx" onChange={handleFileChange} disabled={loading} />
+        <div>
+          <label htmlFor="document-file">Belge dosyası</label>
+          <p id="document-file-hint" className="hint">
+            PDF veya DOCX, en fazla 50 MB.
+          </p>
+        </div>
+        <input
+          id="document-file"
+          type="file"
+          accept=".pdf,.docx"
+          aria-describedby="document-file-hint"
+          onChange={handleFileChange}
+          disabled={loading}
+        />
         {file !== null && (
           <p className="file-info">
             {file.name} — {formatSize(file.size)}
@@ -150,31 +163,36 @@ function App() {
         </button>
       </form>
 
-      {loading && <p className="status">Belge sınıflandırılıyor...</p>}
+      {/* Canlı bölgeler her zaman DOM'da durur; içerik değişince ekran okuyucu duyurur. */}
+      <p className="status" role="status">
+        {loading ? 'Belge sınıflandırılıyor...' : ''}
+      </p>
       {error !== null && (
         <div className="notice error" role="alert">
           <p>{error.message}</p>
         </div>
       )}
-      {result !== null && (
-        <section className={result.needs_review ? 'notice review' : 'notice success'}>
-          <h2>{result.needs_review ? 'İnsan incelemesi gerekiyor' : 'Belge başarıyla sınıflandırıldı.'}</h2>
-          {result.needs_review && <p>Belge işlendi; sonucun bir kişi tarafından kontrol edilmesi gerekiyor.</p>}
-          <dl>
-            <dt>Dosya</dt>
-            <dd>{result.file_name}</dd>
-            <dt>Belge Türü</dt>
-            <dd>{result.document_type_name ?? 'Belirlenemedi'}</dd>
-            <dt>Gönderileceği Kurum</dt>
-            <dd>{result.institution_name ?? 'Belirlenemedi'}</dd>
-          </dl>
-          {result.needs_review && result.review_reason !== null && (
-            <p className="review-reason">
-              <strong>İnceleme nedeni:</strong> {result.review_reason}
-            </p>
-          )}
-        </section>
-      )}
+      <div aria-live="polite">
+        {result !== null && (
+          <section className={result.needs_review ? 'notice review' : 'notice success'}>
+            <h2>{result.needs_review ? 'İnsan incelemesi gerekiyor' : 'Belge başarıyla sınıflandırıldı.'}</h2>
+            {result.needs_review && <p>Belge işlendi; sonucun bir kişi tarafından kontrol edilmesi gerekiyor.</p>}
+            <dl>
+              <dt>Dosya</dt>
+              <dd>{result.file_name}</dd>
+              <dt>Belge Türü</dt>
+              <dd>{result.document_type_name ?? 'Belirlenemedi'}</dd>
+              <dt>Gönderileceği Kurum</dt>
+              <dd>{result.institution_name ?? 'Belirlenemedi'}</dd>
+            </dl>
+            {result.needs_review && result.review_reason !== null && (
+              <p className="review-reason">
+                <strong>İnceleme nedeni:</strong> {result.review_reason}
+              </p>
+            )}
+          </section>
+        )}
+      </div>
     </main>
   )
 }

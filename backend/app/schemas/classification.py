@@ -1,6 +1,7 @@
 import uuid
+from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class ClassificationResult(BaseModel):
@@ -47,3 +48,9 @@ class FailedClassifyResponse(ClassifyResponse):
     """Kabul sonrası failed yanıtı (D-034): aynı alanlar + genel kullanıcı mesajı."""
 
     message: str
+
+
+class ValidationErrorResponse(BaseModel):
+    """FastAPI'nin istek doğrulama hatası gövdesi (ör. file alanı yok). Yalnızca OpenAPI belgesi içindir."""
+
+    detail: list[dict[str, Any]] = Field(description="FastAPI doğrulama hataları (loc, msg, type).")

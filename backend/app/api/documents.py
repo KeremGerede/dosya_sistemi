@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.document import Document
-from app.schemas.classification import ClassifyResponse, FailedClassifyResponse
+from app.schemas.classification import ClassifyResponse, FailedClassifyResponse, ValidationErrorResponse
 from app.services import classification_service, file_service
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,15 @@ CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen
     responses={
         413: {"description": FILE_TOO_LARGE_MESSAGE},
         415: {"description": UNSUPPORTED_FILE_MESSAGE},
-        422: {"model": FailedClassifyResponse, "description": "Belge içeriği işlenemedi; failed kaydı oluşturulur."},
+        # Runtime'da iki farklı 422 gövdesi olabilir; ikisi de OpenAPI'de belgelenir.
+        422: {
+            "model": FailedClassifyResponse | ValidationErrorResponse,
+            "description": (
+                "İki olası gövde: (1) FailedClassifyResponse — belge içeriği işlenemedi, failed kaydı oluşturulur "
+                '(status = "failed", message); (2) ValidationErrorResponse — istek doğrulanamadı '
+                "(ör. file alanı gönderilmedi), kayıt oluşturulmaz."
+            ),
+        },
         502: {"model": FailedClassifyResponse, "description": "Gemini ile sınıflandırma tamamlanamadı; failed kaydı oluşturulur."},
     },
 )

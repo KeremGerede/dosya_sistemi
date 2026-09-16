@@ -48,12 +48,26 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+label {
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0.25rem 0 0;
+  color: #555;
+  font-size: 0.9rem;
+}
+
 input[type='file'] {
   max-width: 100%;
 }
 
 .status {
   color: #555;
+}
+
+.status:empty {
+  margin: 0;
 }
 
 .notice {
