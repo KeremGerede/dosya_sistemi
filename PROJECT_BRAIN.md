@@ -47,7 +47,7 @@ Ortam değişkenleri:
 |---|---|
 | `GEMINI_API_KEY` | **Zorunlu.** Gemini API anahtarı; yalnızca `.env`'de tutulur |
 | `GEMINI_MODEL` | **Zorunlu.** Sınıflandırma modeli; `.env.example` değeri: `gemini-3.5-flash-lite` |
-| `DATABASE_URL` | **Zorunlu.** PostgreSQL bağlantı adresi; yerel geliştirme: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi` |
+| `DATABASE_URL` | **Zorunlu.** PostgreSQL bağlantı adresi; yerel geliştirme: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` (bağlantı kurma en fazla 10 sn, D-041) |
 
 Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_KEY` veya `GEMINI_MODEL` tanımlı değilse Gemini istemcisi yüklenirken (uygulama başlangıcı) açık bir yapılandırma hatası verilir (fail fast); sessizce bir modele düşülmez. `DATABASE_URL` `settings.py` yüklenirken kontrol edilir. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
 

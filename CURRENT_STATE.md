@@ -8,7 +8,7 @@
 
 **Aşama 6 · Adım 5 — gerçek belgelerle manuel test ve V1 final doğrulaması devam ediyor.** Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
-Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı. Geliştirme ortamı manuel test için hazır; gerçek (anonimleştirilmiş) belgelerle testleri kullanıcı yapacak.
+Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041). Geliştirme ortamı manuel test için hazır; gerçek (anonimleştirilmiş) belgelerle testleri kullanıcı yapacak.
 
 ## Repo durumu
 
@@ -254,6 +254,15 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - [x] Testler: 2 yeni regresyon testi — başarısız deneme loglarında model çıktısı, ham API gövdesi ve belge metni yok (`test_classification_service.py`, 46); OpenAPI 422 iki gövdeyi belgeliyor (`test_documents_api.py`, 24).
 - [x] Doğrulama: `pytest` 94 passed (24 + 46 + 24); `pip check` temiz; `GET /health` → `200`; `npm run build` ve `npm run lint` (oxlint) temiz; tarayıcıda etiket, açıklama, `role="status"` ve `aria-live` davranışı doğrulandı (backend'e istek atılmadan). Gerçek Gemini çağrısı yapılmadı; `documents` tablosu 0 satır, `backend/storage/` içinde yalnızca `.gitkeep`.
 
+**PostgreSQL bağlantı zaman aşımı (D-041)**
+
+- [x] Karar: bağlantı kurma en fazla 10 sn. `DATABASE_URL`'e libpq parametresi `connect_timeout=10` eklendi (`backend/.env.example` ve yerel `backend/.env`; yerel dosyada yalnızca bu satır değişti). Kod değişmedi; SQLAlchemy parametreyi psycopg'a iletiyor, uygulama ve Alembic aynı adresi kullanıyor. Sorgu/statement zaman aşımı eklenmedi.
+- [x] `DECISIONS.md`: D-041 eklendi, D-036'daki adres örneği güncellendi. `PROJECT_BRAIN.md` §3 ve `README.md` geliştirme ortamı notu senkronize edildi.
+- [x] PostgreSQL açıkken: `pytest` 94 passed; `alembic current` = `2ab2daa5828a (head)`; uygulama engine'iyle `SELECT 1` 0,06 sn; `GET /health` → `200`.
+- [x] PostgreSQL kontrollü durdurulduğunda (`docker compose stop postgres`): yeni bağlantı denemesi iki ölçümde 10,04 sn ve 10,07 sn'de `OperationalError` (`psycopg.errors.ConnectionTimeout: connection timeout expired`) verdi; `alembic current` ~10 sn'de aynı hatayla çıktı (Python açılışı dahil 11,57 sn). Önceki davranış ~130 sn idi. Classify ve Gemini isteği yapılmadı.
+- [x] `docker compose start postgres` sonrası container 5 sn'de healthy; `alembic current` head, `SELECT 1` 0,05 sn, `documents` 0 satır, `backend/storage` yalnızca `.gitkeep`, `GET /health` → `200`. Backend yeni ayarla yeniden başlatıldı.
+- [x] Commit hatasında rollback, yetim dosya silme ve ayrıntısız `500` davranışı kod olarak değişmedi; `test_db_commit_failure_rolls_back_and_removes_orphan_file` bunu doğrulamaya devam ediyor.
+
 ## Üzerinde çalışılan işler
 
 - Aşama 6 · Adım 5: geliştirme ortamı hazır (Docker PostgreSQL, backend `127.0.0.1:8000`, Vite `http://localhost:5173`); kullanıcının gerçek belgelerle manuel testleri bekleniyor.
@@ -264,7 +273,7 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - Bu makinede host 5432'yi yerel bir Windows PostgreSQL 18 servisi (`postgresql-x64-18`) kullanıyor. Docker PostgreSQL bu yüzden 5433'te; `DATABASE_URL`'deki port 5433 olmalı, aksi halde yanlış veritabanına bağlanılabilir.
 - `DATABASE_URL`'de `localhost` kullanılmamalı: port yalnızca IPv4 `127.0.0.1`'e açık ve `localhost` önce `::1` olarak denendiğinde bağlantı asılı kalıyor (Aşama 2'de `alembic current` bu yüzden takıldı). `127.0.0.1` kullanılıyor.
 - PostgreSQL 18 image'ında volume `/var/lib/postgresql` yoluna bağlanır. Eski sürümlerdeki `/var/lib/postgresql/data` yolu kullanılmamalı.
-- Backend ve migration komutları için Docker Desktop çalışıyor ve `docker compose up -d` yapılmış olmalı; kapalıyken yapılan classify isteği aşağıda anlatıldığı gibi uzun süre bekler.
+- Backend ve migration komutları için Docker Desktop çalışıyor ve `docker compose up -d` yapılmış olmalı; kapalıyken yapılan classify isteği aşağıda anlatıldığı gibi yaklaşık 10 sn sonra `500` ile biter.
 - `main.py` artık documents router'ını import ettiği için `DATABASE_URL`, `GEMINI_API_KEY` ve `GEMINI_MODEL` uygulama başlangıcında zorunludur; biri eksikse uygulama (ve `/health`) başlamaz (D-031, D-035).
 - `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerleri uygulama katmanı belirliyor: `file_type` yalnızca `file_service.FILE_TYPES` değerlerinden, `status` yalnızca endpoint kodunda atanıyor.
 - Retry/timeout davranışı google-genai 2.23.0 kaynak koduna göre doğrulandı. SDK sürümü yükseltilirse `tests/test_classification_service.py` içindeki gerçek SDK + MockTransport testleri mutlaka çalıştırılmalı.
@@ -297,7 +306,8 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - Vite dev sunucusu varsayılan ayarla yalnızca IPv6 `::1` (yani `localhost`) üzerinde dinliyor; `http://127.0.0.1:5173` bağlantı kuramıyor. Tarayıcı ve komut satırı testlerinde `http://localhost:5173` kullanılmalı. Gerekirse `vite.config.ts` içinde `server.host` sabitlenebilir (şimdilik yapılmadı).
 - Frontend'de şablondan gelen `oxlint` dev bağımlılığı ve `.oxlintrc.json` duruyor (`npm run lint`). Backend tarafında karşılık gelen bir linter yok; istenirse kaldırılabilir.
 - Frontend'de test altyapısı yok; doğrulama build ve tarayıcıda gerçek akışla yapılıyor.
-- PostgreSQL kapalıyken classify isteği backend'de yaklaşık 130 sn bekliyor (psycopg'un varsayılan bağlantı zaman aşımı; Windows'ta reddedilen bağlantı hemen hata vermiyor), sonra `500` dönüyor ve yetim dosya siliniyor. Bu sırada bir backend thread'i meşgul kalıyor; kullanıcı 120 sn'de zaman aşımı mesajını görüyor. `GET /health` veritabanına bakmadığı için bu durumda da `200` döner. Backend'de bağlantı zaman aşımı ayarı yok (MVP'de değiştirilmedi).
+- PostgreSQL kapalıyken bağlantı denemesi `connect_timeout=10` (D-041) ile yaklaşık 10 sn'de `ConnectionTimeout` veriyor; classify isteği bu durumda kaydı yazamadığı için genel `500` döner ve yetim storage dosyası silinir (düz TCP bağlantısı daha erken reddedilebilse de — bu makinedeki ölçümde ~2 sn — psycopg bu durumda kendi `connect_timeout` süresi dolana kadar bekleyebiliyor; ölçülen hata süresi bu yüzden ~10 sn oldu). Metin çıkarımı ve Gemini aşaması veritabanından önce çalıştığı için toplam süre bunlara ek olarak uzar. `GET /health` veritabanına bakmadığı için bu durumda da `200` döner.
+- `connect_timeout` yalnızca `DATABASE_URL` içinde tanımlı. Parametresi olmayan eski bir yerel `.env`, psycopg'un varsayılan ~130 sn beklemesine döner; `.env` şablonla uyumlu tutulmalıdır.
 - Geliştirmede backend kapalıyken Vite proxy'si boş gövdeli `502` döndürüyor; kullanıcı "Sunucuya ulaşılamadı" yerine "Belge şu anda sınıflandırılamadı…" mesajını görüyor. Yalnızca geliştirme ortamını etkiler.
 - `DECISIONS.md` D-034'teki "kabul sonrası başka HTTP hata kodu kullanılmaz" ifadesi `failed` kayıtlarını kapsıyor; kayıt yazılamadığında (ör. commit hatası) dönen `500` bunun dışında kalıyor. Karar metni değiştirilmedi.
 
@@ -307,7 +317,6 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 
 V1 final öncesi karar bekleyenler:
 
-- PostgreSQL bağlantı zaman aşımı: veritabanı kapalıyken ~130 sn bekleme kabul mü edilecek, yoksa `DATABASE_URL`'e `connect_timeout` mı eklenecek?
 - Manuel testlerde gerçek belgelerden oluşacak `documents` kayıtları ve storage dosyaları V1 final öncesi silinecek mi, saklanacak mı?
 
 ## Sıradaki geliştirme adımları

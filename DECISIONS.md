@@ -71,10 +71,18 @@
     - image `postgres:18`, container `dosya-sistemi-postgres`, veritabanı `dosya_sistemi`
     - Docker tarafından yönetilen `dosya_sistemi_pgdata` volume'u, `/var/lib/postgresql` yoluna bağlanır (PostgreSQL 18+ image düzeni)
   - Host portu `127.0.0.1:5433`, container portu `5432`. Bu makinede 5432'yi yerel bir Windows PostgreSQL servisi kullandığı için 5433 seçildi; port yalnızca localhost'a açıktır.
-  - `DATABASE_URL` host olarak `127.0.0.1` kullanır (`postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi`). `localhost` önce IPv6 (`::1`) olarak denendiğinde bağlantı asılı kalıyor.
+  - `DATABASE_URL` host olarak `127.0.0.1` kullanır (`postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10`; bağlantı zaman aşımı: D-041). `localhost` önce IPv6 (`::1`) olarak denendiğinde bağlantı asılı kalıyor.
   - `postgres` / `postgres` kullanıcı ve parolası yalnızca yerel geliştirme içindir.
   - FastAPI backend ve React/Vite frontend yerel makinede çalışır; şimdilik containerize edilmez. Compose'a başka servis (FastAPI, frontend, pgAdmin vb.) eklenmez.
 - **Gerekçe:** Veritabanı makineye kurulum gerektirmeden, tek komutla ve tekrarlanabilir şekilde ayağa kalkar; veriler container kaldırılsa da volume'da kalır. Backend ve frontend yerelde hot reload ile hızlı geliştirilir; bunları containerize etmek MVP'de gereksiz katman ekler. Ayrı host portu, yerel PostgreSQL servisiyle çakışmayı ve yanlış veritabanına bağlanma riskini önler.
+
+### D-041 — PostgreSQL bağlantı kurma zaman aşımı: 10 saniye
+- **Karar:**
+  - Veritabanı bağlantısının kurulması en fazla 10 saniye bekler. Değer, libpq'nun `connect_timeout=10` parametresi olarak `DATABASE_URL` içinde verilir (`backend/.env.example` ve yerel `backend/.env`); kodda ayrıca tanımlanmaz.
+  - Uygulama ve Alembic aynı `DATABASE_URL`'i kullandığı için (D-035) ikisine de uygulanır.
+  - Yalnızca bağlantı kurma süresini sınırlar; sorgu/statement zaman aşımı eklenmez.
+  - Parametresi olmayan eski bir `.env`, psycopg'un varsayılan bekleme süresine döner; yerel `.env` şablonla uyumlu tutulur.
+- **Gerekçe:** PostgreSQL kapalıyken psycopg'un varsayılanıyla bağlantı denemesi yaklaşık 130 saniye sürüyor, bir backend thread'ini meşgul ediyor ve frontend'in 120 saniyelik zaman aşımından (D-039) uzun kalıyordu. 10 saniye, yerel ve kısa ağ gecikmelerine pay bırakırken hatayı hızlı ve genel `500` yanıtıyla sonuçlandırır. Değer yapılandırmada olduğu için kod değişmeden ayarlanabilir.
 
 ## LLM
 

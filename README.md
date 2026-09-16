@@ -116,7 +116,7 @@ Frontend için ilk kurulum (bir kez, `frontend/` içinde):
 npm install
 ```
 
-`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). Uygulama bu üç değişken olmadan başlamaz. `.env` Git'e girmez.
+`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. Adresteki `connect_timeout=10` parametresi, veritabanına ulaşılamadığında bağlantı denemesini 10 sn'de sonlandırır; daha önce oluşturulmuş bir `.env` kullanıyorsanız bu parametreyi `DATABASE_URL`'e ekleyin. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). Uygulama bu üç değişken olmadan başlamaz. `.env` Git'e girmez.
 
 Günlük geliştirme akışı:
 
