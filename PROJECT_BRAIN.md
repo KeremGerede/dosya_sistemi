@@ -250,7 +250,7 @@ Hata ve red davranışı:
 | Metin çıkarımı başarısız veya normalize metin < 10 karakter | `failed` kaydı | `422`, `failed` gövdesi |
 | Gemini geçici hatası (network, timeout, `429`, `5xx`) veya geçersiz model çıktısı, 3 deneme de başarısız | `failed` kaydı | `502`, `failed` gövdesi |
 | Gemini kalıcı hatası (`400`/`401`/`403`) veya Gemini aşamasında beklenmeyen hata, retry yok | `failed` kaydı | `502`, `failed` gövdesi |
-| Beklenmeyen sunucu hatası (ör. kayıt veritabanına yazılamadı) | Kayıt yok, bu isteğin storage dosyası silinir | `500`, ayrıntı dönmez |
+| Beklenmeyen sunucu hatası (ör. dosya storage'a ya da kayıt veritabanına yazılamadı) | Kayıt yok, bu isteğin storage dosyası (yarım yazılmışsa da) silinir | `500`, ayrıntı dönmez |
 
 Kabul sonrası `failed` yanıt gövdesi, başarılı yanıttaki alanları ve genel bir `message` alanını içerir:
 
@@ -276,7 +276,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 - **`422`** → belge içeriği işlenemedi / yeterli metin çıkarılamadı (gövdede `status = "failed"`). Gövdesinde `status` olmayan 422, istek doğrulama hatasıdır; OpenAPI'de iki gövde de belgelenir.
 - **`502`** → Gemini ile sınıflandırma tamamlanamadı (nedeni ne olursa olsun; ayrıntı yalnızca loglarda).
-- **`500`** → kayıt yazılamadı (beklenmeyen sunucu hatası); `failed` kaydı oluşmaz, ayrıntı dönmez (D-034).
+- **`500`** → dosya ya da kayıt yazılamadı (beklenmeyen sunucu hatası); `failed` kaydı oluşmaz, ayrıntı dönmez (D-034).
 
 ## 10. Proje prensipleri
 

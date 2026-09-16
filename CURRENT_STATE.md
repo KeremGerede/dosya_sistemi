@@ -15,7 +15,7 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - Git reposu, `main` dalı (remote: `origin`).
 - Karar geçmişi `docs: define initial MVP architecture and decisions` commit'inden itibaren Git'te izlenir.
 - Dosyalar:
-  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının ve frontend'in (yükleme, sonuç ve hata ekranı) çalıştığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu ve iki tür 422 dahil HTTP kodları anlatılır; frontend kurulum/çalıştırma/lint komutlarını ve proxy'yi içerir.
+  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının ve frontend'in (yükleme, sonuç ve hata ekranı) çalıştığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu ve iki tür 422 dahil HTTP kodları anlatılır; sıfırdan kurulum ve çalıştırma rehberini (gereksinimler, backend/frontend kurulumu, `.env`, Docker PostgreSQL, migration, doğrulama ve durdurma komutları) içerir.
   - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
   - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
@@ -267,6 +267,15 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 
 - [x] D-034, gerçek runtime davranışıyla hizalandı: kabul sonrası kayıt yazılamazsa ayrıntısız `500`; Gemini aşamasındaki beklenmeyen hatalar da `502`; `200`, `413`, `415`, doğrulama `422` ve çerçevenin standart yanıtları (`400`, `405`). Eski "kabul sonrası başka HTTP hata kodu kullanılmaz" ifadesi kaldırıldı. `PROJECT_BRAIN.md` §9 senkronize edildi; kod ve testler değişmedi.
 - [x] Doğrulama: endpoint kodu ve testler okundu; süreç içinde sahte ortam ve geçici SQLite ile yanlış metot → `405`, boundary'siz çok parçalı gövde → `400`, dosya yok → `422`, `.txt` → `415` (kayıt ve dosya yok), Gemini aşamasında beklenmeyen hata → `502` + `failed` kaydı (ham ayrıntı yanıtta yok). `pytest` 94 passed.
+
+**Storage yazma hatasında yarım dosya temizliği ve README kurulum rehberi**
+
+- [x] Risk doğrulandı: `save_file` dosyayı `open("xb")` ile oluşturup yazıyordu; yazma (veya kapanıştaki flush) yarıda hata verirse kısmi dosya storage'da kalıyordu. Endpoint'te `save_file` çağrısı commit temizliğinin `try` bloğu dışında olduğu için istek `500` dönüyor ama yarım dosya (testte 8 baytlık `%PDF-1.7`) yetim kalıyordu.
+- [x] Düzeltme (`app/services/file_service.py`): dosya bu çağrıda oluşturulduktan sonra yazma/kapatma hata verirse, dosya kapandıktan sonra silinir ve özgün hata aynen yükselir (silme hatası özgün hatayı gizlemez). Dosya açılamazsa (ör. zaten varsa) hiçbir dosyaya dokunulmaz. Başarılı yazma, endpoint ve commit hatası temizliği değişmedi; yeni bağımlılık yok.
+- [x] Testler (3 yeni): `tests/conftest.py`'de gerçek diski doldurmadan yazmayı yarıda kesen `failing_storage_write` fixture'ı; `test_failed_write_removes_partial_file_and_reraises` ve `test_existing_storage_file_is_never_overwritten_or_deleted` (`test_file_service.py`, 26); `test_storage_write_failure_returns_500_without_partial_file_or_record` (`test_documents_api.py`, 25) — `500`, gövde yalnızca `Internal Server Error`, kayıt ve dosya yok. İki regresyon testi düzeltmeden önce yetim dosya nedeniyle kırıldı.
+- [x] D-034 ve `PROJECT_BRAIN.md` §9'daki `500` tanımına storage yazma hatası eklendi (yeni karar açılmadı).
+- [x] `README.md`: sıfırdan kurulum için "Kurulum ve Çalıştırma" bölümü (gereksinimler, klonlama, backend ortamı, `.env`, Docker PostgreSQL, migration, backend, frontend, kullanım, doğrulama komutları, durdurma/başlatma). Komutlar repo yapısı ve bu makinede doğrulandı; teknik boyut sınırı 50 MiB olarak yazıldı, çerçevenin `400`/`405` yanıtları API bölümüne eklendi.
+- [x] Doğrulama: `pytest` 97 passed (26 + 46 + 25); `pip check` temiz; `npm run build` ve `npm run lint` temiz; `GET /health`, `/docs`, `/redoc`, `/openapi.json` → `200`; `alembic current` head; PostgreSQL healthy. Gerçek Gemini çağrısı yapılmadı. Backend düzeltilmiş kodla yeniden başlatıldı.
 
 ## Üzerinde çalışılan işler
 

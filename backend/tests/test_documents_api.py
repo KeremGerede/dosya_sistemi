@@ -399,6 +399,19 @@ def test_db_commit_failure_rolls_back_and_removes_orphan_file(client, session_fa
     assert SECRET_MARKER not in caplog.text
 
 
+def test_storage_write_failure_returns_500_without_partial_file_or_record(
+    client, session_factory, storage_dir, failing_storage_write, caplog
+):
+    with caplog.at_level(logging.DEBUG):
+        response = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"  # "No space left" gibi teknik ayrıntı yanıta girmez
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+    assert SECRET_MARKER not in caplog.text
+
+
 def test_openapi_documents_both_422_bodies():
     responses = app.openapi()["paths"][CLASSIFY_URL]["post"]["responses"]
 

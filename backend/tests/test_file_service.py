@@ -194,6 +194,25 @@ def test_user_file_name_is_not_used_as_storage_path(storage_dir, tmp_path):
         save_file(data, uuid.uuid4(), "../pdf")
 
 
+def test_failed_write_removes_partial_file_and_reraises(storage_dir, failing_storage_write):
+    with pytest.raises(OSError) as exc_info:
+        save_file(make_pdf("Dosya icerigi"), uuid.uuid4(), "pdf")
+
+    assert exc_info.value is failing_storage_write  # özgün hata bastırılmaz
+    assert list(storage_dir.iterdir()) == []  # yarım yazılmış dosya kalmaz
+
+
+def test_existing_storage_file_is_never_overwritten_or_deleted(storage_dir):
+    document_id = uuid.uuid4()
+    original = make_pdf("Ilk dosya")
+    file_reference = save_file(original, document_id, "pdf")
+
+    with pytest.raises(FileExistsError):
+        save_file(make_pdf("Ikinci dosya"), document_id, "pdf")
+
+    assert (storage_dir / file_reference).read_bytes() == original
+
+
 def test_full_text_is_returned_without_truncation():
     long_text = "a" * 60_000
 

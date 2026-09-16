@@ -4,6 +4,7 @@ HTTP yanıtı üretmez ve veritabanına yazmaz. Hataların eşlemesi API katman�
 FileTooLargeError → 413, UnsupportedFileTypeError → 415, TextExtractionError → failed + 422.
 """
 
+import contextlib
 import io
 import re
 import uuid
@@ -64,13 +65,22 @@ def save_file(content: bytes, document_id: uuid.UUID, file_type: str) -> str:
     """Dosyayı STORAGE_DIR/<document_id>.<file_type> olarak yazar ve file_reference döndürür.
 
     Yol yalnızca UUID ve izinli uzantıdan oluşur; kullanıcının dosya adı kullanılmaz.
+    Yazma yarıda kalırsa bu çağrının oluşturduğu kısmi dosya silinir ve özgün hata yükselir.
     """
     if file_type not in FILE_TYPES:
         raise ValueError(f"Geçersiz file_type: {file_type!r}")
     file_reference = f"{uuid.UUID(str(document_id))}.{file_type}"
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    with (STORAGE_DIR / file_reference).open("xb") as file:
-        file.write(content)
+    target = STORAGE_DIR / file_reference
+    file = target.open("xb")  # "x": dosya bu çağrıda oluşturulur; var olan bir dosyaya dokunulmaz
+    try:
+        with file:
+            file.write(content)
+    except BaseException:
+        # Dosya kapandıktan sonra silinir (Windows'ta açık dosya silinemez); silme hatası özgün hatayı gizlemez.
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+        raise
     return file_reference
 
 

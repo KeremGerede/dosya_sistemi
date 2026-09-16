@@ -47,7 +47,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 ## Temel MVP Kuralları
 
-- Maksimum dosya boyutu **50 MB**.
+- Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
 - Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı; daha kısaysa belge sınıflandırılmaz ve `failed` olarak kaydedilir (OCR denenmez).
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
@@ -67,13 +67,13 @@ Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `doc
 | HTTP kodu | Anlamı |
 |---|---|
 | `200` | Sınıflandırıldı (`status`: `classified` veya `needs_review`) |
-| `413` | Dosya 50 MB sınırını aşıyor (kayıt oluşturulmaz) |
+| `413` | Dosya 50 MiB sınırını aşıyor (kayıt oluşturulmaz) |
 | `415` | Desteklenmeyen dosya türü (kayıt oluşturulmaz) |
 | `422` | İki durum: (1) belge içeriği işlenemedi / yeterli metin çıkarılamadı — `failed` kaydı, gövdede `status: "failed"` ve `message`; (2) istek doğrulanamadı, ör. `file` alanı gönderilmedi — FastAPI'nin `{"detail": [...]}` gövdesi, kayıt oluşturulmaz |
 | `502` | Gemini ile sınıflandırma tamamlanamadı (`failed` kaydı) |
-| `500` | Beklenmeyen sunucu hatası, ör. kayıt veritabanına yazılamadı (ayrıntı dönmez; kayıt oluşmaz, yüklenen dosya silinir) |
+| `500` | Beklenmeyen sunucu hatası, ör. dosya storage'a ya da kayıt veritabanına yazılamadı (ayrıntı dönmez; kayıt oluşmaz, yüklenen ya da yarım yazılmış dosya silinir) |
 
-Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır. OpenAPI şeması `/docs` ve `/openapi.json` adreslerindedir; 422 için iki gövde de belgelenmiştir.
+Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bozuk çok parçalı gövde için `400`, yanlış HTTP metodu için `405`); bu isteklerde kayıt oluşmaz. Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır. OpenAPI şeması `/docs` ve `/openapi.json` adreslerindedir; 422 için iki gövde de belgelenmiştir.
 
 ## Proje Durumu
 
@@ -95,48 +95,189 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır. OpenAPI 
   - Adım 5 devam ediyor: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik) tamamlandı; gerçek belgelerle manuel test bekleniyor.
 - **Sıradaki adım:** manuel test sonuçlarının değerlendirilmesi, final kontroller ve V1 final commit'i.
 
-### Geliştirme ortamı
+## Kurulum ve Çalıştırma
 
-- **PostgreSQL 18** repo kökündeki `docker-compose.yml` ile çalışır. Host portu `5433`'tür (5432 kullanan yerel PostgreSQL kurulumlarıyla çakışmaması için) ve yalnızca `127.0.0.1`'e açıktır.
-- **Backend** ve **frontend** yerel makinede çalışır; ikisi de container'da değildir.
-- Frontend, backend'e `/api/...` göreli yollarıyla istek atar. Vite dev sunucusu bu istekleri `http://127.0.0.1:8000` adresine proxy'ler, bu yüzden backend'de CORS ayarı yoktur ve frontend kodunda backend adresi yazılı değildir.
+Komutlar Windows PowerShell içindir (macOS/Linux farkları en sonda). Kurulum üç terminal kullanır: repo kökü (Docker), `backend/` (API) ve `frontend/` (arayüz).
 
-İlk kurulum (bir kez, `backend/` içinde):
+### Gereksinimler
 
-```bash
+- **Git**
+- **Python 3.13** — proje Python 3.13 ile geliştirildi ve test edildi; repoda ayrıca bir sürüm kısıtı tanımlı değil.
+- **Node.js ve npm** — Vite 8'in desteklediği bir Node.js sürümü (`vite` paketinin `engines` alanı: `^20.19.0 || >=22.12.0`). Proje Node.js 26.7 ve npm 11.19 ile doğrulandı.
+- **Docker Desktop** — `docker compose` komutuyla; yalnızca yerel PostgreSQL 18 için kullanılır.
+- **Gemini API anahtarı** — sınıflandırma gerçek Google Gemini API'sini çağırır; anahtar olmadan backend başlamaz. Testler anahtar gerektirmez.
+
+### 1. Repoyu klonlama
+
+```powershell
+git clone https://github.com/KeremGerede/dosya_sistemi.git
+cd dosya_sistemi
+```
+
+```text
+dosya_sistemi/
+  docker-compose.yml   # yalnızca yerel geliştirme PostgreSQL'i
+  backend/             # FastAPI uygulaması, Alembic, testler, .env.example
+  frontend/            # React + Vite + TypeScript arayüzü
+```
+
+### 2. Backend ortamını hazırlama
+
+Repo kökünden:
+
+```powershell
+cd backend
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-Frontend için ilk kurulum (bir kez, `frontend/` içinde):
+- `python --version` 3.13 göstermelidir. Bağımlılıklar `backend/requirements.txt` içindedir (`pytest` dahil).
+- PowerShell betik çalıştırmayı engelliyorsa sanal ortamı etkinleştirmeden aynı komutları `.\.venv\Scripts\python.exe` ile çalıştırabilirsiniz; ör. `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`, `.\.venv\Scripts\python.exe -m alembic upgrade head`, `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`.
+- `cmd.exe` kullanıyorsanız etkinleştirme komutu `.venv\Scripts\activate.bat`'tır.
 
-```bash
+### 3. Environment ayarları
+
+`backend/` içinde şablonu kopyalayın (mevcut bir `.env`'nin üzerine yazmaz):
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Ardından `backend/.env` dosyasını düzenleyin:
+
+| Değişken | Değer |
+|---|---|
+| `GEMINI_API_KEY` | Kendi Gemini API anahtarınız (şablonda boştur) |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` (şablondaki değer) |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` (şablondaki değer) |
+
+- Üç değişken de zorunludur; biri eksikse backend (ve `/health`) başlamaz. Model adının kodda varsayılanı yoktur.
+- `127.0.0.1:5433`, Docker PostgreSQL'in hosttaki portudur; container içinde PostgreSQL 5432'de çalışır. `localhost` yerine `127.0.0.1` kullanın.
+- `connect_timeout=10`: veritabanına ulaşılamazsa bağlantı denemesi 10 sn'de sonlanır. Daha önce oluşturulmuş bir `.env`'de bu parametre yoksa `DATABASE_URL`'in sonuna `?connect_timeout=10` ekleyin; aksi halde bekleme ~130 sn sürer.
+- `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` Git'e girmez; gerçek anahtarı başka bir dosyaya yazmayın.
+
+### 4. PostgreSQL'i başlatma
+
+Docker Desktop açık olmalı. Repo kökünde:
+
+```powershell
+docker compose up -d
+docker compose ps
+docker inspect -f '{{.State.Health.Status}}' dosya-sistemi-postgres
+```
+
+- Beklenen: `docker compose ps` çıktısında `Up … (healthy)`, son komutta `healthy`. İlk açılışta birkaç saniye `starting` görünebilir.
+- Compose yalnızca `dosya-sistemi-postgres` container'ını (`postgres:18`, veritabanı `dosya_sistemi`) çalıştırır; port eşlemesi `127.0.0.1:5433 → 5432`'dir ve yalnızca localhost'a açıktır.
+- Makinede 5432'yi kullanan yerel bir Windows PostgreSQL servisi olabilir; ona dokunulmaz. Proje yalnızca Docker PostgreSQL'e, hosttaki 5433 portundan bağlanır.
+- Veriler Docker'ın yönettiği `dosya_sistemi_pgdata` volume'unda kalır.
+
+### 5. Migration
+
+`backend/` içinde, sanal ortam etkinken:
+
+```powershell
+alembic upgrade head
+alembic current
+```
+
+- `alembic current` çıktısı `(head)` ile bitmelidir (şu an `2ab2daa5828a (head)`).
+- Alembic `alembic.ini` dosyasını ve `app` paketini çalışma dizininden bulduğu için bu komutlar `backend/` içinden çalıştırılmalıdır. Bağlantı adresi `.env`'deki `DATABASE_URL`'den okunur.
+
+### 6. Backend'i başlatma
+
+`backend/` içinde, sanal ortam etkinken:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+| Adres | İçerik |
+|---|---|
+| http://127.0.0.1:8000 | API |
+| http://127.0.0.1:8000/health | Sağlık kontrolü → `{"status":"ok"}` |
+| http://127.0.0.1:8000/docs | Swagger UI |
+| http://127.0.0.1:8000/redoc | ReDoc |
+| http://127.0.0.1:8000/openapi.json | OpenAPI şeması |
+
+Başka bir PowerShell penceresinden kontrol:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+`/health` yalnızca uygulamanın ayakta olduğunu gösterir, veritabanını kontrol etmez; veritabanı için 4. ve 5. adımdaki komutları kullanın.
+
+### 7. Frontend'i hazırlama ve başlatma
+
+Yeni bir terminalde, repo kökünden:
+
+```powershell
+cd frontend
 npm install
+npm run dev
 ```
 
-`.env.example`'daki `DATABASE_URL` Docker Compose veritabanına göre hazırdır; `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. Adresteki `connect_timeout=10` parametresi, veritabanına ulaşılamadığında bağlantı denemesini 10 sn'de sonlandırır; daha önce oluşturulmuş bir `.env` kullanıyorsanız bu parametreyi `DATABASE_URL`'e ekleyin. `.env` içinde `GEMINI_API_KEY` alanına kendi Gemini API anahtarınızı yazın (`GEMINI_MODEL` şablondaki değeri: `gemini-3.5-flash-lite`). Uygulama bu üç değişken olmadan başlamaz. `.env` Git'e girmez.
+- Arayüz: **http://localhost:5173**. Adres olarak `localhost` kullanın; Vite varsayılan ayarla bu makinede yalnızca `localhost` (IPv6 `::1`) üzerinden erişilebiliyor.
+- Frontend `/api/...` isteklerini Vite proxy'si ile `http://127.0.0.1:8000` adresine iletir (`frontend/vite.config.ts`). Bu yüzden 6. adımdaki backend çalışıyor olmalıdır; CORS ayarı gerekmez.
 
-Günlük geliştirme akışı:
+### 8. Sistemi kullanma
 
-1. Docker Desktop'ı başlat.
-2. Repo kökünde `docker compose up -d`.
-3. `backend/` içinde sanal ortamı aktif et: `.venv\Scripts\activate`.
-4. `alembic upgrade head`.
-5. `uvicorn app.main:app --reload` → kontrol: `http://127.0.0.1:8000/health` adresi `{"status": "ok"}` döndürür.
-6. Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` (ya da `http://127.0.0.1:8000/docs`).
-7. Frontend için ayrı bir terminalde, `frontend/` içinde: `npm run dev` → `http://localhost:5173`. Backend'in 5. adımda çalışıyor olması gerekir; proxy sayesinde `http://localhost:5173/api/documents/classify` isteği backend'e ulaşır. Arayüzden PDF veya DOCX seçip **Sınıflandır** ile gönderebilirsiniz. Adres olarak `localhost` kullanın; Vite varsayılan ayarla `127.0.0.1:5173` üzerinden erişilemiyor.
+1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF veya DOCX seçin.
+2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve PDF/DOCX dışındaki dosyaları göndermez.
+3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
+4. Sonuçta **Belge Türü** ve **Gönderileceği Kurum** görünür. Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
 
-Frontend production derlemesi `frontend/` içinde `npm run build` ile alınır (çıktı: `dist/`, Git'e girmez). Lint: `npm run lint` (oxlint).
+- **OCR yoktur:** taranmış veya yalnızca görselden oluşan PDF'ler V1 kapsamında değildir. Metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür.
+- Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
+- API'yi doğrudan denemek için Swagger UI'ı ya da şu komutu kullanabilirsiniz: `curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify`
 
-Testler `backend/` içinde `pytest` ile çalışır; Docker PostgreSQL veya gerçek Gemini API gerektirmez (endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır). Frontend'de henüz test yoktur.
+### 9. Geliştirici doğrulama komutları
 
-PostgreSQL'i durdurmak için repo kökünde `docker compose down` çalıştırılır. Bu komut container'ı durdurup kaldırır ama veriler Docker volume'unda (`dosya_sistemi_pgdata`) kalır; sonraki `docker compose up -d` aynı veritabanıyla devam eder.
+`backend/` içinde, sanal ortam etkinken:
 
-Komutlar Windows içindir; macOS/Linux'ta `source .venv/bin/activate` ve `cp .env.example .env` kullanılır.
+```powershell
+python -m pytest
+python -m pip check
+alembic current
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
 
-Ayrıntılı proje dokümantasyonu:
+- `pytest` gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır.
+
+`frontend/` içinde:
+
+```powershell
+npm run build
+npm run lint
+```
+
+- `npm run build`, `tsc -b && vite build` çalıştırır; çıktı `frontend/dist/` klasörüne yazılır ve Git'e girmez. `npm run lint` oxlint'i çalıştırır. Frontend'de otomatik test yoktur.
+
+### 10. Durdurma ve tekrar başlatma
+
+- Backend ve frontend: çalıştıkları terminalde `Ctrl+C`.
+- PostgreSQL, repo kökünde:
+
+```powershell
+docker compose stop     # container'ı durdurur
+docker compose start    # durdurulmuş container'ı yeniden başlatır
+docker compose down     # container'ı kaldırır; veriler dosya_sistemi_pgdata volume'unda kalır
+docker compose up -d    # container'ı yeniden oluşturup başlatır
+```
+
+- `docker compose down -v` volume'u da siler ve tüm yerel veriler kaybolur; yalnızca bilerek kullanın.
+- PostgreSQL kapalıyken yapılan classify isteği ~10 sn sonra `500` ile biter; `/health` bu durumda da `200` döner.
+
+Sonraki çalıştırmalarda kısa sıra:
+
+1. Docker Desktop'ı açın; repo kökünde `docker compose up -d`.
+2. `backend/` içinde `.\.venv\Scripts\Activate.ps1`, `alembic upgrade head`, `uvicorn app.main:app --reload`.
+3. Ayrı bir terminalde `frontend/` içinde `npm run dev`, ardından http://localhost:5173.
+
+**macOS/Linux:** sanal ortam için `python3 -m venv .venv` ve `source .venv/bin/activate`, şablon için `cp .env.example .env`, sağlık kontrolü için `curl http://127.0.0.1:8000/health` kullanın; diğer komutlar aynıdır.
+
+## Ayrıntılı Proje Dokümantasyonu
 
 - [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) — amaç, mimari, kapsam
 - [`DECISIONS.md`](DECISIONS.md) — aktif ürün ve teknik kararlar
