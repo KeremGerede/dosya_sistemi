@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yükleyip sınıflandırma yapılabiliyor; ayrıntılı sonuç ve hata ekranı henüz yok.
+> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor.
 
 ## MVP Akışı
 
@@ -89,8 +89,9 @@ Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır.
 - **Aşama 6 — devam ediyor:** frontend.
   - Adım 1 tamamlandı: classify yanıtı katalog adlarını (`document_type_name`, `institution_name`) da döndürüyor.
   - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si.
-  - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu ve sade bir sonuç satırı.
-- **Sıradaki adım:** ayrıntılı sonuç ve hata ekranı (`needs_review`, `review_reason`, HTTP kodlarına göre mesajlar).
+  - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
+  - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
+- **Sıradaki adım:** gerçek belgelerle manuel test ve V1 final doğrulaması.
 
 ### Geliştirme ortamı
 

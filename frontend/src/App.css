@@ -41,19 +41,81 @@ button:disabled {
 }
 
 .file-info {
+  max-width: 100%;
   margin: 0;
   color: #555;
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+input[type='file'] {
+  max-width: 100%;
 }
 
 .status {
   color: #555;
 }
 
-.error {
-  color: #b3261e;
+.notice {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid;
+  border-radius: 6px;
 }
 
-.result p:first-child {
+.notice h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.notice p:last-child {
+  margin-bottom: 0;
+}
+
+.success {
+  background-color: #edf7ef;
+  border-color: #9fd3ab;
+}
+
+.review {
+  background-color: #fff7e3;
+  border-color: #eec765;
+}
+
+.error {
+  color: #8c1d18;
+  background-color: #fdecea;
+  border-color: #f1b0aa;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+}
+
+dt {
+  color: #555;
+}
+
+dd {
+  margin: 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.review-reason {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 30rem) {
+  dl {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
+
+  dd {
+    margin-bottom: 0.5rem;
+  }
 }

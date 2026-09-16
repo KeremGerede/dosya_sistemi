@@ -8,7 +8,7 @@
 
 **Aşama 5 — `POST /api/documents/classify` endpoint'i tamamlandı.** Backend ana MVP akışı uçtan uca çalışıyor: upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt. Endpoint testleri geçti; gerçek Docker PostgreSQL + gerçek Gemini ile tek belgelik smoke testi başarılı. Frontend henüz yok.
 
-Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Adım 1 tamamlandı:** classify yanıtı `document_type_name` ve `institution_name` alanlarını da döndürüyor. **Adım 2 tamamlandı:** `frontend/` iskeleti (React + Vite + TypeScript) kuruldu ve `/api` proxy'si gerçek classify isteğiyle doğrulandı. **Adım 3 tamamlandı:** yükleme ekranı çalışıyor — dosya seçimi, ön kontroller, 120 sn zaman aşımlı classify isteği ve yükleniyor durumu. Sonuç şimdilik tek satır olarak gösteriliyor; ayrıntılı sonuç ve hata ekranı sıradaki adım.
+Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 güncellendi). **Adım 1 tamamlandı:** classify yanıtı `document_type_name` ve `institution_name` alanlarını da döndürüyor. **Adım 2 tamamlandı:** `frontend/` iskeleti (React + Vite + TypeScript) kuruldu ve `/api` proxy'si gerçek classify isteğiyle doğrulandı. **Adım 3 tamamlandı:** yükleme ekranı çalışıyor — dosya seçimi, ön kontroller, 120 sn zaman aşımlı classify isteği ve yükleniyor durumu. **Adım 4 tamamlandı:** sonuç ekranı (başarılı ve `needs_review` görünümü, Türkçe tür/kurum adları, inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları. Sıradaki adım gerçek belgelerle manuel test ve V1 final doğrulaması.
 
 ## Repo durumu
 
@@ -226,9 +226,25 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
   - Geçerli sentetik PDF → yükleniyor durumu göründü, ardından `200`: "Talep Dilekçesi · Fen İşleri Müdürlüğü · classified" (1 gerçek Gemini isteği). Zincir: UI → `/api` → Vite proxy → FastAPI → Gemini → PostgreSQL → yanıt.
 - [x] Smoke temizliği: `documents` kaydı ve storage dosyası silindi (0 satır, yalnızca `.gitkeep`), geçici PDF scratch alanından kaldırıldı. Backend regresyonu: `pytest` 92 passed, `GET /health` → `200`. Backend kodu değişmedi.
 
+**Aşama 6 · Adım 4 — Sonuç ve hata ekranı (D-032, D-034, D-039)**
+
+- [x] `src/App.tsx` (yardımcılar aynı dosyada; yeni katman, klasör veya bağımlılık yok):
+  - Başarılı sonuç (`needs_review = false`): yeşil kutu, "Belge başarıyla sınıflandırıldı." başlığı; Dosya, Belge Türü (`document_type_name`), Gönderileceği Kurum (`institution_name`). Teknik ID'ler (`document_type`, `institution_id`, `document_id`) ve `status` ekranda gösterilmez.
+  - `needs_review = true`: sarı kutu (hata gibi görünmez), "İnsan incelemesi gerekiyor" başlığı ve kısa açıklama; tür ve kurum adları, ad `null` ise "Belirlenemedi"; `review_reason` varsa "İnceleme nedeni: …".
+  - Hata eşlemesi (`errorMessage(httpStatus, body)`): 413 → "Dosya boyutu 50 MB'ı aşamaz."; 415 → "Yalnızca PDF veya DOCX dosyaları desteklenir."; 422 gövdesi `status = "failed"` ise backend'in genel `message`'ı (yoksa "Belge içeriği işlenemedi veya yeterli metin çıkarılamadı."), değilse FastAPI doğrulama hatası sayılır → "Dosya gönderilemedi. Lütfen bir PDF veya DOCX dosyası seçip tekrar deneyin."; 502 → failed `message`'ı ya da "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."; diğer kodlar (500 dahil) → "Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin."; ağ hatası → "Sunucuya ulaşılamadı. Lütfen bağlantıyı kontrol edip tekrar deneyin."; zaman aşımı → D-039 mesajı. Ekrana yalnızca bu mesajlar basılır; `detail` ve diğer gövde alanları gösterilmez.
+  - Mesajlar tek yerde sabit; 413/415 mesajları ön kontrolle ortak. `ClassifyResponse.status` gerçek değerlerle tiplendi (`classified | needs_review | failed`). Yeni dosya seçilince önceki sonuç/hata temizlenir; sayfa yenilemeden yeni belge gönderilebilir.
+- [x] `src/App.css`: başarı/inceleme/hata kutuları, `dl` ızgarası; 30rem altında tek sütun; uzun dosya adları sarılır (mobilde form içi taşma düzeltildi).
+- [x] Doğrulama — `npm run build` başarılı; `pytest` 92 passed; `GET /health` → `200`; backend kodu değişmedi. Tarayıcıda gerçek UI ile:
+  - A: `.txt` ve 51 MB `.pdf` → doğru uyarılar, buton kapalı, `/api` isteği yok.
+  - B: sentetik şikayet PDF'i → `200`, yeşil kutu, "Şikayet" / "Zabıta Müdürlüğü", teknik ID görünmüyor (1 gerçek Gemini isteği, 1,3 sn).
+  - C: 4 karakterlik metinli PDF → `422` `failed`, ekranda "Belgeden sınıflandırma için yeterli metin çıkarılamadı." (Gemini çağrısı yok).
+  - Zaman aşımı: test sırasında Docker Desktop kapalıydı; istek PostgreSQL bağlantısında bekledi ve frontend 120 sn'de gerçekten "İşlem zaman aşımına uğradı…" gösterdi, kontroller tekrar açıldı. Backend ~130 sn sonra 500 döndü ve yetim storage dosyasını sildi.
+  - `needs_review` (kurum var/yok), 413, 415, doğrulama 422, `failed` 422 (mesajlı/mesajsız), 502 (failed gövdeli/JSON'suz), 500 ve ağ hatası: backend'e dokunmadan tarayıcıda `fetch` taklit edilerek gerçek bileşen üzerinden doğrulandı; hiçbir durumda teknik içerik ekrana çıkmadı. Doğrulama 422'sinin ve 415'in gerçek gövde şekli proxy üzerinden ayrıca kontrol edildi.
+- [x] Temizlik: 2 test kaydı (`failed` + `classified`) ve storage dosyaları silindi (0 satır, yalnızca `.gitkeep`); geçici PDF'ler kaldırıldı.
+
 ## Üzerinde çalışılan işler
 
-- Yok. Aşama 6 · Adım 3 tamamlandı; sonuç ve hata ekranına (Adım 4) başlamak için onay bekleniyor.
+- Yok. Aşama 6 · Adım 4 tamamlandı; manuel gerçek belge testleri ve V1 final doğrulamasına (Adım 5) başlamak için onay bekleniyor.
 
 ## Bilinen problemler ve riskler
 
@@ -264,8 +280,9 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 - Vite dev sunucusu varsayılan ayarla yalnızca IPv6 `::1` (yani `localhost`) üzerinde dinliyor; `http://127.0.0.1:5173` bağlantı kuramıyor. Tarayıcı ve komut satırı testlerinde `http://localhost:5173` kullanılmalı. Gerekirse `vite.config.ts` içinde `server.host` sabitlenebilir (şimdilik yapılmadı).
 - Frontend'de şablondan gelen `oxlint` dev bağımlılığı ve `.oxlintrc.json` duruyor (`npm run lint`). Backend tarafında karşılık gelen bir linter yok; istenirse kaldırılabilir.
 - Frontend'de test altyapısı yok; doğrulama build ve tarayıcıda gerçek akışla yapılıyor.
-- 120 sn zaman aşımı yolu gerçek bir 120 sn beklemeyle denenmedi; yalnızca kod yolu ve temizliği (`clearTimeout`, `loading` sıfırlama) incelendi. Yavaş yanıt senaryosu Adım 4'te hata UX'iyle birlikte ele alınabilir.
-- Backend `413`/`415`/`422`/`502`/`500` yanıtları şu an kullanıcıya tek bir genel mesajla gösteriliyor; HTTP kodu ve yanıt gövdesi `ClassifyError` içinde saklanıyor ve Adım 4'te ayrıştırılacak.
+- PostgreSQL kapalıyken classify isteği backend'de yaklaşık 130 sn bekliyor (psycopg'un varsayılan bağlantı zaman aşımı; Windows'ta reddedilen bağlantı hemen hata vermiyor), sonra `500` dönüyor ve yetim dosya siliniyor. Bu sırada bir backend thread'i meşgul kalıyor; kullanıcı 120 sn'de zaman aşımı mesajını görüyor. `GET /health` veritabanına bakmadığı için bu durumda da `200` döner. Backend'de bağlantı zaman aşımı ayarı yok (MVP'de değiştirilmedi).
+- Geliştirmede backend kapalıyken Vite proxy'si boş gövdeli `502` döndürüyor; kullanıcı "Sunucuya ulaşılamadı" yerine "Belge şu anda sınıflandırılamadı…" mesajını görüyor. Yalnızca geliştirme ortamını etkiler.
+- Günlük akışta Docker Desktop'ın açık olduğu kontrol edilmeli; kapalıyken yapılan istek yukarıdaki gibi uzun süre bekler.
 
 ## Açık sorular
 
@@ -275,7 +292,6 @@ Aşama 6 (frontend) öncesindeki teknik kararlar alındı (D-037–D-040; D-032 
 
 ## Sıradaki geliştirme adımları
 
-**Aşama 6 — Frontend.** Adım 1 (backend ad alanları), Adım 2 (iskelet + proxy) ve Adım 3 (yükleme ekranı) tamamlandı. Onay alındıktan sonra kalan sıra:
+**Aşama 6 — Frontend.** Adım 1 (backend ad alanları), Adım 2 (iskelet + proxy), Adım 3 (yükleme ekranı) ve Adım 4 (sonuç ve hata ekranı) tamamlandı. Onay alındıktan sonra kalan adım:
 
-4. Sonuç ve hata ekranı: tür/kurum adları, `needs_review` ve `review_reason`; hata durumları 413, 415, dosya gönderilmediğindeki FastAPI 422, `failed` 422, 502, 500 ve zaman aşımı. → doğrulama: her durumda kullanıcıya anlaşılır bir mesaj gösterilir.
-5. Uçtan uca manuel test (Docker PostgreSQL + gerçek Gemini), ardından `CURRENT_STATE.md` ve `README.md` güncellenir.
+5. Manuel gerçek belge testleri ve V1 final doğrulaması: gerçek (anonimleştirilmiş) PDF/DOCX örnekleriyle sınıflandırma kalitesi ve `needs_review` davranışı gözlemlenir; Docker PostgreSQL + gerçek Gemini ile uçtan uca akış kontrol edilir; ardından `CURRENT_STATE.md` ve `README.md` güncellenir.
