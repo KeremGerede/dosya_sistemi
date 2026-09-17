@@ -370,9 +370,20 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Doğrulama: `pytest` 133 passed; `pip check` temiz; `alembic current` = `cedf33674167 (head)`; `npm run build` ve `npm run lint` temiz. Test kayıtları ve dosyaları silindi (`documents` 0, storage yalnız `.gitkeep`). Ürün kodu değişmedi.
 - [x] Otomatik log regresyon coverage'ı tamamlandı: mevcut log güvenliği testine (`test_failed_attempt_logs_hide_model_output_raw_api_body_and_document_text`) `summary`, `sender_name` ve `sender_institution` için benzersiz değerler ve bunların `caplog`'da bulunmadığını doğrulayan assertion'lar eklendi. Belge metni, `review_reason`, ham API gövdesi ve API anahtarı kontrolleri korundu; ürün kodu değişmedi.
 
+**V1.2 · Adım 3 — Frontend polish (2026-09-18)**
+
+- [x] Yalnızca görünüm çalışması: backend, API sözleşmesi, DB, migration, prompt, sınıflandırma ve OCR'a dokunulmadı. Yeni bağımlılık, router, UI/CSS framework veya icon kütüphanesi eklenmedi; React + TypeScript + düz CSS korundu.
+- [x] `src/index.css`: tasarım token'ları (`:root` içinde yüzey/metin/kenarlık/aksan/durum renkleri, yarıçap, gölge) ve genel `:focus-visible` odak halkası. Sayfa zemini hafif griye alındı, kartlar beyaz yüzey olarak ayrışıyor.
+- [x] `src/App.css` yeniden düzenlendi (sınıf adları değişmedi): içerik genişliği 40 → 48 rem; başlık alanı `page-header` + açıklama satırı; sekmeler belirgin aktif durumlu sekme şeridi; form kart görünümü ve `::file-selector-button` ile düzenlenmiş native dosya alanı; birincil aksiyon vurgulandı; `status` satırına dönen yükleniyor göstergesi (`prefers-reduced-motion` ile kapanır); sonuç/uyarı kutularına sol renk şeridi; kayıt kartlarında ad → tür/kurum → tarih → özet → gönderen hiyerarşisi; rozet ve indirme aksiyonu sağda üste hizalı `record-actions` grubunda; açılan detay ayrı zeminli panel ve monospace, kaydırılabilir metin; boş liste için `empty` yer tutucu.
+- [x] `src/App.tsx` (minimum): `header` + açıklama satırı; rozet ve indirme `record-actions` içine, özet/gönderen/inceleme nedeni `record-body` içine alındı; boş liste mesajı `empty` sınıfına geçti; seçilen dosya adı vurgulandı; gönder butonu yüklenirken "Sınıflandırılıyor..." yazıyor; tarih saniyesiz gösteriliyor. Sınıflandırma görünümündeki tanıtım paragrafı kaldırıldı (aynı bilgi form etiketi ve ipucunda duruyor).
+- [x] Düzeltilen hata: genel `button` kuralı sekmelere ve kayıt satırlarına sızıyordu (`button:hover:not(:disabled)` specificity'si `.view-tab.active`'i geçiyordu); aktif sekme hover'da mavi dolgu alıyordu. Dolgulu görünüm artık yalnızca `form button[type='submit']` ve `.secondary` için tanımlı.
+- [x] Davranış değişmedi: PDF/DOCX ve 50 MB ön kontrolleri, 120 sn zaman aşımı, hata mesajı eşlemesi, `extracted_text` detay davranışı, indirme adresi, teknik ID/status gizleme ve null gönderen alanlarının hiç gösterilmemesi aynı.
+- [x] Erişilebilirlik korundu: `label`/`for`, `aria-describedby`, `role="status"`, `aria-live="polite"`, sekmelerde `aria-current`, kayıtlarda `aria-expanded`, indirme bağlantısında ekran okuyucu metni, `h1 → h2 → h3` sırası.
+- [x] Doğrulama: `npm run build` ve `npm run lint` temiz; `pytest` 133 passed; `git diff --check` temiz. Tarayıcıda boş ekran, dosya seçimi, yükleniyor, `classified`, `needs_review`, hata (502), kayıt listesi, detay aç/kapat, gerçek indirme (200 · `application/pdf` · orijinal dosya adı), boş liste ve 375 px dar ekran kontrol edildi; konsol hatası yok, dar ekranda yatay kaydırma yok (375 = 375). Uzun dosya adı, uzun özet ve uzun çıkarılan metin taşma yapmıyor. Gerçek Gemini çağrısı yapılmadı; sentetik kayıtlar silindi (`documents` 0, storage yalnız `.gitkeep`).
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1 ve Adım 2 tamamlandı, commit edildi ve kalite doğrulamasından geçti. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1, Adım 2 ve Adım 3 (frontend polish) tamamlandı; Adım 3 commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 

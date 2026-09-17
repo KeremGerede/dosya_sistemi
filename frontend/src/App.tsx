@@ -102,7 +102,12 @@ function formatSize(bytes: number): string {
 
 function formatDate(value: string): string {
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('tr-TR')
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return date.toLocaleString('tr-TR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
 }
 
 // Dosya türü rozeti; ikon kütüphanesi yerine küçük satır içi SVG.
@@ -190,7 +195,9 @@ function RecordsView() {
         </div>
       )}
 
-      {documents !== null && documents.length === 0 && <p className="hint">Henüz sınıflandırılmış belge yok.</p>}
+      {documents !== null && documents.length === 0 && (
+        <p className="empty">Henüz sınıflandırılmış belge yok. İlk belgeyi "Belge Sınıflandırma" sekmesinden yükleyebilirsiniz.</p>
+      )}
 
       <ul className="record-list">
         {(documents ?? []).map((item) => (
@@ -208,30 +215,39 @@ function RecordsView() {
                 </span>
                 <span className="record-date">{formatDate(item.created_at)}</span>
               </button>
-              <span className={`badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
-              <a
-                className="download"
-                href={`/api/documents/${item.document_id}/download`}
-                title={`${item.file_name} dosyasını indir`}
-              >
-                <FileTypeIcon fileType={item.file_type} />
-                <span className="visually-hidden">{item.file_name} dosyasını indir</span>
-              </a>
+              <div className="record-actions">
+                <span className={`badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
+                <a
+                  className="download"
+                  href={`/api/documents/${item.document_id}/download`}
+                  title={`${item.file_name} dosyasını indir`}
+                >
+                  <FileTypeIcon fileType={item.file_type} />
+                  <span className="visually-hidden">{item.file_name} dosyasını indir</span>
+                </a>
+              </div>
             </div>
 
-            {item.summary !== null && <p className="record-summary">{item.summary}</p>}
+            {(item.summary !== null ||
+              item.sender_name !== null ||
+              item.sender_institution !== null ||
+              (item.status === 'needs_review' && item.review_reason !== null)) && (
+              <div className="record-body">
+                {item.summary !== null && <p className="record-summary">{item.summary}</p>}
 
-            {(item.sender_name !== null || item.sender_institution !== null) && (
-              <p className="record-sender">
-                <strong>Gönderen:</strong>{' '}
-                {[item.sender_name, item.sender_institution].filter((value) => value !== null).join(' · ')}
-              </p>
-            )}
+                {(item.sender_name !== null || item.sender_institution !== null) && (
+                  <p className="record-sender">
+                    <strong>Gönderen:</strong>{' '}
+                    {[item.sender_name, item.sender_institution].filter((value) => value !== null).join(' · ')}
+                  </p>
+                )}
 
-            {item.status === 'needs_review' && item.review_reason !== null && (
-              <p className="review-reason">
-                <strong>İnceleme nedeni:</strong> {item.review_reason}
-              </p>
+                {item.status === 'needs_review' && item.review_reason !== null && (
+                  <p className="review-reason">
+                    <strong>İnceleme nedeni:</strong> {item.review_reason}
+                  </p>
+                )}
+              </div>
             )}
 
             {openId === item.document_id && (
@@ -305,7 +321,12 @@ function App() {
 
   return (
     <main>
-      <h1>Belge Sınıflandırma</h1>
+      <header className="page-header">
+        <h1>Belge Sınıflandırma</h1>
+        <p className="tagline">
+          Yüklenen dilekçe ve başvuruları belge türüne ve ilgili müdürlüğe göre otomatik sınıflandırır.
+        </p>
+      </header>
 
       {/* Router yok: iki görünüm arasında sade geçiş. */}
       <nav className="views">
@@ -331,11 +352,6 @@ function App() {
         <RecordsView />
       ) : (
         <>
-      <p>
-        PDF veya DOCX belgesini yükleyin; belge türü ve ilgili müdürlük otomatik
-        olarak belirlensin.
-      </p>
-
       <form onSubmit={handleSubmit}>
         <div>
           <label htmlFor="document-file">Belge dosyası</label>
@@ -353,11 +369,11 @@ function App() {
         />
         {file !== null && (
           <p className="file-info">
-            {file.name} — {formatSize(file.size)}
+            <strong>{file.name}</strong> · {formatSize(file.size)}
           </p>
         )}
         <button type="submit" disabled={!canSubmit}>
-          Sınıflandır
+          {loading ? 'Sınıflandırılıyor...' : 'Sınıflandır'}
         </button>
       </form>
 

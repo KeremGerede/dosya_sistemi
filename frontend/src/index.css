@@ -1,9 +1,51 @@
 :root {
-  font-family: system-ui, sans-serif;
-  color: #1a1a1a;
-  background-color: #ffffff;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background-color: var(--bg);
+  -webkit-font-smoothing: antialiased;
+
+  /* Yüzey ve metin */
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-muted: #f7f8fa;
+  --text: #16191d;
+  --text-muted: #5c636e;
+  --text-subtle: #7b828d;
+
+  /* Kenarlık */
+  --border: #e2e5ea;
+  --border-strong: #c8cdd4;
+
+  /* Birincil aksiyon */
+  --accent: #1f6feb;
+  --accent-hover: #1a5ccb;
+  --accent-ring: rgba(31, 111, 235, 0.35);
+  --accent-disabled: #a9c1e8;
+
+  /* Durum renkleri: sınıflandırıldı / inceleme / işlenemedi */
+  --ok-bg: #e9f6ed;
+  --ok-border: #8fc9a3;
+  --ok-text: #1d6b39;
+  --warn-bg: #fdf4dd;
+  --warn-border: #e2bb63;
+  --warn-text: #7a5407;
+  --err-bg: #fdecea;
+  --err-border: #eda9a4;
+  --err-text: #8c1d18;
+
+  /* Ölçü */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
 body {
   margin: 0;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
