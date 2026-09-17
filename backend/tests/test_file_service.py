@@ -284,7 +284,7 @@ def test_ocr_is_skipped_when_tessdata_prefix_is_not_configured(monkeypatch):
     assert extract_text(make_pdf(""), "pdf") == ""
 
 
-def test_ocr_is_called_with_turkish_english_and_300_dpi(monkeypatch):
+def test_ocr_is_called_with_turkish_and_300_dpi(monkeypatch):
     calls = []
 
     def fake_ocr(self, *args, **kwargs):
@@ -294,7 +294,7 @@ def test_ocr_is_called_with_turkish_english_and_300_dpi(monkeypatch):
     monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
     monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fake_ocr)
     extract_text(make_pdf(""), "pdf")
-    assert [(c["language"], c["dpi"], c["tessdata"]) for c in calls] == [("tur+eng", 300, "/tessdata")]
+    assert [(c["language"], c["dpi"], c["tessdata"]) for c in calls] == [("tur", 300, "/tessdata")]
 
 
 def test_docx_never_uses_ocr(monkeypatch):

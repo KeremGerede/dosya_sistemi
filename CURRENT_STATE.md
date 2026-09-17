@@ -314,15 +314,20 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 **V1.1 — Taranmış PDF'ler için OCR fallback (2026-09-17)**
 
 - [x] `app/settings.py`: opsiyonel `TESSDATA_PREFIX` (`os.getenv`, `require_env` değil). Tanımlı değilse uygulama normal başlar.
-- [x] `app/services/file_service.py`: `OCR_LANGUAGE = "tur+eng"`, `OCR_DPI = 300` sabitleri ve `_ocr_pdf_text`. `extract_text` yalnızca **PDF** için, normalize metin `MIN_TEXT_LENGTH`'in altındaysa OCR'ı dener; sonuç boşsa gömülü metin olduğu gibi döner. Yeni servis, katman veya bağımlılık eklenmedi.
+- [x] `app/services/file_service.py`: `OCR_LANGUAGE = "tur"` (başlangıçta `tur+eng` idi; aşağıdaki OCR dili kararına bakın), `OCR_DPI = 300` sabitleri ve `_ocr_pdf_text`. `extract_text` yalnızca **PDF** için, normalize metin `MIN_TEXT_LENGTH`'in altındaysa OCR'ı dener; sonuç boşsa gömülü metin olduğu gibi döner. Yeni servis, katman veya bağımlılık eklenmedi.
 - [x] OCR, PyMuPDF'in yerleşik `get_textpage_ocr`'ı ile yapılır; `tessdata` çağrıya doğrudan geçilir. `pytesseract` eklenmedi, `tesseract` binary'sinin PATH'te olması gerekmiyor (Tesseract MuPDF'e derlenmiş durumda) — yalnızca `tessdata` klasörü gerekiyor.
 - [x] Hata yolu: `TESSDATA_PREFIX` yoksa veya OCR hata verirse uyarı loglanır ve boş metin döner; `check_text_length` mevcut `TextExtractionError` → `failed` + `422` davranışını üretir. Yeni hata sınıfı, yeni HTTP kodu veya yanıt alanı yok.
 - [x] Endpoint, şema, model, migration, storage ve frontend değişmedi. Gemini retry/timeout mantığına dokunulmadı.
-- [x] Testler (8 yeni, `test_file_service.py` 26 → 34): yeterli metni olan PDF OCR çağırmaz; yetersiz PDF fallback kullanır; OCR metni yeterliyse başarılı; yine kısaysa `TextExtractionError`; OCR hatası güvenli başarısızlığa düşer; `TESSDATA_PREFIX` yokken OCR denenmez; OCR `tur+eng` / 300 dpi / doğru `tessdata` ile çağrılır; DOCX asla OCR kullanmaz.
+- [x] Testler (8 yeni, `test_file_service.py` 26 → 34): yeterli metni olan PDF OCR çağırmaz; yetersiz PDF fallback kullanır; OCR metni yeterliyse başarılı; yine kısaysa `TextExtractionError`; OCR hatası güvenli başarısızlığa düşer; `TESSDATA_PREFIX` yokken OCR denenmez; OCR `tur` / 300 dpi / doğru `tessdata` ile çağrılır; DOCX asla OCR kullanmaz.
 - [x] Doğrulama: `pytest` **105 passed** (34 + 46 + 25); `pip check` temiz; `alembic current` = `2ab2daa5828a (head)`; `npm run build` ve `npm run lint` temiz; `GET /health` → `200`.
 - [x] Gerçek smoke testi (`test_08_taranmis_goruntu_pdf.pdf`, V1'de `422 failed` veren belge): gömülü metin 0 karakter → OCR 349 karakter → `200`, `classified`, `complaint` / **Şikayet**, `fen_isleri` / **Fen İşleri Müdürlüğü**, `needs_review = false`; uçtan uca 2,43 sn, 1 gerçek Gemini isteği. Loglarda API anahtarı ve belge metni yok.
 - [x] Smoke testi temizliği: kayıt ve storage dosyası silindi (`documents` 0 satır, `backend/storage/` yalnızca `.gitkeep`).
 - [x] Dokümantasyon: D-003 OCR fallback'ine göre yeniden yazıldı, D-042 eklendi, D-026'daki "OCR uygulanmaz" ifadesi düzeltildi; `PROJECT_BRAIN.md` §2/§3/§5/§11/§12/§13 ve `README.md` (desteklenen türler, temel kurallar, gereksinimler, `.env` tablosu, kullanım notu, kapsam) güncellendi; `backend/.env.example`'a opsiyonel `TESSDATA_PREFIX` eklendi.
+
+**OCR dili `tur` olarak sabitlendi (2026-09-17)**
+
+- [x] `OCR_LANGUAGE` `tur+eng` → **`tur`**. Gerçek taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) üzerinde yapılan ölçümde `tur` 5 senaryoda kazandı, 4'ünde eşitti, hiçbirinde geride kalmadı: Türkçe karakter hatası 45 vs 63 (`Ç→C` yalnızca `tur+eng`'de), kritik kelime recall 62/72 vs 60/72, en kötü senaryoda ~2× hızlı. Belgeler Türkçe olduğu için İngilizce model bir yetenek eklemiyor.
+- [x] Değişiklik tek sabit + bir test beklentisi; preprocessing, yeni bağımlılık, yeni OCR motoru veya `tessdata_best` eklenmedi. Benchmark dosyaları repo dışında tutuldu.
 
 ## Üzerinde çalışılan işler
 

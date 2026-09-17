@@ -49,7 +49,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu sınırın altında kalınırsa belge taranmış sayılır ve **OCR fallback** devreye girer (`tur+eng`, 300 dpi). OCR'dan sonra da 10 karakterin altındaysa belge `failed` olarak kaydedilir.
+- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu sınırın altında kalınırsa belge taranmış sayılır ve **OCR fallback** devreye girer (`tur`, 300 dpi). OCR'dan sonra da 10 karakterin altındaysa belge `failed` olarak kaydedilir.
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
 - Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
@@ -107,11 +107,11 @@ Komutlar Windows PowerShell içindir (macOS/Linux farkları en sonda). Kurulum �
 - **Node.js ve npm** — Vite 8'in desteklediği bir Node.js sürümü (`vite` paketinin `engines` alanı: `^20.19.0 || >=22.12.0`). Proje Node.js 26.7 ve npm 11.19 ile doğrulandı.
 - **Docker Desktop** — `docker compose` komutuyla; yalnızca yerel PostgreSQL 18 için kullanılır.
 - **Gemini API anahtarı** — sınıflandırma gerçek Google Gemini API'sini çağırır; anahtar olmadan backend başlamaz. Testler anahtar gerektirmez.
-- **Tesseract OCR (opsiyonel)** — yalnızca taranmış PDF'ler için gerekir; `tur` ve `eng` dil paketleriyle kurulmalıdır. Kurulu değilse uygulama normal çalışır, taranmış PDF'ler `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
+- **Tesseract OCR (opsiyonel)** — yalnızca taranmış PDF'ler için gerekir; **`tur` dil paketiyle** kurulmalıdır. Kurulu değilse uygulama normal çalışır, taranmış PDF'ler `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
   - Windows: `winget install --id tesseract-ocr.tesseract`, kurulum sihirbazında **Turkish** dil bileşenini seçin.
-  - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur tesseract-ocr-eng`
+  - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur`
   - macOS: `brew install tesseract tesseract-lang`
-  - Doğrulama: `tesseract --list-langs` çıktısında `tur` ve `eng` görünmelidir.
+  - Doğrulama: `tesseract --list-langs` çıktısında `tur` görünmelidir.
 
 ### 1. Repoyu klonlama
 
