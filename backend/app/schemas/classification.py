@@ -16,6 +16,15 @@ class ClassificationResult(BaseModel):
     institution_id: str | None
     needs_review: bool
     review_reason: str | None
+    summary: str
+    sender_name: str | None
+    sender_institution: str | None
+
+    @model_validator(mode="after")
+    def check_summary_is_present(self) -> "ClassificationResult":
+        if not self.summary.strip():
+            raise ValueError("summary boş olamaz")
+        return self
 
     @model_validator(mode="after")
     def check_review_consistency(self) -> "ClassificationResult":
@@ -42,6 +51,10 @@ class ClassifyResponse(BaseModel):
     institution_name: str | None
     needs_review: bool
     review_reason: str | None
+    # V1.2: aynı Gemini çağrısından gelen özet ve gönderen bilgisi (D-044). failed kayıtlarda null.
+    summary: str | None
+    sender_name: str | None
+    sender_institution: str | None
     status: str
 
 

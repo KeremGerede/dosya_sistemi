@@ -117,6 +117,9 @@ def _process_document(
     document.institution_id = result.institution_id
     document.needs_review = result.needs_review
     document.review_reason = result.review_reason
+    document.summary = result.summary
+    document.sender_name = result.sender_name
+    document.sender_institution = result.sender_institution
     document.status = "needs_review" if result.needs_review else "classified"
     logger.info("Belge %s sınıflandırıldı: status=%s.", document_id, document.status)
     return document, 200, None
@@ -190,6 +193,9 @@ def _classify_fields(document: Document) -> dict:
         "institution_name": classification_service.INSTITUTION_NAMES.get(document.institution_id),
         "needs_review": document.needs_review,
         "review_reason": document.review_reason,
+        "summary": document.summary,
+        "sender_name": document.sender_name,
+        "sender_institution": document.sender_institution,
         "status": document.status,
     }
 

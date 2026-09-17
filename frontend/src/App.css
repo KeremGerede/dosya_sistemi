@@ -332,3 +332,21 @@ button.secondary {
     flex-basis: 100%;
   }
 }
+
+/* --- Özet ve gönderen bilgisi (V1.2) --- */
+
+dd.summary {
+  font-weight: 400;
+}
+
+.record-summary {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.record-sender {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #4a4f57;
+}

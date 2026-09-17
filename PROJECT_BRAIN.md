@@ -177,6 +177,9 @@ Structured output alanları:
 | `institution_id` | katalogdaki bir `id` \| `null` | Makul eşleşme yoksa veya belirsizse `null` — zorla atama yapılmaz |
 | `needs_review` | boolean | Aşağıdaki durumlarda `true` |
 | `review_reason` | string \| `null` | `needs_review = true` ise dolu, `false` ise `null` |
+| `summary` | string | Her zaman dolu: belgenin amacını ve konusunu anlatan 1-3 kısa Türkçe cümle. Boş özet geçersiz çıktıdır (D-044) |
+| `sender_name` | string \| `null` | Gönderen/başvuran gerçek kişinin adı soyadı **açıkça yazıyorsa**; yoksa `null`. Tahmin edilmez |
+| `sender_institution` | string \| `null` | Belgeyi gönderen kurum/şirket **açıkça yazıyorsa**; yoksa `null`. Muhatap belediye/müdürlük gönderen sayılmaz |
 
 `needs_review = true` olmalı:
 
@@ -204,6 +207,9 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 | `institution_id` | string, null | Katalog `id`; eşleşme yoksa veya `failed` ise `null` |
 | `needs_review` | boolean, not null | |
 | `review_reason` | text, null | Yalnızca modelin inceleme gerekçesi; teknik hata detayı yazılmaz |
+| `summary` | text, null | Belge özeti (D-044); `failed` ise `null` |
+| `sender_name` | text, null | Gönderen kişi (D-044); belirtilmemişse veya `failed` ise `null` |
+| `sender_institution` | text, null | Gönderen kurum (D-044); belirtilmemişse veya `failed` ise `null` |
 | `status` | string, not null | `classified` \| `needs_review` \| `failed` |
 | `created_at` | timestamp (tz), not null | |
 
@@ -211,7 +217,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 
 - `classified` — sınıflandırma başarılı, `needs_review = false`
 - `needs_review` — sınıflandırma başarılı, `needs_review = true`
-- `failed` — kabul edilen belgede metin çıkarımı başarısız, normalize edilmiş metin 10 karakterden kısa, Gemini ile sınıflandırma tamamlanamadı (geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen kalıcı hata). Bu kayıtlarda `document_type`, `institution_id` ve `review_reason` `null`, `needs_review = false`.
+- `failed` — kabul edilen belgede metin çıkarımı başarısız, normalize edilmiş metin 10 karakterden kısa, Gemini ile sınıflandırma tamamlanamadı (geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen kalıcı hata). Bu kayıtlarda `document_type`, `institution_id`, `review_reason`, `summary`, `sender_name` ve `sender_institution` `null`, `needs_review = false`.
 
 Kabul edilmeyen dosyalar (desteklenmeyen tür, 50 MB üstü) için satır oluşturulmaz.
 
@@ -242,6 +248,9 @@ Başarılı yanıt en az şu alanları içerir:
   "institution_name": "Temizlik İşleri Müdürlüğü",
   "needs_review": false,
   "review_reason": null,
+  "summary": "Mahalledeki kaldırım taşlarının yerinden çıktığı bildirilerek onarım talep edilmektedir.",
+  "sender_name": "Ayşe Yılmaz",
+  "sender_institution": null,
   "status": "classified"
 }
 ```
@@ -275,6 +284,9 @@ Kabul sonrası `failed` yanıt gövdesi, başarılı yanıttaki alanları ve gen
   "institution_name": null,
   "needs_review": false,
   "review_reason": null,
+  "summary": null,
+  "sender_name": null,
+  "sender_institution": null,
   "status": "failed",
   "message": "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
 }
@@ -304,6 +316,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Orijinal dosyanın storage alanında, çıkarılan metnin veritabanında saklanması
 - Metnin ilk 50.000 karakteriyle tek Gemini çağrısı; 30 sn timeout, geçici hatalarda toplam en fazla 3 deneme
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi
+- Aynı çağrıda belge özeti ve (varsa) gönderen kişi/kurum bilgisi (D-044)
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
 - Tek yazma endpoint'i: `POST /api/documents/classify`; kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043) ve operasyonel `GET /health`

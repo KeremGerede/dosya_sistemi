@@ -63,7 +63,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 | Endpoint | Açıklama |
 |---|---|
-| `GET /api/documents` | Kayıtları en yeniden eskiye listeler. Yanıt alanları aşağıdakiler + `created_at`; `extracted_text` ve dosyanın storage yolu dönmez |
+| `GET /api/documents` | Kayıtları en yeniden eskiye listeler. Yanıt alanları aşağıdakiler (özet ve gönderen bilgisi dahil) + `created_at`; `extracted_text` ve dosyanın storage yolu dönmez |
 | `GET /api/documents/{document_id}` | Tek kaydı, çıkarılan metnin tamamıyla (`extracted_text`) döndürür. Kayıt yoksa `404` |
 | `GET /api/documents/{document_id}/download` | Orijinal dosyayı, yüklendiği adla ve doğru media type ile indirir (PDF / DOCX). Kayıt ya da dosya yoksa `404` |
 
@@ -71,7 +71,9 @@ Bu endpoint'ler salt okunurdur: kayıt güncelleme, silme, arama, filtre, sayfal
 
 **`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF veya DOCX dosyası.
 
-Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `status` (`classified` | `needs_review` | `failed`). `422` ve `502` yanıtlarında ayrıca genel bir `message` alanı bulunur. `document_type_name` ve `institution_name` katalog dosyalarındaki `name` değerleridir; ID `null` ise ilgili ad da `null` olur. Dosyanın storage yolu ve çıkarılan metin veritabanında saklanır, yanıtta dönmez.
+Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
+
+`summary` belgenin amacını ve konusunu anlatan 1-3 kısa Türkçe cümledir ve başarılı sonuçlarda her zaman doludur. `sender_name` ve `sender_institution` yalnızca belgede **açıkça** yazıyorsa dolar; yazmıyorsa `null` kalır (model tahmin etmez, belgenin muhatabı olan müdürlük gönderen sayılmaz). Üçü de sınıflandırmayla **aynı Gemini çağrısından** gelir; `failed` kayıtlarda `null`'dır. `422` ve `502` yanıtlarında ayrıca genel bir `message` alanı bulunur. `document_type_name` ve `institution_name` katalog dosyalarındaki `name` değerleridir; ID `null` ise ilgili ad da `null` olur. Dosyanın storage yolu ve çıkarılan metin veritabanında saklanır, yanıtta dönmez.
 
 | HTTP kodu | Anlamı |
 |---|---|
@@ -103,7 +105,7 @@ Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bo
   - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
   - Adım 5 tamamlandı: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik); ardından gerçek belgelerle 11 senaryoluk manuel test matrisi (11/11 beklenen sonuç), sentetik test verilerinin temizlenmesi ve final kontroller — `pytest` 97 passed, `pip check` temiz, `alembic current` head, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz.
 - **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i (`tur`, 300 dpi); 15 senaryoluk manuel test matrisiyle doğrulandı.
-- **V1.2 — devam ediyor:** kayıt görünürlüğü. Salt okunur liste/detay/indirme endpoint'leri ve arayüzdeki "Kayıtlar" görünümü eklendi. Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
+- **V1.2 — devam ediyor:** kayıt görünürlüğü. Adım 1: salt okunur liste/detay/indirme endpoint'leri ve arayüzdeki "Kayıtlar" görünümü. Adım 2: aynı Gemini çağrısından gelen belge özeti ve gönderen kişi/kurum bilgisi (D-044). Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Kurulum ve Çalıştırma
 
@@ -243,8 +245,8 @@ npm run dev
 1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF veya DOCX seçin.
 2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve PDF/DOCX dışındaki dosyaları göndermez.
 3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
-4. Sonuçta **Belge Türü** ve **Gönderileceği Kurum** görünür. Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
-5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki PDF/DOCX aksiyonuyla orijinal dosyanın indirilmesi.
+4. Sonuçta **Belge Türü**, **Gönderileceği Kurum** ve **Belge Özeti** görünür; belgede açıkça yazıyorsa **Gönderen Kişi** ve **Gönderen Kurum** satırları da eklenir (yazmıyorsa bu satırlar hiç gösterilmez). Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
+5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki PDF/DOCX aksiyonuyla orijinal dosyanın indirilmesi.
 
 - **Taranmış PDF'ler:** gömülü metin yetersizse OCR fallback devreye girer; bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
 - Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.

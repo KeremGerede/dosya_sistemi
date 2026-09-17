@@ -205,6 +205,16 @@
   - Endpoint bunların dışında HTTP kodu üretmez; çerçevenin standart yanıtları (ör. çok parçalı gövde ayrıştırılamazsa `400`, yanlış HTTP metodu için `405`) endpoint çalışmadan döner. Hatanın ayrıntılı nedeni yalnızca loglanır; iç hata ayrıntısı (exception, stack trace, Gemini/kütüphane mesajı) yanıta girmez.
 - **Gerekçe:** Dışarıdan hata ayrımı basit kalır: sorun belgede mi yoksa sınıflandırma servisinde mi, HTTP kodundan anlaşılır. İstemci `failed` kaydının kimliğini alır; teknik hata detayları yanıta girmez. `500` bilinçli bir hata sınıfı değildir; kaydın yazılamadığı beklenmeyen durumda yarım kayıt veya yetim dosya bırakılmaz.
 
+### D-044 — Özet ve gönderen bilgisi aynı Gemini çağrısında (V1.2)
+- **Karar:**
+  - Sınıflandırma çıktısına üç alan eklenir: `summary` (belgenin amacını ve konusunu anlatan 1-3 kısa Türkçe cümle, her zaman dolu), `sender_name` ve `sender_institution` (yalnızca belgede açıkça yazıyorsa dolu, aksi hâlde `null`).
+  - Bu alanlar **mevcut tek sınıflandırma çağrısından** gelir (D-008); ikinci bir LLM çağrısı, ayrı bir çıkarım adımı, agent veya RAG eklenmez. Retry/timeout politikası (D-033) değişmez.
+  - Model tahmin etmez: gönderen kişi/kurum açıkça yazmıyorsa `null` verir. Belgenin muhatabı olan belediye/müdürlük gönderen kurum sayılmaz.
+  - Boş veya yalnızca boşluktan oluşan `summary` geçersiz model çıktısıdır ve D-033'e göre retry edilir.
+  - `documents` tablosuna üç nullable TEXT kolonu eklenir (`summary`, `sender_name`, `sender_institution`); migration `cedf33674167`. Nullable olmaları migration öncesi kayıtlarla uyum içindir. `failed` kayıtlarda üçü de `null` kalır.
+  - Alanlar classify yanıtına ve D-043'teki liste/detay yanıtlarına eklenir.
+- **Gerekçe:** Kayıt listesinde belgenin ne hakkında olduğunu ve kimden geldiğini görmek, sınıflandırma sonucunun tek başına vermediği ilk pratik ihtiyaç. Aynı çağrıda üretildikleri için ek gecikme ve maliyet doğmaz. Uydurma isim/kurum yanlış yönlendirir; bu yüzden belirsizlikte boş bırakmak zorunludur.
+
 ### D-020 — Senkron işleme
 - **Karar:** Endpoint dosyayı kaydetme, metin çıkarımı, Gemini çağrısı (retry dahil) ve veritabanı kaydını aynı istek içinde yapıp sonucu döndürür; kuyruk veya arka plan işi yok.
 - **Gerekçe:** "API sınıflandırma sonucunu döndürür" akışının en basit karşılığı.

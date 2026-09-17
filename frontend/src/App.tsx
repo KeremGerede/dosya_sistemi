@@ -36,6 +36,10 @@ type ClassifyResponse = {
   institution_name: string | null
   needs_review: boolean
   review_reason: string | null
+  // V1.2: sınıflandırmayla aynı çağrıdan gelir; failed kayıtlarda ve eski kayıtlarda null.
+  summary: string | null
+  sender_name: string | null
+  sender_institution: string | null
   status: DocumentStatus
   message?: string
 }
@@ -215,6 +219,15 @@ function RecordsView() {
               </a>
             </div>
 
+            {item.summary !== null && <p className="record-summary">{item.summary}</p>}
+
+            {(item.sender_name !== null || item.sender_institution !== null) && (
+              <p className="record-sender">
+                <strong>Gönderen:</strong>{' '}
+                {[item.sender_name, item.sender_institution].filter((value) => value !== null).join(' · ')}
+              </p>
+            )}
+
             {item.status === 'needs_review' && item.review_reason !== null && (
               <p className="review-reason">
                 <strong>İnceleme nedeni:</strong> {item.review_reason}
@@ -369,6 +382,25 @@ function App() {
               <dd>{result.document_type_name ?? 'Belirlenemedi'}</dd>
               <dt>Gönderileceği Kurum</dt>
               <dd>{result.institution_name ?? 'Belirlenemedi'}</dd>
+              {/* Gönderen alanları yalnızca belgede açıkça yazıyorsa gösterilir. */}
+              {result.sender_name !== null && (
+                <>
+                  <dt>Gönderen Kişi</dt>
+                  <dd>{result.sender_name}</dd>
+                </>
+              )}
+              {result.sender_institution !== null && (
+                <>
+                  <dt>Gönderen Kurum</dt>
+                  <dd>{result.sender_institution}</dd>
+                </>
+              )}
+              {result.summary !== null && (
+                <>
+                  <dt>Belge Özeti</dt>
+                  <dd className="summary">{result.summary}</dd>
+                </>
+              )}
             </dl>
             {result.needs_review && result.review_reason !== null && (
               <p className="review-reason">

@@ -32,13 +32,22 @@ SAMPLE_TEXT = "Sayın Yetkili, mahallemizdeki çöp konteynerleri bir haftadır 
 GENERIC_ERROR_MESSAGE = "Belge Gemini ile sınıflandırılamadı."
 
 
-def model_output(document_type=VALID_DOCUMENT_TYPE, institution_id=VALID_INSTITUTION, needs_review=False, review_reason=None):
+SAMPLE_SUMMARY = "Vatandaş çöp konteynerlerinin boşaltılmadığını bildiriyor."
+
+
+def model_output(
+    document_type=VALID_DOCUMENT_TYPE, institution_id=VALID_INSTITUTION, needs_review=False, review_reason=None,
+    summary=SAMPLE_SUMMARY, sender_name=None, sender_institution=None,
+):
     return json.dumps(
         {
             "document_type": document_type,
             "institution_id": institution_id,
             "needs_review": needs_review,
             "review_reason": review_reason,
+            "summary": summary,
+            "sender_name": sender_name,
+            "sender_institution": sender_institution,
         }
     )
 
@@ -395,3 +404,83 @@ def test_real_sdk_success_sends_catalog_schema_with_timeout(monkeypatch, sleeps)
     schema = config["responseSchema"]["properties"]
     assert schema["document_type"]["enum"] == DOCUMENT_TYPE_IDS
     assert schema["institution_id"]["enum"] == INSTITUTION_IDS and schema["institution_id"]["nullable"] is True
+
+
+# --- Özet ve gönderen bilgisi aynı çağrıda (V1.2 · Adım 2, D-044) ---
+
+
+def test_output_schema_includes_summary_and_sender_fields():
+    properties = OUTPUT_MODEL.model_json_schema()["properties"]
+
+    assert properties["summary"]["type"] == "string"
+    for field in ("sender_name", "sender_institution"):
+        assert {"type": "null"} in properties[field]["anyOf"]
+        assert {"type": "string"} in properties[field]["anyOf"]
+
+
+def test_prompt_explains_summary_and_sender_rules():
+    prompt = classification_service.build_prompt(SAMPLE_TEXT)
+
+    assert "summary" in prompt and "1-3 kısa Türkçe cümle" in prompt
+    assert "sender_name" in prompt and "sender_institution" in prompt
+    # Uydurma ve muhatap/gönderen karışıklığına karşı açık talimat bulunmalı.
+    assert "tahmin etme" in prompt
+    assert "gönderen kurum değildir" in prompt
+
+
+def test_summary_and_sender_are_returned_in_a_single_call(fake_gemini):
+    fake = fake_gemini(model_output(sender_name="Ayşe Yılmaz", sender_institution="X Derneği"))
+
+    result = classification_service.classify_text(SAMPLE_TEXT)
+
+    assert (result.summary, result.sender_name, result.sender_institution) == (
+        SAMPLE_SUMMARY, "Ayşe Yılmaz", "X Derneği",
+    )
+    assert len(fake.prompts) == 1  # üç alan için ek çağrı yok
+
+
+def test_missing_sender_information_stays_null(fake_gemini):
+    fake_gemini(model_output())
+
+    result = classification_service.classify_text(SAMPLE_TEXT)
+
+    assert result.sender_name is None and result.sender_institution is None
+    assert result.summary == SAMPLE_SUMMARY
+
+
+@pytest.mark.parametrize("bad_summary", ["", "   "])
+def test_empty_summary_is_invalid_output_and_retried(fake_gemini, sleeps, bad_summary):
+    fake = fake_gemini(model_output(summary=bad_summary), model_output())
+
+    result = classification_service.classify_text(SAMPLE_TEXT)
+
+    assert result.summary == SAMPLE_SUMMARY
+    assert len(fake.prompts) == 2  # boş özet geçici model hatası sayılır (D-033)
+    assert sleeps == [1]
+
+
+def test_output_without_summary_field_is_retried(fake_gemini, sleeps):
+    without_summary = json.dumps(
+        {
+            "document_type": VALID_DOCUMENT_TYPE, "institution_id": VALID_INSTITUTION,
+            "needs_review": False, "review_reason": None,
+            "sender_name": None, "sender_institution": None,
+        }
+    )
+    fake = fake_gemini(without_summary, model_output())
+
+    result = classification_service.classify_text(SAMPLE_TEXT)
+
+    assert result.summary == SAMPLE_SUMMARY
+    assert len(fake.prompts) == 2
+
+
+def test_retry_and_timeout_policy_is_unchanged_with_new_fields(fake_gemini, sleeps):
+    """Üç alan eklendikten sonra da toplam deneme sayısı ve beklemeler D-033'teki gibi kalır."""
+    fake = fake_gemini(api_error(503), api_error(503), model_output())
+
+    result = classification_service.classify_text(SAMPLE_TEXT)
+
+    assert result.summary == SAMPLE_SUMMARY
+    assert len(fake.prompts) == 3
+    assert sleeps == [1, 2]

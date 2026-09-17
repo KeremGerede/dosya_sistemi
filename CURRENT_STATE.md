@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-17
+> **Son güncelleme:** 2026-09-18
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
@@ -8,7 +8,9 @@
 
 **V1.2 üzerinde çalışılıyor — kayıt görünürlüğü.** V1.1 kapandı: taranmış PDF'ler için lokal Tesseract OCR fallback'i (D-003, D-042) eklendi ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15).
 
-V1.2'nin ilk adımı tamamlandı: kayıtları listeleyen, tek kaydın çıkarılan metnini döndüren ve orijinal belgeyi indiren üç salt okunur endpoint (D-043) ve arayüzdeki "Kayıtlar" görünümü. V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
+V1.2 · Adım 1 tamamlandı: kayıtları listeleyen, tek kaydın çıkarılan metnini döndüren ve orijinal belgeyi indiren üç salt okunur endpoint (D-043) ve arayüzdeki "Kayıtlar" görünümü.
+
+V1.2 · Adım 2 tamamlandı: sınıflandırmayla **aynı** Gemini çağrısından gelen belge özeti ve (varsa) gönderen kişi/kurum bilgisi (D-044); `documents` tablosuna üç nullable kolon ve `cedf33674167` migration'ı. V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
 Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü daha önce tamamlanmıştı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041).
 
@@ -348,9 +350,20 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Testler (12 yeni, `test_documents_api.py` 25 → 37): liste sırası ve boş liste, katalog adları ve alan kümesi, `extracted_text`/`file_reference` sızmaması, `needs_review` alanları, detayda metin ve `failed` kaydın `null` metni, bilinmeyen id'de `404`, PDF ve DOCX indirmede byte-for-byte eşitlik + doğru media type + orijinal dosya adı, kaydı olmayan ve dosyası silinmiş belgede ayrıntısız `404`.
 - [x] Doğrulama: `pytest` **117 passed**; `pip check` temiz; `npm run build` ve `npm run lint` temiz. Gerçek PostgreSQL + gerçek storage ile smoke test: liste sırası doğru, detayda metin geldi, üç indirmede de byte-for-byte eşitlik ve doğru `Content-Disposition`, 404'ler ayrıntısız. Tarayıcıda Kayıtlar görünümü, rozetler, detay açma/kapama ve indirme bağlantıları konsol hatasız çalıştı. Gemini çağrısı yapılmadı; smoke verileri silindi (`documents` 0, storage yalnız `.gitkeep`).
 
+**V1.2 · Adım 2 — Özet ve gönderen bilgisi (2026-09-18)**
+
+- [x] `schemas/classification.py`: `ClassificationResult`'a `summary` (zorunlu, boş olamaz), `sender_name` ve `sender_institution` (`str | None`) eklendi; `ClassifyResponse`'a aynı üç alan girdiği için `DocumentSummary`, `DocumentDetail` ve `FailedClassifyResponse` bunları mirasla aldı.
+- [x] `classification_service.py`: prompt'a üç alanın kuralları eklendi (özet 1-3 cümle ve yalnızca belgedeki bilgiyle; gönderen kişi/kurum yalnızca açıkça yazıyorsa, tahmin yok; muhatap müdürlük gönderen kurum değil). **Tek çağrı korundu** — yeni istek, ayrı çıkarım adımı, agent veya RAG yok; retry/timeout politikası (D-033) değişmedi. Boş `summary` geçersiz çıktı sayılıp retry ediliyor.
+- [x] `models/document.py` + migration `cedf33674167`: `summary`, `sender_name`, `sender_institution` nullable TEXT. Eski kayıtlarla uyumlu; `failed` kayıtlarda üçü de `null` kalır.
+- [x] `api/documents.py`: sonuç kayda yazılıyor ve üç alan classify, liste ve detay yanıtlarında dönüyor. `file_reference` ve storage yolu yine hiçbir yanıtta yok.
+- [x] `frontend/src/App.tsx`: sınıflandırma kartında Belge Özeti ile — yalnızca doluysa — Gönderen Kişi / Gönderen Kurum satırları; kayıtlar listesinde özet ve varsa gönderen bilgisi. Boş alanlar için "belirlenemedi" satırı basılmıyor. Durum rozeti, `review_reason`, detay açma ve indirme davranışı değişmedi; yeni UI bağımlılığı yok.
+- [x] Testler (16 yeni, toplam 105 → **133**): özet + gönderen dolu senaryo, gönderen bilgisi olmayan belge, `needs_review`'da özetin korunması, iki `failed` yolunda üç alanın `null` kalması, DB'ye doğru yazılma, liste/detay yanıtları, migration öncesi yazılmış `null` alanlı kayıt, şema alanları, prompt kuralları, tek çağrıda dönmesi, boş/eksik `summary`'nin retry edilmesi ve retry/timeout politikasının değişmediği, model-migration kolon uyumu.
+- [x] Doğrulama: `pytest` **133 passed**; `pip check` temiz; gerçek PostgreSQL'de `alembic upgrade head` → `cedf33674167 (head)`, `alembic check` "No new upgrade operations detected"; `npm run build` ve `npm run lint` temiz.
+- [x] Gerçek Gemini smoke testi (2 belge): (A) açık kişi + kurum içeren dilekçe → `sender_name = "Ayşe Yılmaz"`, `sender_institution = "Çiğdem Mahallesi Muhtarlığı"` — muhatap müdürlükle karıştırılmadı; (B) gönderen bilgisi içermeyen dilekçe → iki alan da `null`, **isim/kurum uydurulmadı**. İki belgede de özet tek cümlelik, belgedeki bilgiyle sınırlı ve doğru; sınıflandırma `complaint` / `fen_isleri` / `classified`. Tarayıcıda kayıtlar görünümü konsol hatasız doğrulandı. Test verileri silindi (`documents` 0, storage yalnız `.gitkeep`).
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1 (kayıt görünürlüğü) tamamlandı ve doğrulandı; commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1 ve Adım 2 tamamlandı ve doğrulandı; Adım 2 commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 

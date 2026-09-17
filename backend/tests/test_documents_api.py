@@ -30,8 +30,11 @@ PDF_TEXT = f"Sayin yetkili, sokagimizdaki copler toplanmiyor. {SECRET_MARKER}"
 DOCX_TEXT = f"Sayın yetkili, parktaki salıncak kırık. {SECRET_MARKER}"
 RESPONSE_FIELDS = {
     "document_id", "file_name", "file_type", "document_type", "document_type_name", "institution_id", "institution_name",
-    "needs_review", "review_reason", "status",
+    "needs_review", "review_reason", "summary", "sender_name", "sender_institution", "status",
 }
+SUMMARY = "Vatandaş sokaktaki çöplerin toplanmadığını bildirip gereğinin yapılmasını istiyor."
+SENDER_NAME = "Ayşe Yılmaz"
+SENDER_INSTITUTION = "Çiğdem Mahallesi Muhtarlığı"
 TEXT_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
 
@@ -52,10 +55,16 @@ def make_docx(text: str) -> bytes:
     return buffer.getvalue()
 
 
-def classification(needs_review: bool = False) -> ClassificationResult:
+def classification(needs_review: bool = False, sender: bool = True) -> ClassificationResult:
+    """Sahte sınıflandırma sonucu. sender=False: belgede gönderen bilgisi yok (D-044)."""
+    extra = {
+        "summary": SUMMARY,
+        "sender_name": SENDER_NAME if sender else None,
+        "sender_institution": SENDER_INSTITUTION if sender else None,
+    }
     if needs_review:
-        return ClassificationResult(document_type="other", institution_id=None, needs_review=True, review_reason="Kurum belirsiz.")
-    return ClassificationResult(document_type=DOCUMENT_TYPE, institution_id=INSTITUTION, needs_review=False, review_reason=None)
+        return ClassificationResult(document_type="other", institution_id=None, needs_review=True, review_reason="Kurum belirsiz.", **extra)
+    return ClassificationResult(document_type=DOCUMENT_TYPE, institution_id=INSTITUTION, needs_review=False, review_reason=None, **extra)
 
 
 def classification_error() -> classification_service.ClassificationError:
@@ -159,6 +168,7 @@ def test_valid_document_is_classified(client, session_factory, storage_dir, fake
         "document_type": DOCUMENT_TYPE, "document_type_name": DOCUMENT_TYPE_NAME,
         "institution_id": INSTITUTION, "institution_name": INSTITUTION_NAME,
         "needs_review": False, "review_reason": None, "status": "classified",
+        "summary": SUMMARY, "sender_name": SENDER_NAME, "sender_institution": SENDER_INSTITUTION,
     }
     [document] = all_documents(session_factory)
     assert str(document.id) == body["document_id"]
@@ -595,3 +605,104 @@ def test_download_returns_404_without_details_when_stored_file_is_missing(client
     assert document.file_reference not in response.text
     assert str(storage_dir) not in response.text
     assert document.file_reference not in caplog.text  # log da dosya adını yazmaz
+
+
+# --- Özet ve gönderen bilgisi (V1.2 · Adım 2, D-044) ---
+
+
+def test_classified_document_stores_and_returns_summary_and_sender(client, fake_classify, session_factory):
+    fake_classify(classification())
+
+    body = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()
+
+    assert body["summary"] == SUMMARY
+    assert body["sender_name"] == SENDER_NAME
+    assert body["sender_institution"] == SENDER_INSTITUTION
+    [document] = all_documents(session_factory)
+    assert (document.summary, document.sender_name, document.sender_institution) == (
+        SUMMARY, SENDER_NAME, SENDER_INSTITUTION,
+    )
+
+
+def test_document_without_sender_information_keeps_sender_fields_null(client, fake_classify, session_factory):
+    fake_classify(classification(sender=False))
+
+    body = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()
+
+    assert body["summary"] == SUMMARY  # özet yine dolu
+    assert body["sender_name"] is None
+    assert body["sender_institution"] is None
+    [document] = all_documents(session_factory)
+    assert document.sender_name is None and document.sender_institution is None
+
+
+def test_needs_review_document_keeps_summary(client, fake_classify, session_factory):
+    fake_classify(classification(needs_review=True))
+
+    body = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()
+
+    assert body["status"] == "needs_review"
+    assert body["summary"] == SUMMARY
+    [document] = all_documents(session_factory)
+    assert document.summary == SUMMARY
+
+
+@pytest.mark.parametrize(
+    "file_name, content, outcome",
+    [
+        ("kisa.pdf", None, None),  # metin çıkarılamadı → 422
+        ("dilekce.pdf", None, "error"),  # Gemini hatası → 502
+    ],
+)
+def test_failed_document_leaves_summary_and_sender_null(
+    client, fake_classify, session_factory, file_name, content, outcome
+):
+    if outcome == "error":
+        fake_classify(classification_error())
+        payload = make_pdf(PDF_TEXT)
+    else:
+        payload = make_pdf("kisa")  # 10 karakterin altında → Gemini'ye gitmez
+
+    body = upload(client, file_name, payload).json()
+
+    assert body["status"] == "failed"
+    assert body["summary"] is None
+    assert body["sender_name"] is None
+    assert body["sender_institution"] is None
+    [document] = all_documents(session_factory)
+    assert (document.summary, document.sender_name, document.sender_institution) == (None, None, None)
+
+
+def test_list_and_detail_return_summary_and_sender(client, fake_classify):
+    fake_classify(classification())
+    document_id = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+
+    [item] = client.get(LIST_URL).json()
+    detail = client.get(f"{LIST_URL}/{document_id}").json()
+
+    for body in (item, detail):
+        assert body["summary"] == SUMMARY
+        assert body["sender_name"] == SENDER_NAME
+        assert body["sender_institution"] == SENDER_INSTITUTION
+    assert "file_reference" not in client.get(LIST_URL).text
+
+
+def test_old_record_without_summary_is_returned_with_null_fields(client, session_factory):
+    """Migration öncesi yazılmış kayıtlarda üç alan da null'dır; liste ve detay bunu olduğu gibi döner."""
+    document = insert_document(session_factory, summary=None, sender_name=None, sender_institution=None)
+
+    [item] = client.get(LIST_URL).json()
+    detail = client.get(f"{LIST_URL}/{document.id}").json()
+
+    for body in (item, detail):
+        assert body["summary"] is None
+        assert body["sender_name"] is None
+        assert body["sender_institution"] is None
+
+
+def test_model_columns_match_migrated_schema():
+    """Model ile Alembic şeması aynı kolonları taşımalı (D-030); alembic check bunu ayrıca doğrular."""
+    columns = set(Document.__table__.columns.keys())
+    assert {"summary", "sender_name", "sender_institution"} <= columns
+    for name in ("summary", "sender_name", "sender_institution"):
+        assert Document.__table__.columns[name].nullable is True

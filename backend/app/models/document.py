@@ -20,5 +20,9 @@ class Document(Base):
     institution_id: Mapped[str | None]
     needs_review: Mapped[bool]
     review_reason: Mapped[str | None] = mapped_column(Text)
+    # V1.2: sınıflandırmayla aynı çağrıdan gelir (D-044); failed kayıtlarda null kalır.
+    summary: Mapped[str | None] = mapped_column(Text)
+    sender_name: Mapped[str | None] = mapped_column(Text)
+    sender_institution: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
