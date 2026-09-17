@@ -18,7 +18,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 2. Kabul kontrolü: dosya PDF veya DOCX değilse ya da 50 MB'ı aşıyorsa **kayıt oluşturmadan** 4xx ile reddedilir.
 3. Belge için `document_id` (UUID) üretilir; orijinal dosya `backend/storage/<document_id>.<uzanti>` olarak kaydedilir.
 4. Metin çıkarılır: PDF → PyMuPDF, DOCX → python-docx.
-5. Çıkarım başarısız olursa veya normalize edilmiş metin 10 karakterden kısaysa **OCR denenmez**; belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
+5. PDF'te normalize edilmiş metin 10 karakterden kısaysa belge taranmış sayılır ve **OCR fallback** denenir (`tur+eng`, 300 dpi; D-003, D-042). Çıkarım hata verirse ya da OCR'dan sonra da metin 10 karakterden kısaysa belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
 6. Metnin en fazla ilk 50.000 karakteri, belge türü ve kurum kataloglarıyla birlikte **tek bir** Gemini çağrısına gönderilir; yanıt Pydantic şemasına uygun structured output olarak alınır. Geçici hatalarda (network, timeout, `429`, `5xx`, geçersiz model çıktısı) aynı çağrı toplam en fazla 3 kez denenir.
 7. Backend çıktıyı kataloglara karşı doğrular ve `status` değerini belirler. Gemini çağrısı sonuç vermezse belge `failed` olur.
 8. Dosya referansı, çıkarılan metin ve sınıflandırma sonucu `documents` tablosuna yazılır.
@@ -48,8 +48,9 @@ Ortam değişkenleri:
 | `GEMINI_API_KEY` | **Zorunlu.** Gemini API anahtarı; yalnızca `.env`'de tutulur |
 | `GEMINI_MODEL` | **Zorunlu.** Sınıflandırma modeli; `.env.example` değeri: `gemini-3.5-flash-lite` |
 | `DATABASE_URL` | **Zorunlu.** PostgreSQL bağlantı adresi; yerel geliştirme: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` (bağlantı kurma en fazla 10 sn, D-041) |
+| `TESSDATA_PREFIX` | **Opsiyonel.** Tesseract `tessdata` klasörü; taranmış PDF'lerde OCR fallback'i için gerekir (D-042). Tanımlı değilse OCR atlanır, uygulama normal çalışır |
 
-Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_KEY` veya `GEMINI_MODEL` tanımlı değilse Gemini istemcisi yüklenirken (uygulama başlangıcı) açık bir yapılandırma hatası verilir (fail fast); sessizce bir modele düşülmez. `DATABASE_URL` `settings.py` yüklenirken kontrol edilir. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
+Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_KEY` veya `GEMINI_MODEL` tanımlı değilse Gemini istemcisi yüklenirken (uygulama başlangıcı) açık bir yapılandırma hatası verilir (fail fast); sessizce bir modele düşülmez. `DATABASE_URL` `settings.py` yüklenirken kontrol edilir. `TESSDATA_PREFIX` opsiyoneldir ve yokluğu uygulamayı durdurmaz. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
 
 ## 4. Mimari ve klasör yapısı
 
@@ -105,7 +106,8 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 
 **Metin çıkarımı ve yeterlilik:**
 
-- Yalnızca metin tabanlı belgeler desteklenir; OCR yok. Taranmış PDF'ler veya yalnızca görselden oluşan belgeler metin vermez.
+- PDF'te gömülü metin yetersizse OCR fallback devreye girer (D-003, D-042); böylece taranmış ve yalnızca görselden oluşan PDF'ler de okunabilir. DOCX'te OCR yapılmaz.
+- OCR, `TESSDATA_PREFIX` tanımlı değilse veya hata verirse atlanır; belge bu durumda V1'deki gibi "yeterli metin yok" sayılır.
 - DOCX'te paragrafların yanında tablo hücrelerindeki metin de alınır (python-docx `paragraphs` tabloları kapsamaz).
 - Normalizasyon: ardışık boşluk karakterleri (boşluk, sekme, satır sonu) tek boşluğa indirilir, baştaki ve sondaki boşluklar kırpılır.
 - Normalize edilmiş metin **en az 10 karakter** olmalıdır. Daha kısaysa veya çıkarım hata verirse (bozuk, şifreli dosya vb.) belge Gemini'ye gönderilmez ve `failed` kaydedilir.
@@ -290,7 +292,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 ## 11. MVP kapsamı
 
 - En fazla 50 MB metin tabanlı PDF ve DOCX yükleme; PyMuPDF ve python-docx ile metin çıkarımı
-- Normalize edilmiş metin için 10 karakter alt sınırı
+- Normalize edilmiş metin için 10 karakter alt sınırı; PDF'te sınırın altında kalınırsa `tur+eng` / 300 dpi OCR fallback
 - Orijinal dosyanın storage alanında, çıkarılan metnin veritabanında saklanması
 - Metnin ilk 50.000 karakteriyle tek Gemini çağrısı; 30 sn timeout, geçici hatalarda toplam en fazla 3 deneme
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi
@@ -301,13 +303,12 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 ## 12. Açıkça kapsam dışı
 
-OCR · `.doc` ve PDF/DOCX dışındaki dosya türleri · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · ek iş endpoint'leri · ek tablolar · kuyruk / arka plan işleri
+DOCX için OCR · `.doc` ve PDF/DOCX dışındaki dosya türleri · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · ek iş endpoint'leri · ek tablolar · kuyruk / arka plan işleri
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 
 ## 13. Gelecekteki genişleme yönü (taahhüt değil)
 
-- Taranmış PDF'ler ve görsel içerikli belgeler için OCR (saklanan orijinal dosyalar yeniden işlenebilir)
 - `.doc` ve diğer dosya formatları
 - Gerçek ihtiyaç görülürse 50.000 karakteri aşan uzun belgeler için daha kapsamlı işleme
 - Belge türü ve kurum kataloglarının genişletilmesi; gerekirse veritabanına taşınıp yönetim arayüzü eklenmesi

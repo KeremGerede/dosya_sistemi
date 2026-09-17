@@ -230,3 +230,77 @@ def test_file_size_limit_is_50_mb():
     check_file_size(MAX_FILE_SIZE)
     with pytest.raises(FileTooLargeError):
         check_file_size(MAX_FILE_SIZE + 1)
+
+
+# --- Taranmış PDF için OCR fallback (V1.1) ---
+
+
+def test_pdf_with_enough_text_does_not_use_ocr(monkeypatch):
+    def fail_if_called(content):
+        raise AssertionError("Yeterli metni olan PDF'te OCR çağrılmamalı.")
+
+    monkeypatch.setattr(file_service, "_ocr_pdf_text", fail_if_called)
+    assert extract_text(make_pdf("Bu dilekçe yeterli uzunlukta metin içerir."), "pdf") == (
+        "Bu dilekçe yeterli uzunlukta metin içerir."
+    )
+
+
+def test_pdf_without_enough_text_uses_ocr_fallback(monkeypatch):
+    monkeypatch.setattr(file_service, "_ocr_pdf_text", lambda content: "OCR ile okunan şikayet dilekçesi.")
+    assert extract_text(make_pdf(""), "pdf") == "OCR ile okunan şikayet dilekçesi."
+
+
+def test_ocr_output_long_enough_passes_length_check(monkeypatch):
+    monkeypatch.setattr(file_service, "_ocr_pdf_text", lambda content: "OCR ile okunan yeterli metin.")
+    check_text_length(extract_text(make_pdf(""), "pdf"))  # hata yükselmemeli
+
+
+def test_ocr_output_still_too_short_is_rejected(monkeypatch):
+    monkeypatch.setattr(file_service, "_ocr_pdf_text", lambda content: "kısa")
+    text = extract_text(make_pdf(""), "pdf")
+    assert text == "kısa"
+    with pytest.raises(TextExtractionError):
+        check_text_length(text)
+
+
+def test_ocr_failure_falls_back_to_safe_text_extraction_failure(monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("tesseract dili yükleyemedi")
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", boom)
+    text = extract_text(make_pdf(""), "pdf")  # OCR hatası dışarı sızmaz
+    assert text == ""
+    with pytest.raises(TextExtractionError):
+        check_text_length(text)
+
+
+def test_ocr_is_skipped_when_tessdata_prefix_is_not_configured(monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("TESSDATA_PREFIX tanımlı değilken OCR denenmemeli.")
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", None)
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fail_if_called)
+    assert extract_text(make_pdf(""), "pdf") == ""
+
+
+def test_ocr_is_called_with_turkish_english_and_300_dpi(monkeypatch):
+    calls = []
+
+    def fake_ocr(self, *args, **kwargs):
+        calls.append(kwargs)
+        return self.get_textpage()
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fake_ocr)
+    extract_text(make_pdf(""), "pdf")
+    assert [(c["language"], c["dpi"], c["tessdata"]) for c in calls] == [("tur+eng", 300, "/tessdata")]
+
+
+def test_docx_never_uses_ocr(monkeypatch):
+    def fail_if_called(content):
+        raise AssertionError("DOCX için OCR çağrılmamalı.")
+
+    monkeypatch.setattr(file_service, "_ocr_pdf_text", fail_if_called)
+    with pytest.raises(TextExtractionError):
+        check_text_length(extract_text(make_docx("kısa"), "docx"))

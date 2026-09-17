@@ -19,13 +19,14 @@ Dosya yükleme
 ## Desteklenen Dosya Türleri
 
 - PDF (metin tabanlı)
+- PDF (taranmış / yalnızca görüntü) — OCR fallback ile, Tesseract kuruluysa
 - DOCX
 
 Şimdilik desteklenmeyen:
 
 - DOC
 - diğer dosya türleri
-- OCR gerektiren taranmış belgeler
+- DOCX içindeki görüntüler (DOCX'te OCR yapılmaz)
 
 ## Sınıflandırma
 
@@ -48,7 +49,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı; daha kısaysa belge sınıflandırılmaz ve `failed` olarak kaydedilir (OCR denenmez).
+- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu sınırın altında kalınırsa belge taranmış sayılır ve **OCR fallback** devreye girer (`tur+eng`, 300 dpi). OCR'dan sonra da 10 karakterin altındaysa belge `failed` olarak kaydedilir.
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
 - Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
@@ -93,7 +94,7 @@ Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bo
   - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
   - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
   - Adım 5 tamamlandı: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik); ardından gerçek belgelerle 11 senaryoluk manuel test matrisi (11/11 beklenen sonuç), sentetik test verilerinin temizlenmesi ve final kontroller — `pytest` 97 passed, `pip check` temiz, `alembic current` head, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz.
-- **V1 kapsamında bilinen blocker yok.** OCR fallback, kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları V1 kapsamı dışındadır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
+- **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i. Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Kurulum ve Çalıştırma
 
@@ -106,6 +107,11 @@ Komutlar Windows PowerShell içindir (macOS/Linux farkları en sonda). Kurulum �
 - **Node.js ve npm** — Vite 8'in desteklediği bir Node.js sürümü (`vite` paketinin `engines` alanı: `^20.19.0 || >=22.12.0`). Proje Node.js 26.7 ve npm 11.19 ile doğrulandı.
 - **Docker Desktop** — `docker compose` komutuyla; yalnızca yerel PostgreSQL 18 için kullanılır.
 - **Gemini API anahtarı** — sınıflandırma gerçek Google Gemini API'sini çağırır; anahtar olmadan backend başlamaz. Testler anahtar gerektirmez.
+- **Tesseract OCR (opsiyonel)** — yalnızca taranmış PDF'ler için gerekir; `tur` ve `eng` dil paketleriyle kurulmalıdır. Kurulu değilse uygulama normal çalışır, taranmış PDF'ler `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
+  - Windows: `winget install --id tesseract-ocr.tesseract`, kurulum sihirbazında **Turkish** dil bileşenini seçin.
+  - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur tesseract-ocr-eng`
+  - macOS: `brew install tesseract tesseract-lang`
+  - Doğrulama: `tesseract --list-langs` çıktısında `tur` ve `eng` görünmelidir.
 
 ### 1. Repoyu klonlama
 
@@ -151,8 +157,10 @@ Ardından `backend/.env` dosyasını düzenleyin:
 | `GEMINI_API_KEY` | Kendi Gemini API anahtarınız (şablonda boştur) |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` (şablondaki değer) |
 | `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` (şablondaki değer) |
+| `TESSDATA_PREFIX` | **Opsiyonel.** Tesseract `tessdata` klasörünün yolu; taranmış PDF'lerde OCR için. Boş bırakılırsa OCR atlanır |
 
-- Üç değişken de zorunludur; biri eksikse backend (ve `/health`) başlamaz. Model adının kodda varsayılanı yoktur.
+- İlk üç değişken zorunludur; biri eksikse backend (ve `/health`) başlamaz. Model adının kodda varsayılanı yoktur.
+- `TESSDATA_PREFIX` opsiyoneldir ve yalnızca OCR fallback'ini etkiler; tanımlı değilse uygulama normal başlar. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` ve `eng.traineddata` bulunmalıdır.
 - `127.0.0.1:5433`, Docker PostgreSQL'in hosttaki portudur; container içinde PostgreSQL 5432'de çalışır. `localhost` yerine `127.0.0.1` kullanın.
 - `connect_timeout=10`: veritabanına ulaşılamazsa bağlantı denemesi 10 sn'de sonlanır. Daha önce oluşturulmuş bir `.env`'de bu parametre yoksa `DATABASE_URL`'in sonuna `?connect_timeout=10` ekleyin; aksi halde bekleme ~130 sn sürer.
 - `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` Git'e girmez; gerçek anahtarı başka bir dosyaya yazmayın.
@@ -228,7 +236,7 @@ npm run dev
 3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
 4. Sonuçta **Belge Türü** ve **Gönderileceği Kurum** görünür. Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
 
-- **OCR yoktur:** taranmış veya yalnızca görselden oluşan PDF'ler V1 kapsamında değildir. Metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür.
+- **Taranmış PDF'ler:** gömülü metin yetersizse OCR fallback devreye girer; bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
 - Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
 - API'yi doğrudan denemek için Swagger UI'ı ya da şu komutu kullanabilirsiniz: `curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify`
 
@@ -285,4 +293,4 @@ Sonraki çalıştırmalarda kısa sıra:
 
 ## Kapsam Dışı (V1)
 
-OCR · RAG · vector database · agent sistemleri / LangGraph · fine-tuning · microservice mimarisi · admin paneli · authentication / authorization
+DOCX için OCR · RAG · vector database · agent sistemleri / LangGraph · fine-tuning · microservice mimarisi · admin paneli · authentication / authorization

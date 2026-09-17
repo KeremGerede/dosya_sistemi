@@ -6,6 +6,7 @@ FileTooLargeError → 413, UnsupportedFileTypeError → 415, TextExtractionError
 
 import contextlib
 import io
+import logging
 import re
 import uuid
 import zipfile
@@ -15,10 +16,16 @@ import docx
 import pymupdf
 from docx.text.paragraph import Paragraph
 
+from app import settings
+
+logger = logging.getLogger(__name__)
+
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (D-028)
 MIN_TEXT_LENGTH = 10  # normalize edilmiş metin için (D-026)
 STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"  # backend/storage (D-017)
 FILE_TYPES = ("pdf", "docx")
+OCR_LANGUAGE = "tur+eng"  # taranmış PDF fallback'i (D-042)
+OCR_DPI = 300
 
 _DOCX_MAIN_CONTENT_TYPE = b"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 
@@ -90,14 +97,44 @@ def delete_file(file_reference: str) -> None:
 
 
 def extract_text(content: bytes, file_type: str) -> str:
-    """Normalize edilmiş TAM metni döndürür. Kesme (50.000 karakter) ve OCR yapılmaz."""
+    """Normalize edilmiş TAM metni döndürür (50.000 karakter kesmesi yapılmaz).
+
+    PDF'te gömülü metin MIN_TEXT_LENGTH'in altında kalırsa taranmış belge sayılır ve OCR fallback denenir
+    (D-042). OCR yapılandırılmamışsa veya hata verirse gömülü metin olduğu gibi döner; yetersizliğe
+    check_text_length karar verir, yani mevcut failed davranışı değişmez.
+    """
     if file_type not in FILE_TYPES:
         raise ValueError(f"Geçersiz file_type: {file_type!r}")
     try:
         raw_text = _extract_pdf_text(content) if file_type == "pdf" else _extract_docx_text(content)
     except Exception as exc:  # bozuk, şifreli veya okunamayan dosya
         raise TextExtractionError(f"{file_type} metni çıkarılamadı: {exc}") from exc
-    return normalize_text(raw_text)
+    text = normalize_text(raw_text)
+    if file_type == "pdf" and len(text) < MIN_TEXT_LENGTH:
+        text = _ocr_pdf_text(content) or text
+    return text
+
+
+def _ocr_pdf_text(content: bytes) -> str:
+    """Taranmış PDF'i Tesseract ile okur; yapılandırılmamışsa veya hata verirse boş metin döner.
+
+    Hata yükseltmez: OCR bir iyileştirmedir, başarısızlığı belgeyi "metin çıkarılamadı" yoluna bırakır.
+    """
+    if not settings.TESSDATA_PREFIX:
+        logger.warning("TESSDATA_PREFIX tanımlı değil; taranmış PDF için OCR atlanıyor.")
+        return ""
+    try:
+        with pymupdf.open(stream=content, filetype="pdf") as pdf:
+            pages = []
+            for page in pdf:
+                textpage = page.get_textpage_ocr(
+                    language=OCR_LANGUAGE, dpi=OCR_DPI, full=True, tessdata=settings.TESSDATA_PREFIX
+                )
+                pages.append(page.get_text(textpage=textpage))
+    except Exception as exc:  # Tesseract yapılandırması, dil dosyası veya sayfa render hatası
+        logger.warning("OCR başarısız (%s); belge gömülü metniyle değerlendiriliyor.", type(exc).__name__)
+        return ""
+    return normalize_text("\n".join(pages))
 
 
 def _extract_pdf_text(content: bytes) -> str:

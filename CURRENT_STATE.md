@@ -6,7 +6,7 @@
 
 ## Mevcut aşama
 
-**V1 tamamlandı.** Aşama 1–6'nın tamamı bitti; Aşama 6 · Adım 5 (gerçek belgelerle manuel test ve V1 final doğrulaması) 2026-09-17'de kapatıldı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
+**V1.1 tamamlandı.** V1'in üzerine taranmış PDF'ler için lokal Tesseract OCR fallback'i eklendi (D-003, D-042). V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
 Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü daha önce tamamlanmıştı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041).
 
@@ -311,9 +311,22 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Final kontroller: `pytest` 97 passed (26 + 46 + 25; 2 bilinen deprecation uyarısı); `pip check` → "No broken requirements found"; `alembic current` = `2ab2daa5828a (head)`; Docker PostgreSQL `Up (healthy)`; `GET /health` → `200 {"status": "ok"}`; `npm run build` başarılı (17 modül, ~0,6 sn); `npm run lint` (oxlint) temiz (exit 0).
 - [x] Doğrulama sırasında `/api/documents/classify` çağrılmadı ve gerçek Gemini isteği gönderilmedi. Kod, mimari, `DECISIONS.md` ve `PROJECT_BRAIN.md` değişmedi; yalnızca `CURRENT_STATE.md` ve `README.md` güncellendi.
 
+**V1.1 — Taranmış PDF'ler için OCR fallback (2026-09-17)**
+
+- [x] `app/settings.py`: opsiyonel `TESSDATA_PREFIX` (`os.getenv`, `require_env` değil). Tanımlı değilse uygulama normal başlar.
+- [x] `app/services/file_service.py`: `OCR_LANGUAGE = "tur+eng"`, `OCR_DPI = 300` sabitleri ve `_ocr_pdf_text`. `extract_text` yalnızca **PDF** için, normalize metin `MIN_TEXT_LENGTH`'in altındaysa OCR'ı dener; sonuç boşsa gömülü metin olduğu gibi döner. Yeni servis, katman veya bağımlılık eklenmedi.
+- [x] OCR, PyMuPDF'in yerleşik `get_textpage_ocr`'ı ile yapılır; `tessdata` çağrıya doğrudan geçilir. `pytesseract` eklenmedi, `tesseract` binary'sinin PATH'te olması gerekmiyor (Tesseract MuPDF'e derlenmiş durumda) — yalnızca `tessdata` klasörü gerekiyor.
+- [x] Hata yolu: `TESSDATA_PREFIX` yoksa veya OCR hata verirse uyarı loglanır ve boş metin döner; `check_text_length` mevcut `TextExtractionError` → `failed` + `422` davranışını üretir. Yeni hata sınıfı, yeni HTTP kodu veya yanıt alanı yok.
+- [x] Endpoint, şema, model, migration, storage ve frontend değişmedi. Gemini retry/timeout mantığına dokunulmadı.
+- [x] Testler (8 yeni, `test_file_service.py` 26 → 34): yeterli metni olan PDF OCR çağırmaz; yetersiz PDF fallback kullanır; OCR metni yeterliyse başarılı; yine kısaysa `TextExtractionError`; OCR hatası güvenli başarısızlığa düşer; `TESSDATA_PREFIX` yokken OCR denenmez; OCR `tur+eng` / 300 dpi / doğru `tessdata` ile çağrılır; DOCX asla OCR kullanmaz.
+- [x] Doğrulama: `pytest` **105 passed** (34 + 46 + 25); `pip check` temiz; `alembic current` = `2ab2daa5828a (head)`; `npm run build` ve `npm run lint` temiz; `GET /health` → `200`.
+- [x] Gerçek smoke testi (`test_08_taranmis_goruntu_pdf.pdf`, V1'de `422 failed` veren belge): gömülü metin 0 karakter → OCR 349 karakter → `200`, `classified`, `complaint` / **Şikayet**, `fen_isleri` / **Fen İşleri Müdürlüğü**, `needs_review = false`; uçtan uca 2,43 sn, 1 gerçek Gemini isteği. Loglarda API anahtarı ve belge metni yok.
+- [x] Smoke testi temizliği: kayıt ve storage dosyası silindi (`documents` 0 satır, `backend/storage/` yalnızca `.gitkeep`).
+- [x] Dokümantasyon: D-003 OCR fallback'ine göre yeniden yazıldı, D-042 eklendi, D-026'daki "OCR uygulanmaz" ifadesi düzeltildi; `PROJECT_BRAIN.md` §2/§3/§5/§11/§12/§13 ve `README.md` (desteklenen türler, temel kurallar, gereksinimler, `.env` tablosu, kullanım notu, kapsam) güncellendi; `backend/.env.example`'a opsiyonel `TESSDATA_PREFIX` eklendi.
+
 ## Üzerinde çalışılan işler
 
-- Aktif geliştirme işi yok; V1 kapatıldı. Yeni bir iş açılmadan önce kapsam `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- Aktif geliştirme işi yok; V1.1 kapatıldı. Yeni bir iş açılmadan önce kapsam `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
@@ -329,7 +342,11 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Log yapılandırması `main.py`'de tek satır `basicConfig(INFO)`; httpx istek satırları (URL, anahtar yok) da INFO'da görünür. Başarısız Gemini denemelerinin uyarı logunda yalnızca deneme numarası, hata türü, HTTP kodu ve şema hata türü bulunur; ham API yanıtı, model çıktısı ve belge metni loglanmaz. Metin çıkarımı hatalarında PDF/DOCX kütüphanesinin hata mesajı loglanır (belge metni değil). SQL hatalarında parametreler gizlidir.
 - Kataloglar modül yüklenirken okunur; katalog değişikliği için uygulama yeniden başlatılmalı. `other` belge türü katalogdan çıkarılırsa servis yapılandırma hatasıyla yüklenmez.
 - Storage konumu için ortam değişkeni yok. `file_service`, D-017'ye göre `backend/storage/` yolunu kod içinde kullanır (çalışma dizininden bağımsız).
-- DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz.
+- DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz. DOCX'te OCR da yapılmaz.
+- OCR yalnızca PDF'te ve yalnızca gömülü metin 10 karakterin altındaysa çalışır; normal metin PDF'lerinde ek maliyet yoktur. Tek sayfalık temiz bir taramada ~0,6 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
+- Tesseract büyük harf Türkçe metinde noktalı **İ**'yi noktasız I, **Ç**'yi C okuyabiliyor (smoke testinde "ŞİKAYET DİLEKÇESİ" → "ŞIKAYET DILEKCESI"). Gövde metni doğru çıktığı için sınıflandırma etkilenmedi; başlığa dayanan belgelerde dikkat edilmeli.
+- OCR kalitesi yalnızca tek bir sentetik taranmış belgede ölçüldü. Düşük çözünürlüklü, eğik veya tablo içeren gerçek taramalar denenmedi.
+- `TESSDATA_PREFIX` yerel `backend/.env` dosyasındadır ve Git'e girmez; yeni bir makinede OCR istenirse Tesseract kurulup bu değişken ayarlanmalıdır (`README.md` 3. adım).
 - DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
 - Endpoint upload'dan en fazla `MAX_FILE_SIZE + 1` bayt okur. Ancak Starlette/python-multipart, endpoint çalışmadan önce multipart gövdesini geçici dosyaya aktarır; yani 50 MB üstü bir yükleme yine de ağdan alınıp geçici diske yazılır. Uygulama seviyesinde gövde boyutu sınırı yok; gerçek dağıtımda sunucu/reverse proxy seviyesinde gövde sınırı konmalı.
 - Dosya gönderilmediğinde FastAPI'nin standart 422 doğrulama yanıtı (`{"detail": [...]}`) döner; bu, kabul sonrası `failed` 422 gövdesinden (`status = "failed"` + `message`) farklıdır. İkisi gövdedeki `status` alanıyla ayırt edilir (frontend böyle yapıyor); OpenAPI'de 422 için iki gövde de belgelenir (`FailedClassifyResponse`, `ValidationErrorResponse`).
@@ -366,10 +383,9 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 ## Sıradaki geliştirme adımları
 
-V1 tamamlandığı için planlanmış bir sonraki geliştirme adımı yok.
+V1.1 tamamlandığı için planlanmış bir sonraki geliştirme adımı yok.
 
 Aşağıdakiler **V1 kapsamı dışındadır ve yeni iş olarak açılmamıştır**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
-- Taranmış / yalnızca görüntü içeren belgeler için OCR fallback (`PROJECT_BRAIN.md` §13; saklanan orijinal dosyalar yeniden işlenebilir).
 - Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi (manuel testte 05 senaryosunda görülen park/bahçeler ↔ zabıta ikilemi gibi durumlar).
 - Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication.

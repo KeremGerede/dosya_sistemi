@@ -21,9 +21,17 @@
 - **Karar:** PDF metni PyMuPDF ile, DOCX metni python-docx ile çıkarılır.
 - **Gerekçe:** Hızlı, yaygın kullanılan ve ek sistem bağımlılığı gerektirmeyen kütüphaneler.
 
-### D-003 — OCR V1 kapsamı dışında
-- **Karar:** OCR yapılmaz. Metin çıkmayan veya minimum metin uzunluğuna (D-026) ulaşmayan belgede OCR denenmez; belge `failed` olarak kaydedilir.
-- **Gerekçe:** OCR ek bağımlılık, maliyet ve hata kaynağı getirir. Orijinal dosya saklandığı için OCR eklendiğinde bu belgeler yeniden işlenebilir.
+### D-003 — Taranmış PDF'ler için OCR fallback (V1.1)
+- **Karar:** PDF'te gömülü metin minimum uzunluğa (D-026) ulaşmazsa belge taranmış sayılır ve OCR ile yeniden okunur (teknik ayrıntı: D-042). DOCX'te OCR yapılmaz. OCR'dan sonra metin hâlâ kısaysa veya OCR kullanılamıyorsa belge `failed` olarak kaydedilir.
+- **Gerekçe:** V1'de OCR kapsam dışıydı ve taranmış dilekçeler doğrudan `failed` oluyordu. Lokal OCR, ek servis ya da API maliyeti getirmeden bu belgeleri sınıflandırılabilir hale getirir; başarısız olduğunda akış V1'deki davranışa döner.
+
+### D-042 — OCR fallback: PyMuPDF'in yerleşik Tesseract'ı, `tur+eng`, 300 dpi
+- **Karar:**
+  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle yapılır. `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
+  - Dil `tur+eng`, çözünürlük 300 dpi. İkisi de `file_service` içinde tek yerde sabittir.
+  - Tesseract dil dosyalarının klasörü `TESSDATA_PREFIX` ortam değişkeninden okunur ve OCR çağrısına doğrudan geçilir. Değişken **opsiyoneldir**: tanımlı değilse OCR atlanır. Kodda platforma özel kurulum yolu yazılmaz.
+  - OCR hatası yükseltilmez: loglanır ve belge gömülü metniyle değerlendirilir; böylece mevcut `failed` + `422` davranışı korunur.
+- **Gerekçe:** PyMuPDF zaten bir bağımlılık ve Tesseract'ı derlenmiş olarak içeriyor; yeni Python paketi veya PATH'te `tesseract` binary'si gerekmiyor. OCR bir iyileştirme olduğu için başarısızlığı yeni bir hata sınıfı doğurmamalı. Ortam değişkeni, kurulum yolunun makineden makineye değişmesine izin verir.
 
 ### D-004 — Hatalı dosya ve `failed` kayıt davranışı
 - **Karar:**
@@ -34,7 +42,7 @@
 - **Gerekçe:** Kabul edilmeyen dosyalar gereksiz kayıt üretmez; işlenmeye alınmış belgeler izlenebilir kalır. Teknik detaylar kullanıcıya fayda sağlamaz ve sistemin iç yapısını açığa çıkarır.
 
 ### D-026 — Minimum metin uzunluğu: 10 karakter
-- **Karar:** Normalize edilmiş (ardışık boşluklar tek boşluğa indirilmiş, baş ve son boşlukları kırpılmış) metin en az 10 karakter olmalıdır. Daha kısaysa belge sınıflandırmaya gönderilmez ve `status = failed` kaydedilir. OCR uygulanmaz.
+- **Karar:** Normalize edilmiş (ardışık boşluklar tek boşluğa indirilmiş, baş ve son boşlukları kırpılmış) metin en az 10 karakter olmalıdır. Daha kısaysa PDF'te önce OCR fallback denenir (D-003); metin yine kısaysa belge sınıflandırmaya gönderilmez ve `status = failed` kaydedilir.
 - **Gerekçe:** Boş veya neredeyse boş belgeler için anlamsız Gemini çağrısı ve maliyet önlenir; düşük eşik kısa ama geçerli metinleri dışarıda bırakmaz.
 
 ### D-028 — Maksimum dosya boyutu: 50 MB
