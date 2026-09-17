@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum: V1 tamamlandı.** `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. Gerçek belgelerle yapılan manuel doğrulamada 11 senaryonun 11'i de beklenen sonucu verdi.
+> **Durum: V1.1 tamamlandı, V1.2 üzerinde çalışılıyor.** `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. Taranmış PDF'ler OCR fallback'iyle okunuyor ve kayıtlar arayüzden görüntülenip indirilebiliyor. V1.1 manuel doğrulamasında 15 senaryonun 15'i de beklenen sonucu verdi.
 
 ## MVP Akışı
 
@@ -59,7 +59,15 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 ## API
 
-Çalışan endpoint'ler: **`GET /health`** → `{"status": "ok"}` ve **`POST /api/documents/classify`**.
+Çalışan endpoint'ler: **`GET /health`** → `{"status": "ok"}`, **`POST /api/documents/classify`** ve üç salt okunur kayıt endpoint'i.
+
+| Endpoint | Açıklama |
+|---|---|
+| `GET /api/documents` | Kayıtları en yeniden eskiye listeler. Yanıt alanları aşağıdakiler + `created_at`; `extracted_text` ve dosyanın storage yolu dönmez |
+| `GET /api/documents/{document_id}` | Tek kaydı, çıkarılan metnin tamamıyla (`extracted_text`) döndürür. Kayıt yoksa `404` |
+| `GET /api/documents/{document_id}/download` | Orijinal dosyayı, yüklendiği adla ve doğru media type ile indirir (PDF / DOCX). Kayıt ya da dosya yoksa `404` |
+
+Bu endpoint'ler salt okunurdur: kayıt güncelleme, silme, arama, filtre, sayfalama ve authentication yoktur.
 
 **`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF veya DOCX dosyası.
 
@@ -94,7 +102,8 @@ Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bo
   - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
   - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
   - Adım 5 tamamlandı: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik); ardından gerçek belgelerle 11 senaryoluk manuel test matrisi (11/11 beklenen sonuç), sentetik test verilerinin temizlenmesi ve final kontroller — `pytest` 97 passed, `pip check` temiz, `alembic current` head, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz.
-- **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i. Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
+- **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i (`tur`, 300 dpi); 15 senaryoluk manuel test matrisiyle doğrulandı.
+- **V1.2 — devam ediyor:** kayıt görünürlüğü. Salt okunur liste/detay/indirme endpoint'leri ve arayüzdeki "Kayıtlar" görünümü eklendi. Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Kurulum ve Çalıştırma
 
@@ -160,7 +169,7 @@ Ardından `backend/.env` dosyasını düzenleyin:
 | `TESSDATA_PREFIX` | **Opsiyonel.** Tesseract `tessdata` klasörünün yolu; taranmış PDF'lerde OCR için. Boş bırakılırsa OCR atlanır |
 
 - İlk üç değişken zorunludur; biri eksikse backend (ve `/health`) başlamaz. Model adının kodda varsayılanı yoktur.
-- `TESSDATA_PREFIX` opsiyoneldir ve yalnızca OCR fallback'ini etkiler; tanımlı değilse uygulama normal başlar. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` ve `eng.traineddata` bulunmalıdır.
+- `TESSDATA_PREFIX` opsiyoneldir ve yalnızca OCR fallback'ini etkiler; tanımlı değilse uygulama normal başlar. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` bulunmalıdır (aktif OCR dili yalnızca `tur`).
 - `127.0.0.1:5433`, Docker PostgreSQL'in hosttaki portudur; container içinde PostgreSQL 5432'de çalışır. `localhost` yerine `127.0.0.1` kullanın.
 - `connect_timeout=10`: veritabanına ulaşılamazsa bağlantı denemesi 10 sn'de sonlanır. Daha önce oluşturulmuş bir `.env`'de bu parametre yoksa `DATABASE_URL`'in sonuna `?connect_timeout=10` ekleyin; aksi halde bekleme ~130 sn sürer.
 - `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` Git'e girmez; gerçek anahtarı başka bir dosyaya yazmayın.
@@ -235,6 +244,7 @@ npm run dev
 2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve PDF/DOCX dışındaki dosyaları göndermez.
 3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
 4. Sonuçta **Belge Türü** ve **Gönderileceği Kurum** görünür. Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
+5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki PDF/DOCX aksiyonuyla orijinal dosyanın indirilmesi.
 
 - **Taranmış PDF'ler:** gömülü metin yetersizse OCR fallback devreye girer; bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
 - Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.

@@ -6,7 +6,9 @@
 
 ## Mevcut aşama
 
-**V1.1 tamamlandı.** V1'in üzerine taranmış PDF'ler için lokal Tesseract OCR fallback'i eklendi (D-003, D-042) ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15). V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
+**V1.2 üzerinde çalışılıyor — kayıt görünürlüğü.** V1.1 kapandı: taranmış PDF'ler için lokal Tesseract OCR fallback'i (D-003, D-042) eklendi ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15).
+
+V1.2'nin ilk adımı tamamlandı: kayıtları listeleyen, tek kaydın çıkarılan metnini döndüren ve orijinal belgeyi indiren üç salt okunur endpoint (D-043) ve arayüzdeki "Kayıtlar" görünümü. V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
 Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü daha önce tamamlanmıştı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041).
 
@@ -336,9 +338,19 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Storage denetimi: `file_reference` ↔ dosya eşleşmesi 14/14; eksik dosya, orphan ve yinelenen referans yok.
 - [x] Test verileri denetimden sonra id listesiyle temizlendi (`TRUNCATE` kullanılmadı): `documents` 0 satır, `backend/storage/` yalnızca `.gitkeep`.
 
+**V1.2 · Adım 1 — Kayıt görünürlüğü (2026-09-17)**
+
+- [x] `app/api/documents.py`: üç salt okunur endpoint (D-043) — `GET /api/documents` (`created_at` DESC), `GET /api/documents/{document_id}` ve `GET /api/documents/{document_id}/download`. Ortak alan üretimi `_classify_fields` / `_record_fields` içinde toplandı; `_response_body` aynı yardımcıyı kullandığı için alan tekrarı kalmadı.
+- [x] `app/schemas/classification.py`: `DocumentSummary` (`ClassifyResponse` + `created_at`) ve `DocumentDetail` (+ `extracted_text`). Alanlar mirasla gelir; `file_reference` hiçbir şemada yok.
+- [x] `app/services/file_service.py`: `MEDIA_TYPES` sabiti (PDF / DOCX). İndirmede yol yalnızca kayıttaki `file_reference`'tan türetilir ve storage klasörü dışına çıkan yol reddedilir; kayıt veya dosya yoksa ayrıntısız `404`.
+- [x] Yeni tablo, migration, bağımlılık, servis katmanı veya yazma endpoint'i eklenmedi.
+- [x] `frontend/src/App.tsx`: router bağımlılığı olmadan iki görünüm ("Belge Sınıflandırma" / "Kayıtlar"). Kayıtlar görünümü listeyi çeker, durum rozeti gösterir (classified yeşil, needs_review sarı, failed kırmızı), `review_reason`'ı basar, kayda tıklanınca detay endpoint'inden `extracted_text` yükler ve sağdaki PDF/DOCX aksiyonu orijinal dosyayı indirir. İkon kütüphanesi yerine küçük satır içi SVG; stil mevcut düz CSS'e eklendi.
+- [x] Testler (12 yeni, `test_documents_api.py` 25 → 37): liste sırası ve boş liste, katalog adları ve alan kümesi, `extracted_text`/`file_reference` sızmaması, `needs_review` alanları, detayda metin ve `failed` kaydın `null` metni, bilinmeyen id'de `404`, PDF ve DOCX indirmede byte-for-byte eşitlik + doğru media type + orijinal dosya adı, kaydı olmayan ve dosyası silinmiş belgede ayrıntısız `404`.
+- [x] Doğrulama: `pytest` **117 passed**; `pip check` temiz; `npm run build` ve `npm run lint` temiz. Gerçek PostgreSQL + gerçek storage ile smoke test: liste sırası doğru, detayda metin geldi, üç indirmede de byte-for-byte eşitlik ve doğru `Content-Disposition`, 404'ler ayrıntısız. Tarayıcıda Kayıtlar görünümü, rozetler, detay açma/kapama ve indirme bağlantıları konsol hatasız çalıştı. Gemini çağrısı yapılmadı; smoke verileri silindi (`documents` 0, storage yalnız `.gitkeep`).
+
 ## Üzerinde çalışılan işler
 
-- Aktif geliştirme işi yok; V1.1 kapatıldı. Yeni bir iş açılmadan önce kapsam `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1 (kayıt görünürlüğü) tamamlandı ve doğrulandı; commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
@@ -350,14 +362,15 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - `main.py` artık documents router'ını import ettiği için `DATABASE_URL`, `GEMINI_API_KEY` ve `GEMINI_MODEL` uygulama başlangıcında zorunludur; biri eksikse uygulama (ve `/health`) başlamaz (D-031, D-035).
 - `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerleri uygulama katmanı belirliyor: `file_type` yalnızca `file_service.FILE_TYPES` değerlerinden, `status` yalnızca endpoint kodunda atanıyor.
 - Retry/timeout davranışı google-genai 2.23.0 kaynak koduna göre doğrulandı. SDK sürümü yükseltilirse `tests/test_classification_service.py` içindeki gerçek SDK + MockTransport testleri mutlaka çalıştırılmalı.
-- `temperature=0` kullanılıyor; smoke testinde sorun çıkmadı. Sınıflandırma kalitesi gerçek belgelerle gözlemlenmeli.
+- `temperature=0` kullanılıyor; V1 ve V1.1 manuel testlerinde (11/11 ve 15/15) sınıflandırma kalitesi beklendiği gibi çıktı.
 - Log yapılandırması `main.py`'de tek satır `basicConfig(INFO)`; httpx istek satırları (URL, anahtar yok) da INFO'da görünür. Başarısız Gemini denemelerinin uyarı logunda yalnızca deneme numarası, hata türü, HTTP kodu ve şema hata türü bulunur; ham API yanıtı, model çıktısı ve belge metni loglanmaz. Metin çıkarımı hatalarında PDF/DOCX kütüphanesinin hata mesajı loglanır (belge metni değil). SQL hatalarında parametreler gizlidir.
 - Kataloglar modül yüklenirken okunur; katalog değişikliği için uygulama yeniden başlatılmalı. `other` belge türü katalogdan çıkarılırsa servis yapılandırma hatasıyla yüklenmez.
 - Storage konumu için ortam değişkeni yok. `file_service`, D-017'ye göre `backend/storage/` yolunu kod içinde kullanır (çalışma dizininden bağımsız).
 - DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz. DOCX'te OCR da yapılmaz.
 - OCR yalnızca PDF'te ve yalnızca gömülü metin 10 karakterin altındaysa çalışır; normal metin PDF'lerinde ek maliyet yoktur. Tek sayfalık temiz bir taramada ~0,6 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
 - Tesseract büyük harf Türkçe metinde noktalı **İ**'yi noktasız I, **Ç**'yi C okuyabiliyor (smoke testinde "ŞİKAYET DİLEKÇESİ" → "ŞIKAYET DILEKCESI"). Gövde metni doğru çıktığı için sınıflandırma etkilenmedi; başlığa dayanan belgelerde dikkat edilmeli.
-- OCR kalitesi yalnızca tek bir sentetik taranmış belgede ölçüldü. Düşük çözünürlüklü, eğik veya tablo içeren gerçek taramalar denenmedi.
+- OCR kalitesi gerçek bir taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle gürültü, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) ile ölçüldü; ayrıca 15 senaryoluk manuel testte normal, temiz taranmış ve bozulmuş belgeler uçtan uca doğrulandı. Tablo ağırlıklı taranmış belgeler hâlâ denenmedi.
+- Çok gürültülü taramalarda Tesseract kağıt dokusunu karakter sanıp beklenenden çok daha uzun metin üretebiliyor (ölçülen en kötü durumda 349 karakterlik belgeden 4282 karakter, süre ~5×). Üretilen fazlalık apaçık çöp parçalarıdır, akıcı ama yanlış metin değildir; ölçülen durumda sınıflandırma yine doğru sonuçlandı ve 50.000 karakter sınırının %8,6'sı kullanıldı. Çok sayfalı çok kötü taramalarda süre birikebilir.
 - `TESSDATA_PREFIX` yerel `backend/.env` dosyasındadır ve Git'e girmez; yeni bir makinede OCR istenirse Tesseract kurulup bu değişken ayarlanmalıdır (`README.md` 3. adım).
 - DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
 - Endpoint upload'dan en fazla `MAX_FILE_SIZE + 1` bayt okur. Ancak Starlette/python-multipart, endpoint çalışmadan önce multipart gövdesini geçici dosyaya aktarır; yani 50 MB üstü bir yükleme yine de ağdan alınıp geçici diske yazılır. Uygulama seviyesinde gövde boyutu sınırı yok; gerçek dağıtımda sunucu/reverse proxy seviyesinde gövde sınırı konmalı.

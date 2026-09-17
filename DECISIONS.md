@@ -14,7 +14,7 @@
 ## Kapsam ve dosya işleme
 
 ### D-001 — Desteklenen dosya türleri: PDF ve DOCX
-- **Karar:** MVP yalnızca metin tabanlı PDF ve DOCX dosyalarını kabul eder. Eski `.doc` formatı ve diğer tüm dosya türleri şimdilik desteklenmez ve reddedilir.
+- **Karar:** Sistem yalnızca PDF ve DOCX dosyalarını kabul eder. PDF'te gömülü metin yoksa OCR fallback devreye girer (D-003), yani taranmış PDF'ler de desteklenir; DOCX'te OCR yapılmaz, dolayısıyla DOCX metin tabanlı olmalıdır. Eski `.doc` formatı ve diğer tüm dosya türleri desteklenmez ve reddedilir.
 - **Gerekçe:** Dilekçe ve başvurularda yaygın iki format; ikisi de hafif Python kütüphaneleriyle doğrudan okunabilir. `.doc` eski ikili format olduğundan ek dönüştürme aracı gerektirir.
 
 ### D-002 — Metin çıkarımı: PDF için PyMuPDF, DOCX için python-docx
@@ -175,9 +175,18 @@
 
 ## API ve mimari
 
-### D-019 — Tek iş endpoint'i: `POST /api/documents/classify`, ayrıca operasyonel `GET /health`
-- **Karar:** MVP'de iş endpoint'i olarak yalnızca `POST /api/documents/classify` vardır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF veya DOCX dosyası. Buna ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
-- **Gerekçe:** Tüm akışı tek çağrıda karşılar; entegrasyon yüzeyi küçük ve net kalır. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
+### D-019 — Tek yazma endpoint'i: `POST /api/documents/classify`, ayrıca operasyonel `GET /health`
+- **Karar:** Kayıt **oluşturan** tek endpoint `POST /api/documents/classify`'dır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF veya DOCX dosyası. Kayıtları görüntülemeye yönelik salt okunur endpoint'ler ayrıca tanımlıdır (D-043). Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. Güncelleme ve silme endpoint'i yoktur. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
+- **Gerekçe:** Sınıflandırma akışının tamamı tek çağrıda karşılanır; yazma yüzeyi tek noktada kalır. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
+
+### D-043 — Salt okunur kayıt endpoint'leri (V1.2)
+- **Karar:** Kayıtların görüntülenebilmesi için üç salt okunur endpoint eklenir:
+  - `GET /api/documents` — kayıtlar `created_at` azalan sırada; alanlar D-032'deki classify alanları + `created_at`.
+  - `GET /api/documents/{document_id}` — aynı alanlar + `extracted_text`; kayıt yoksa `404`.
+  - `GET /api/documents/{document_id}/download` — orijinal dosya, kullanıcının yüklediği `file_name` ile ve `file_type`'a karşılık gelen media type ile döner; kayıt ya da fiziksel dosya yoksa ayrıntısız `404`.
+  - `file_reference` ve storage yolu hiçbir yanıtta dönmez; indirilecek yol yalnızca veritabanındaki kayıttan türetilir ve storage klasörü dışına çıkan bir yol kabul edilmez.
+  - Bu aşamada arama, filtre, sayfalama, silme, düzenleme ve authentication yoktur.
+- **Gerekçe:** Sınıflandırma sonuçlarının ve orijinal belgenin görülebilmesi modülün ilk gerçek kullanım ihtiyacı. Endpoint'ler salt okunur olduğu için yeni tablo, migration veya yazma yüzeyi gerekmez; `file_reference`'ın gizli kalması iç depolama düzenini dışarı sızdırmaz.
 
 ### D-032 — Classify yanıt alanları
 - **Karar:** Başarılı yanıt en az `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `status` alanlarını içerir. `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında dönmez.

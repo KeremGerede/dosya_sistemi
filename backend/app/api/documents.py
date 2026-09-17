@@ -9,12 +9,19 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.document import Document
-from app.schemas.classification import ClassifyResponse, FailedClassifyResponse, ValidationErrorResponse
+from app.schemas.classification import (
+    ClassifyResponse,
+    DocumentDetail,
+    DocumentSummary,
+    FailedClassifyResponse,
+    ValidationErrorResponse,
+)
 from app.services import classification_service, file_service
 
 logger = logging.getLogger(__name__)
@@ -25,6 +32,7 @@ FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB sınırını aşıyor."
 UNSUPPORTED_FILE_MESSAGE = "Yalnızca metin tabanlı PDF veya DOCX dosyaları kabul edilir."
 TEXT_EXTRACTION_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
+DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."
 
 
 @router.post(
@@ -114,8 +122,64 @@ def _process_document(
     return document, 200, None
 
 
-def _response_body(document: Document, message: str | None) -> ClassifyResponse:
-    fields = {
+@router.get(
+    "",
+    response_model=list[DocumentSummary],
+    summary="Kayıtlı belgeleri listeler (en yeni önce)",
+)
+def list_documents(db: Annotated[Session, Depends(get_db)]) -> list[DocumentSummary]:
+    """Salt okunur kayıt listesi (D-043). extracted_text ve file_reference dönmez."""
+    documents = db.scalars(select(Document).order_by(Document.created_at.desc(), Document.id)).all()
+    return [DocumentSummary(**_record_fields(document)) for document in documents]
+
+
+@router.get(
+    "/{document_id}",
+    response_model=DocumentDetail,
+    responses={404: {"description": DOCUMENT_NOT_FOUND_MESSAGE}},
+    summary="Tek belgenin kaydını ve çıkarılan metnini döndürür",
+)
+def get_document(document_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]) -> DocumentDetail:
+    """Salt okunur kayıt detayı (D-043). file_reference yine dönmez."""
+    document = _get_or_404(document_id, db)
+    return DocumentDetail(**_record_fields(document), extracted_text=document.extracted_text)
+
+
+@router.get(
+    "/{document_id}/download",
+    response_class=FileResponse,
+    responses={404: {"description": DOCUMENT_NOT_FOUND_MESSAGE}},
+    summary="Belgenin orijinal dosyasını indirir",
+)
+def download_document(document_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
+    """Orijinal dosyayı kullanıcının yüklediği adla döndürür (D-043).
+
+    Dosya yolu istemciye açılmaz; kayıt ya da fiziksel dosya yoksa ayrıntısız 404 döner.
+    """
+    document = _get_or_404(document_id, db)
+    storage_dir = file_service.STORAGE_DIR.resolve()
+    path = (storage_dir / document.file_reference).resolve()
+    # file_reference her zaman "<uuid>.<uzantı>"dır; yine de storage dışına çıkan bir yol kabul edilmez.
+    if not path.is_file() or path.parent != storage_dir:
+        logger.warning("Belge %s: storage dosyası bulunamadı veya geçersiz.", document_id)
+        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND_MESSAGE)
+    return FileResponse(path, media_type=file_service.MEDIA_TYPES[document.file_type], filename=document.file_name)
+
+
+def _get_or_404(document_id: uuid.UUID, db: Session) -> Document:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND_MESSAGE)
+    return document
+
+
+def _record_fields(document: Document) -> dict:
+    """Kayıt yanıtlarının ortak alanları: classify yanıtının alanları + created_at."""
+    return {**_classify_fields(document), "created_at": document.created_at}
+
+
+def _classify_fields(document: Document) -> dict:
+    return {
         "document_id": document.id,
         "file_name": document.file_name,
         "file_type": document.file_type,
@@ -128,6 +192,10 @@ def _response_body(document: Document, message: str | None) -> ClassifyResponse:
         "review_reason": document.review_reason,
         "status": document.status,
     }
+
+
+def _response_body(document: Document, message: str | None) -> ClassifyResponse:
+    fields = _classify_fields(document)
     if message is None:
         return ClassifyResponse(**fields)
     return FailedClassifyResponse(**fields, message=message)

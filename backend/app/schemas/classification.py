@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -48,6 +49,23 @@ class FailedClassifyResponse(ClassifyResponse):
     """Kabul sonrası failed yanıtı (D-034): aynı alanlar + genel kullanıcı mesajı."""
 
     message: str
+
+
+class DocumentSummary(ClassifyResponse):
+    """GET /api/documents listesi (D-043): classify yanıtının alanları + created_at.
+
+    file_reference ve extracted_text bilinçli olarak yoktur; storage yolu istemciye açılmaz.
+    """
+
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentDetail(DocumentSummary):
+    """GET /api/documents/{document_id} (D-043): özet alanları + çıkarılan metnin tamamı."""
+
+    extracted_text: str | None
 
 
 class ValidationErrorResponse(BaseModel):

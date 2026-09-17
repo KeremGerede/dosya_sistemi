@@ -2,6 +2,7 @@ import io
 import logging
 import tempfile
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import docx
 import pymupdf
@@ -424,3 +425,173 @@ def test_openapi_documents_both_422_bodies():
 
 def test_production_engine_hides_sql_parameters():
     assert database.engine.hide_parameters is True
+
+
+# --- Kayıt görünürlüğü endpoint'leri (V1.2, D-043) ---
+
+LIST_URL = "/api/documents"
+
+
+def insert_document(session_factory, **overrides) -> Document:
+    """Testte doğrudan kayıt ekler; created_at sırasını deterministik kurmak için kullanılır."""
+    document_id = overrides.pop("id", uuid.uuid4())
+    fields = {
+        "id": document_id,
+        "file_name": "belge.pdf",
+        "file_type": "pdf",
+        "file_reference": f"{document_id}.pdf",
+        "extracted_text": "Bu belgenin çıkarılmış metni.",
+        "document_type": DOCUMENT_TYPE,
+        "institution_id": INSTITUTION,
+        "needs_review": False,
+        "review_reason": None,
+        "status": "classified",
+        "created_at": datetime.now(timezone.utc),
+    }
+    fields.update(overrides)
+    with session_factory() as session:
+        document = Document(**fields)
+        session.add(document)
+        session.commit()
+        session.refresh(document)
+        session.expunge(document)
+    return document
+
+
+def test_list_returns_documents_newest_first(client, session_factory):
+    now = datetime.now(timezone.utc)
+    insert_document(session_factory, file_name="orta.pdf", created_at=now - timedelta(hours=1))
+    insert_document(session_factory, file_name="en_eski.pdf", created_at=now - timedelta(hours=2))
+    insert_document(session_factory, file_name="en_yeni.pdf", created_at=now)
+
+    response = client.get(LIST_URL)
+
+    assert response.status_code == 200
+    assert [item["file_name"] for item in response.json()] == ["en_yeni.pdf", "orta.pdf", "en_eski.pdf"]
+
+
+def test_list_is_empty_when_no_documents(client):
+    response = client.get(LIST_URL)
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_item_has_catalog_names_and_created_at(client, session_factory):
+    insert_document(session_factory)
+
+    item = client.get(LIST_URL).json()[0]
+
+    assert item["document_type"] == DOCUMENT_TYPE
+    assert item["document_type_name"] == DOCUMENT_TYPE_NAME
+    assert item["institution_id"] == INSTITUTION
+    assert item["institution_name"] == INSTITUTION_NAME
+    assert set(item) == RESPONSE_FIELDS | {"created_at"}
+
+
+def test_list_hides_extracted_text_and_file_reference(client, session_factory):
+    document = insert_document(session_factory, extracted_text=SECRET_MARKER)
+
+    body = client.get(LIST_URL).text
+
+    assert "extracted_text" not in body
+    assert "file_reference" not in body
+    assert SECRET_MARKER not in body
+    assert document.file_reference not in body
+
+
+def test_needs_review_item_keeps_review_reason_and_null_institution(client, session_factory):
+    insert_document(
+        session_factory, status="needs_review", needs_review=True,
+        institution_id=None, review_reason="Kurum belirsiz.",
+    )
+
+    item = client.get(LIST_URL).json()[0]
+
+    assert item["status"] == "needs_review"
+    assert item["needs_review"] is True
+    assert item["institution_id"] is None and item["institution_name"] is None
+    assert item["review_reason"] == "Kurum belirsiz."
+
+
+def test_detail_returns_extracted_text_but_not_file_reference(client, session_factory):
+    document = insert_document(session_factory, extracted_text=SECRET_MARKER)
+
+    response = client.get(f"{LIST_URL}/{document.id}")
+
+    assert response.status_code == 200
+    assert response.json()["extracted_text"] == SECRET_MARKER
+    assert set(response.json()) == RESPONSE_FIELDS | {"created_at", "extracted_text"}
+    assert "file_reference" not in response.text
+    assert document.file_reference not in response.text
+
+
+def test_detail_returns_null_extracted_text_for_failed_document(client, session_factory):
+    document = insert_document(
+        session_factory, status="failed", extracted_text=None,
+        document_type=None, institution_id=None,
+    )
+
+    body = client.get(f"{LIST_URL}/{document.id}").json()
+
+    assert body["extracted_text"] is None
+    assert body["status"] == "failed"
+    assert body["document_type_name"] is None and body["institution_name"] is None
+
+
+def test_detail_returns_404_for_unknown_document(client):
+    response = client.get(f"{LIST_URL}/{uuid.uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+
+
+def test_download_returns_original_pdf_bytes_with_original_file_name(client, fake_classify, storage_dir):
+    fake_classify(classification())
+    content = make_pdf(PDF_TEXT)
+    document_id = upload(client, "dilekçe raporu.pdf", content).json()["document_id"]
+
+    response = client.get(f"{LIST_URL}/{document_id}/download")
+
+    assert response.status_code == 200
+    assert response.content == content  # byte-for-byte aynı dosya
+    assert response.headers["content-type"] == "application/pdf"
+    # Türkçe/boşluklu ad RFC 5987 ile kodlanır; storage adı (UUID) sızmaz.
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment")
+    assert "dilek" in disposition
+    assert document_id not in disposition
+
+
+def test_download_returns_docx_with_correct_media_type(client, fake_classify):
+    fake_classify(classification())
+    content = make_docx(DOCX_TEXT)
+    document_id = upload(client, "basvuru.docx", content).json()["document_id"]
+
+    response = client.get(f"{LIST_URL}/{document_id}/download")
+
+    assert response.status_code == 200
+    assert response.content == content
+    assert response.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert 'filename="basvuru.docx"' in response.headers["content-disposition"]
+
+
+def test_download_returns_404_for_unknown_document(client):
+    response = client.get(f"{LIST_URL}/{uuid.uuid4()}/download")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+
+
+def test_download_returns_404_without_details_when_stored_file_is_missing(client, session_factory, storage_dir, caplog):
+    document = insert_document(session_factory)  # kayıt var, storage dosyası hiç yazılmadı
+
+    with caplog.at_level(logging.WARNING):
+        response = client.get(f"{LIST_URL}/{document.id}/download")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+    assert document.file_reference not in response.text
+    assert str(storage_dir) not in response.text
+    assert document.file_reference not in caplog.text  # log da dosya adını yazmaz

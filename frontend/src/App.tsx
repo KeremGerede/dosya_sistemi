@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import './App.css'
 
@@ -15,6 +15,16 @@ const CLASSIFICATION_FAILED_MESSAGE = 'Belge şu anda sınıflandırılamadı. L
 const UNEXPECTED_MESSAGE = 'Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.'
 const NETWORK_MESSAGE = 'Sunucuya ulaşılamadı. Lütfen bağlantıyı kontrol edip tekrar deneyin.'
 const TIMEOUT_MESSAGE = 'İşlem zaman aşımına uğradı. Lütfen tekrar deneyin.'
+const RECORDS_FAILED_MESSAGE = 'Kayıtlar yüklenemedi. Lütfen tekrar deneyin.'
+const DETAIL_FAILED_MESSAGE = 'Belge ayrıntısı yüklenemedi. Lütfen tekrar deneyin.'
+
+const STATUS_LABELS: Record<DocumentStatus, string> = {
+  classified: 'Sınıflandırıldı',
+  needs_review: 'İnceleme gerekiyor',
+  failed: 'İşlenemedi',
+}
+
+type DocumentStatus = 'classified' | 'needs_review' | 'failed'
 
 type ClassifyResponse = {
   document_id: string
@@ -26,9 +36,15 @@ type ClassifyResponse = {
   institution_name: string | null
   needs_review: boolean
   review_reason: string | null
-  status: 'classified' | 'needs_review' | 'failed'
+  status: DocumentStatus
   message?: string
 }
+
+// GET /api/documents: classify alanları + created_at. extracted_text ve storage yolu dönmez.
+type DocumentSummary = Omit<ClassifyResponse, 'message'> & { created_at: string }
+
+// GET /api/documents/{id}: özet alanları + çıkarılan metnin tamamı.
+type DocumentDetail = DocumentSummary & { extracted_text: string | null }
 
 // Kullanıcıya yalnızca message gösterilir; httpStatus ve body teşhis için saklanır, ekrana basılmaz.
 type ClassifyError = {
@@ -80,7 +96,151 @@ function formatSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
+function formatDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('tr-TR')
+}
+
+// Dosya türü rozeti; ikon kütüphanesi yerine küçük satır içi SVG.
+function FileTypeIcon({ fileType }: { fileType: string }) {
+  return (
+    <span className="file-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 20" width="14" height="18" focusable="false">
+        <path d="M2 1h7l5 5v13H2z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M9 1v5h5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      </svg>
+      {fileType.toUpperCase()}
+    </span>
+  )
+}
+
+function RecordsView() {
+  const [documents, setDocuments] = useState<DocumentSummary[] | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<DocumentDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  // Durum yalnızca istek sonuçlandığında güncellenir; efekt içinde senkron setState yapılmaz.
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch('/api/documents')
+      if (!response.ok) {
+        setMessage(RECORDS_FAILED_MESSAGE)
+        return
+      }
+      setDocuments((await response.json()) as DocumentSummary[])
+      setMessage(null)
+    } catch {
+      setMessage(RECORDS_FAILED_MESSAGE)
+    }
+  }, [])
+
+  useEffect(() => {
+    // Kurulumda kayıtları backend'den çeker: kuralın istisna saydığı "dış sistemle senkronizasyon".
+    // setState çağrıları await'ten sonra olur, render döngüsü tetiklemez.
+    // oxlint-disable-next-line react/set-state-in-effect
+    void load()
+  }, [load])
+
+  async function toggle(documentId: string) {
+    if (openId === documentId) {
+      setOpenId(null)
+      setDetail(null)
+      return
+    }
+    setOpenId(documentId)
+    setDetail(null)
+    setDetailLoading(true)
+    setMessage(null)
+    try {
+      const response = await fetch(`/api/documents/${documentId}`)
+      if (!response.ok) {
+        setMessage(DETAIL_FAILED_MESSAGE)
+        return
+      }
+      setDetail((await response.json()) as DocumentDetail)
+    } catch {
+      setMessage(DETAIL_FAILED_MESSAGE)
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  if (documents === null && message === null) {
+    return <p className="status" role="status">Kayıtlar yükleniyor...</p>
+  }
+
+  return (
+    <section className="records">
+      <div className="records-head">
+        <h2>Kayıtlar</h2>
+        <button type="button" className="secondary" onClick={() => void load()}>
+          Yenile
+        </button>
+      </div>
+
+      {message !== null && (
+        <div className="notice error" role="alert">
+          <p>{message}</p>
+        </div>
+      )}
+
+      {documents !== null && documents.length === 0 && <p className="hint">Henüz sınıflandırılmış belge yok.</p>}
+
+      <ul className="record-list">
+        {(documents ?? []).map((item) => (
+          <li key={item.document_id} className="record">
+            <div className="record-row">
+              <button
+                type="button"
+                className="record-main"
+                onClick={() => void toggle(item.document_id)}
+                aria-expanded={openId === item.document_id}
+              >
+                <span className="record-name">{item.file_name}</span>
+                <span className="record-meta">
+                  {item.document_type_name ?? 'Tür belirlenemedi'} · {item.institution_name ?? 'Kurum belirlenemedi'}
+                </span>
+                <span className="record-date">{formatDate(item.created_at)}</span>
+              </button>
+              <span className={`badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
+              <a
+                className="download"
+                href={`/api/documents/${item.document_id}/download`}
+                title={`${item.file_name} dosyasını indir`}
+              >
+                <FileTypeIcon fileType={item.file_type} />
+                <span className="visually-hidden">{item.file_name} dosyasını indir</span>
+              </a>
+            </div>
+
+            {item.status === 'needs_review' && item.review_reason !== null && (
+              <p className="review-reason">
+                <strong>İnceleme nedeni:</strong> {item.review_reason}
+              </p>
+            )}
+
+            {openId === item.document_id && (
+              <div className="record-detail">
+                {detailLoading && <p className="status" role="status">Belge metni yükleniyor...</p>}
+                {detail !== null && (
+                  <>
+                    <h3>Çıkarılan metin</h3>
+                    <pre className="extracted-text">{detail.extracted_text ?? 'Bu belgeden metin çıkarılamadı.'}</pre>
+                  </>
+                )}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 function App() {
+  const [view, setView] = useState<'classify' | 'records'>('classify')
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ClassifyResponse | null>(null)
@@ -133,6 +293,31 @@ function App() {
   return (
     <main>
       <h1>Belge Sınıflandırma</h1>
+
+      {/* Router yok: iki görünüm arasında sade geçiş. */}
+      <nav className="views">
+        <button
+          type="button"
+          className={view === 'classify' ? 'view-tab active' : 'view-tab'}
+          aria-current={view === 'classify'}
+          onClick={() => setView('classify')}
+        >
+          Belge Sınıflandırma
+        </button>
+        <button
+          type="button"
+          className={view === 'records' ? 'view-tab active' : 'view-tab'}
+          aria-current={view === 'records'}
+          onClick={() => setView('records')}
+        >
+          Kayıtlar
+        </button>
+      </nav>
+
+      {view === 'records' ? (
+        <RecordsView />
+      ) : (
+        <>
       <p>
         PDF veya DOCX belgesini yükleyin; belge türü ve ilgili müdürlük otomatik
         olarak belirlensin.
@@ -193,6 +378,8 @@ function App() {
           </section>
         )}
       </div>
+        </>
+      )}
     </main>
   )
 }

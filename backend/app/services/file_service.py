@@ -24,6 +24,10 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (D-028)
 MIN_TEXT_LENGTH = 10  # normalize edilmiş metin için (D-026)
 STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"  # backend/storage (D-017)
 FILE_TYPES = ("pdf", "docx")
+MEDIA_TYPES = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 OCR_LANGUAGE = "tur"  # taranmış PDF fallback'i (D-042)
 OCR_DPI = 300
 

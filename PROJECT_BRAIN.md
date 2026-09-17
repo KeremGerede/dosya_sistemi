@@ -219,6 +219,14 @@ Kabul edilmeyen dosyalar (desteklenmeyen tür, 50 MB üstü) için satır oluşt
 
 **`POST /api/documents/classify`** — girdi: `multipart/form-data` içinde en fazla 50 MB boyutunda tek bir PDF veya DOCX dosyası.
 
+Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
+
+| Endpoint | Yanıt |
+|---|---|
+| **`GET /api/documents`** | Kayıtlar `created_at` azalan sırada; aşağıdaki alanlar + `created_at`. `extracted_text` ve `file_reference` dönmez |
+| **`GET /api/documents/{document_id}`** | Aynı alanlar + `extracted_text`; kayıt yoksa `404` |
+| **`GET /api/documents/{document_id}/download`** | Orijinal dosya, kullanıcının yüklediği adla ve `file_type`'a uygun media type ile; kayıt ya da dosya yoksa ayrıntısız `404` |
+
 Ayrıca iş mantığı içermeyen operasyonel **`GET /health`** → `{"status": "ok"}`.
 
 Başarılı yanıt en az şu alanları içerir:
@@ -298,12 +306,12 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
-- Tek iş endpoint'i: `POST /api/documents/classify` (ayrıca operasyonel `GET /health`)
-- Basit React + Vite + TypeScript yükleme ve sonuç ekranı (Vite proxy ile `/api`, 120 sn istek zaman aşımı)
+- Tek yazma endpoint'i: `POST /api/documents/classify`; kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043) ve operasyonel `GET /health`
+- Basit React + Vite + TypeScript arayüz (Vite proxy ile `/api`, 120 sn istek zaman aşımı): yükleme/sonuç ekranı ve kayıtları listeleyip orijinal belgeyi indirebilen kayıtlar görünümü
 
 ## 12. Açıkça kapsam dışı
 
-DOCX için OCR · `.doc` ve PDF/DOCX dışındaki dosya türleri · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · ek iş endpoint'leri · ek tablolar · kuyruk / arka plan işleri
+DOCX için OCR · `.doc` ve PDF/DOCX dışındaki dosya türleri · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kayıt güncelleme/silme endpoint'leri · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 
