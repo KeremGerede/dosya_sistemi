@@ -292,8 +292,14 @@ def test_permanent_client_errors_are_not_retried(fake_gemini, sleeps, code):
 
 def test_failed_attempt_logs_hide_model_output_raw_api_body_and_document_text(fake_gemini, sleeps, caplog):
     leaked_reason = "MODELIN_URETTIGI_GEREKCE"
+    leaked_summary = "MODELIN_URETTIGI_OZET"
+    leaked_sender_name = "MODELIN_URETTIGI_GONDEREN_KISI"
+    leaked_sender_institution = "MODELIN_URETTIGI_GONDEREN_KURUM"
     fake_gemini(
-        model_output(needs_review=False, review_reason=leaked_reason),  # tutarsız çıktı
+        model_output(  # tutarsız çıktı
+            needs_review=False, review_reason=leaked_reason, summary=leaked_summary,
+            sender_name=leaked_sender_name, sender_institution=leaked_sender_institution,
+        ),
         f'{{"document_type": "{leaked_reason}"',  # bozuk JSON
         api_error(503),  # ham gövde: "ham hata 503"
     )
@@ -302,6 +308,10 @@ def test_failed_attempt_logs_hide_model_output_raw_api_body_and_document_text(fa
         classify_text(SAMPLE_TEXT)
 
     assert leaked_reason not in caplog.text
+    # summary ve gönderen bilgisi de model çıktısıdır; loglara girmemeli (D-044).
+    assert leaked_summary not in caplog.text
+    assert leaked_sender_name not in caplog.text
+    assert leaked_sender_institution not in caplog.text
     assert "ham hata" not in caplog.text
     assert SAMPLE_TEXT not in caplog.text
     # Güvenli bağlam kalır: deneme numarası, hata türü, HTTP kodu ve şema hatası türü.

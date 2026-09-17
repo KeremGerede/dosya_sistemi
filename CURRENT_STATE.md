@@ -361,9 +361,18 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Doğrulama: `pytest` **133 passed**; `pip check` temiz; gerçek PostgreSQL'de `alembic upgrade head` → `cedf33674167 (head)`, `alembic check` "No new upgrade operations detected"; `npm run build` ve `npm run lint` temiz.
 - [x] Gerçek Gemini smoke testi (2 belge): (A) açık kişi + kurum içeren dilekçe → `sender_name = "Ayşe Yılmaz"`, `sender_institution = "Çiğdem Mahallesi Muhtarlığı"` — muhatap müdürlükle karıştırılmadı; (B) gönderen bilgisi içermeyen dilekçe → iki alan da `null`, **isim/kurum uydurulmadı**. İki belgede de özet tek cümlelik, belgedeki bilgiyle sınırlı ve doğru; sınıflandırma `complaint` / `fen_isleri` / `classified`. Tarayıcıda kayıtlar görünümü konsol hatasız doğrulandı. Test verileri silindi (`documents` 0, storage yalnız `.gitkeep`).
 
+**V1.2 · Adım 2 kalite doğrulaması (2026-09-18)**
+
+- [x] Migration round-trip gerçek PostgreSQL'de: `cedf33674167` → `downgrade 2ab2daa5828a` → `upgrade head`. Downgrade yalnızca üç yeni kolonu düşürdü, 11 eski kolonun tipi ve nullable değeri korundu; upgrade'den sonra üçü de `text NULL`, tablo 14 kolon, `alembic check` temiz. Başka tablo/kolon değişmedi, veri kaybı riski görülmedi.
+- [x] Gerçek Gemini ile 10 senaryoluk metadata matrisi (kişi+kurum, yalnız kişi, yalnız kurum, ikisi de yok, birden fazla isim, muhatap kurum var/gönderen yok, antetli kurum belgesi, `needs_review`, OCR'lı taranmış PDF, DOCX): **10/10 beklenen davranış**. İsim veya kurum uydurma yok; muhatap müdürlük hiçbir senaryoda gönderen kurum sayılmadı; birden fazla isim geçen belgede yalnızca başvuran seçildi; metadata yüzünden `failed` olan belge olmadı. Özetler 1-2 cümle ve belgedeki bilgiyle sınırlı kaldı.
+- [x] 10 belge için tam 10 gerçek Gemini isteği; retry yok (D-033 davranışı değişmemiş).
+- [x] Log güvenliği: benzersiz gönderen adı, kurum adı ve belge işaretiyle yapılan gerçek çalıştırmada loglarda `sender_name`, `sender_institution`, `summary`, belge metni, ham model çıktısı ve API anahtarı **bulunmadı**. Operasyonel loglar çalışmaya devam ediyor (belge kimliği + status).
+- [x] Doğrulama: `pytest` 133 passed; `pip check` temiz; `alembic current` = `cedf33674167 (head)`; `npm run build` ve `npm run lint` temiz. Test kayıtları ve dosyaları silindi (`documents` 0, storage yalnız `.gitkeep`). Ürün kodu değişmedi.
+- [x] Otomatik log regresyon coverage'ı tamamlandı: mevcut log güvenliği testine (`test_failed_attempt_logs_hide_model_output_raw_api_body_and_document_text`) `summary`, `sender_name` ve `sender_institution` için benzersiz değerler ve bunların `caplog`'da bulunmadığını doğrulayan assertion'lar eklendi. Belge metni, `review_reason`, ham API gövdesi ve API anahtarı kontrolleri korundu; ürün kodu değişmedi.
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1 ve Adım 2 tamamlandı ve doğrulandı; Adım 2 commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1 ve Adım 2 tamamlandı, commit edildi ve kalite doğrulamasından geçti. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
