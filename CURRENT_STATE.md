@@ -6,7 +6,7 @@
 
 ## Mevcut aşama
 
-**V1.1 tamamlandı.** V1'in üzerine taranmış PDF'ler için lokal Tesseract OCR fallback'i eklendi (D-003, D-042). V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
+**V1.1 tamamlandı.** V1'in üzerine taranmış PDF'ler için lokal Tesseract OCR fallback'i eklendi (D-003, D-042) ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15). V1 (Aşama 1–6) 2026-09-17'de kapatılmıştı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
 Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü daha önce tamamlanmıştı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041).
 
@@ -328,6 +328,13 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 - [x] `OCR_LANGUAGE` `tur+eng` → **`tur`**. Gerçek taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) üzerinde yapılan ölçümde `tur` 5 senaryoda kazandı, 4'ünde eşitti, hiçbirinde geride kalmadı: Türkçe karakter hatası 45 vs 63 (`Ç→C` yalnızca `tur+eng`'de), kritik kelime recall 62/72 vs 60/72, en kötü senaryoda ~2× hızlı. Belgeler Türkçe olduğu için İngilizce model bir yetenek eklemiyor.
 - [x] Değişiklik tek sabit + bir test beklentisi; preprocessing, yeni bağımlılık, yeni OCR motoru veya `tessdata_best` eklenmedi. Benchmark dosyaları repo dışında tutuldu.
+
+**V1.1 manuel doğrulaması (2026-09-17)**
+
+- [x] 15 senaryoluk manuel test matrisi arayüz üzerinden uygulandı; **15/15 beklenen davranışı verdi.** Kapsam: normal metin PDF ve DOCX, temiz ve bozulmuş (soluk, gürültülü, eğik, kötü fotokopi) taranmış OCR PDF'leri, Türkçe karakter yoğun belge, çok sayfalı taranmış PDF, `needs_review` düşen iki belge, metin çıkarılamayan iki `failed` belge ve frontend'in engellediği desteklenmeyen format.
+- [x] Veritabanı denetimi: 14 kayıt (10 `classified`, 2 `needs_review`, 2 `failed`); tür ve kurum atamalarının tamamı beklenenle eşleşti, 12 invariant kontrolünde sapma yok. `.txt` senaryosu frontend'de durduğu için kayıt ve dosya oluşturmadı (D-040).
+- [x] Storage denetimi: `file_reference` ↔ dosya eşleşmesi 14/14; eksik dosya, orphan ve yinelenen referans yok.
+- [x] Test verileri denetimden sonra id listesiyle temizlendi (`TRUNCATE` kullanılmadı): `documents` 0 satır, `backend/storage/` yalnızca `.gitkeep`.
 
 ## Üzerinde çalışılan işler
 
