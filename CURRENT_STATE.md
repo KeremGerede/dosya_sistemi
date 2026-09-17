@@ -1,14 +1,16 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-16
+> **Son güncelleme:** 2026-09-17
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
 ## Mevcut aşama
 
-**Aşama 6 · Adım 5 — gerçek belgelerle manuel test ve V1 final doğrulaması devam ediyor.** Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
+**V1 tamamlandı.** Aşama 1–6'nın tamamı bitti; Aşama 6 · Adım 5 (gerçek belgelerle manuel test ve V1 final doğrulaması) 2026-09-17'de kapatıldı. Backend ana MVP akışı (upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt) ve frontend (yükleme, sonuç ve hata ekranı) uçtan uca çalışıyor.
 
-Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041). Geliştirme ortamı manuel test için hazır; gerçek (anonimleştirilmiş) belgelerle testleri kullanıcı yapacak.
+Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü daha önce tamamlanmıştı: katalog adları yanıtta (Adım 1), React + Vite + TypeScript frontend ve `/api` proxy'si (Adım 2), yükleme ekranı (Adım 3), sonuç ve hata ekranı (Adım 4). V1 öncesi read-only audit ve güvenli polish pass yapıldı; PostgreSQL bağlantı zaman aşımı 10 sn olarak karara bağlandı (D-041).
+
+Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo beklenen sonucu verdi**; sentetik test verileri temizlendi ve final kontrollerin tamamı geçti (`pytest` 97 passed, `pip check` temiz, `alembic current` = `2ab2daa5828a (head)`, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz, PostgreSQL healthy). **V1 kapsamında bilinen blocker yok.**
 
 ## Repo durumu
 
@@ -277,9 +279,41 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 - [x] `README.md`: sıfırdan kurulum için "Kurulum ve Çalıştırma" bölümü (gereksinimler, klonlama, backend ortamı, `.env`, Docker PostgreSQL, migration, backend, frontend, kullanım, doğrulama komutları, durdurma/başlatma). Komutlar repo yapısı ve bu makinede doğrulandı; teknik boyut sınırı 50 MiB olarak yazıldı, çerçevenin `400`/`405` yanıtları API bölümüne eklendi.
 - [x] Doğrulama: `pytest` 97 passed (26 + 46 + 25); `pip check` temiz; `npm run build` ve `npm run lint` temiz; `GET /health`, `/docs`, `/redoc`, `/openapi.json` → `200`; `alembic current` head; PostgreSQL healthy. Gerçek Gemini çağrısı yapılmadı. Backend düzeltilmiş kodla yeniden başlatıldı.
 
+**Aşama 6 · Adım 5 — Manuel V1 doğrulaması (gerçek belgelerle test)**
+
+- [x] 11 senaryoluk manuel test matrisi arayüz üzerinden uygulandı (tarayıcı → Vite proxy → FastAPI → Gemini → PostgreSQL); sonuçlar veritabanından salt-okuma kontrolüyle doğrulandı. **11/11 senaryo beklenen sonucu verdi.**
+
+| # | Senaryo | Sonuç |
+|---|---|---|
+| 01 | Yol çukuru şikayeti | `complaint` · `fen_isleri` · `classified` |
+| 02 | Park bankı talebi | `request` · `park_bahceler` · `classified` |
+| 03 | Emlak vergisi bilgi edinme | `information_request` · `mali_hizmetler` · `classified` |
+| 04 | Kültür merkezi salon başvurusu | `application` · `kultur_sosyal_isler` · `classified` |
+| 05 | Ağaç + kaldırım, belirsiz kurum | `complaint` · `institution_id = null` · `needs_review`; `review_reason` dolu ve anlamlı |
+| 06 | Sokak hayvanı (katalog dışı birim) | `request` · `institution_id = null` · `needs_review`; `review_reason` dolu ve anlamlı |
+| 07 | Tablo ağırlıklı sosyal yardım (DOCX) | `application` · `sosyal_hizmetler` · `classified` |
+| 08 | Taranmış / yalnızca görüntü PDF | `failed`; Gemini çağrısı yapılmadan, metin çıkarılamadığı için durdu |
+| 09 | 6 karakterlik kısa metin PDF | `failed`; Gemini çağrısı yapılmadan, 10 karakter kuralında durdu (D-026) |
+| 10 | Çok sayfalı zabıta şikayeti | `complaint` · `zabita` · `classified` |
+| 11 | `.txt` dosya | Frontend ön kontrolü gönderimi engelledi; DB kaydı ve storage dosyası oluşmadı (D-040) |
+
+- [x] `failed` kayıtlarında (08, 09) `document_type`, `institution_id` ve `review_reason` `null`, `needs_review = false`; `extracted_text` 08'de `null`, 09'da 6 karakter.
+- [x] Toplam 10 kayıt: `classified` 6, `needs_review` 2, `failed` 2. `.txt` senaryosu kayıt üretmedi.
+- [x] DB ↔ storage: `file_reference` değerleriyle 10/10 birebir eşleşme; orphan dosya 0, eksik storage dosyası 0, `.gitkeep` dışında beklenmeyen giriş yok.
+- [x] Altı tutarlılık kontrolünde sapma yok: `classified` + `institution_id` null; `needs_review = false` + `review_reason` dolu; `needs_review = true` + `status ≠ needs_review`; `failed` + sınıflandırma alanı dolu; katalog dışı `document_type`; `file_reference ≠ <id>.<uzantı>`.
+- [x] Test oturumundan sonra bilgisayar yeniden başladı ve PostgreSQL container'ı düzgün kapanmadan sonlandı (exit 255). Yeniden başlatmada otomatik crash recovery sorunsuz tamamlandı (`redo done`, `database system is ready to accept connections`); **veri kaybı olmadı**, 10 kaydın ve storage dosyalarının tamamı yerinde kaldı.
+- [x] Manuel test sonucunda prompt, katalog veya kod değişikliği gerektiren **V1 blocker bulunmadı**. Tek gözlem: 05'in inceleme gerekçesi park/bahçeler ↔ zabıta ikilemini gösteriyor ("kaldırım" hem `fen_isleri` hem `zabita` açıklamasında geçiyor). Davranış doğru (zorla atama yapılmadı); kurum açıklamalarının netleştirilmesi V1 sonrasına bırakıldı.
+
+**V1 final temizliği ve doğrulaması (2026-09-17)**
+
+- [x] Sentetik manuel test verileri temizlendi: silme öncesi tablodaki kayıtların tam olarak bu 10 sentetik test belgesinden ibaret olduğu doğrulandı, ardından 10 `documents` kaydı id listesiyle silindi ve yalnızca bunlara karşılık gelen 10 storage dosyası kaldırıldı. `TRUNCATE`, volume silme veya `docker compose down` kullanılmadı; `.gitkeep` korundu.
+- [x] Temizlik sonrası durum: `documents` 0 satır, `backend/storage/` içinde yalnızca `.gitkeep`; orphan dosya ve beklenmeyen giriş yok.
+- [x] Final kontroller: `pytest` 97 passed (26 + 46 + 25; 2 bilinen deprecation uyarısı); `pip check` → "No broken requirements found"; `alembic current` = `2ab2daa5828a (head)`; Docker PostgreSQL `Up (healthy)`; `GET /health` → `200 {"status": "ok"}`; `npm run build` başarılı (17 modül, ~0,6 sn); `npm run lint` (oxlint) temiz (exit 0).
+- [x] Doğrulama sırasında `/api/documents/classify` çağrılmadı ve gerçek Gemini isteği gönderilmedi. Kod, mimari, `DECISIONS.md` ve `PROJECT_BRAIN.md` değişmedi; yalnızca `CURRENT_STATE.md` ve `README.md` güncellendi.
+
 ## Üzerinde çalışılan işler
 
-- Aşama 6 · Adım 5: geliştirme ortamı hazır (Docker PostgreSQL, backend `127.0.0.1:8000`, Vite `http://localhost:5173`); kullanıcının gerçek belgelerle manuel testleri bekleniyor.
+- Aktif geliştirme işi yok; V1 kapatıldı. Yeni bir iş açılmadan önce kapsam `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
@@ -328,16 +362,14 @@ Aşama 1–5 ve Aşama 6'nın Adım 1–4'ü tamamlandı: katalog adları yanıt
 
 İlgili geliştirme adımına başlamadan önce kullanıcıyla netleştirilir; karara bağlananlar `DECISIONS.md`'ye işlenir ve buradan silinir.
 
-V1 final öncesi karar bekleyenler:
-
-- Manuel testlerde gerçek belgelerden oluşacak `documents` kayıtları ve storage dosyaları V1 final öncesi silinecek mi, saklanacak mı?
+- Açık soru yok. Manuel test kayıtlarının ve storage dosyalarının V1 final öncesi silinmesi kararlaştırıldı ve uygulandı; kalıcı bir ürün/teknik karar değiştirmediği için `DECISIONS.md`'ye yeni kayıt açılmadı.
 
 ## Sıradaki geliştirme adımları
 
-**Aşama 6 · Adım 5 — Manuel gerçek belge testleri ve V1 final doğrulaması.** Adım 1–4, V1 öncesi audit ve polish pass tamamlandı. Kalan sıra:
+V1 tamamlandığı için planlanmış bir sonraki geliştirme adımı yok.
 
-1. Kullanıcı gerçek (anonimleştirilmiş) PDF/DOCX belgeleriyle manuel test matrisini uygular: net şikayet, farklı tür ve müdürlük, PDF ve DOCX, belirsiz kurum / `needs_review`, metinsiz belge, yeni belgeyle tekrar deneme, frontend ön kontrolü. Sonuçlar (tür, kurum, `needs_review`, inceleme nedeni, süre, doğruluk) birlikte değerlendirilir.
-2. Sınıflandırma sorunu çıkarsa önce kurum açıklamaları (katalog verisi) gözden geçirilir.
-3. Açık sorular karara bağlanır.
-4. Final kontroller: pytest, build, lint, health, alembic, DB/storage, git; `CURRENT_STATE.md` ve `README.md` V1 final durumuna getirilir.
-5. V1 final commit/push.
+Aşağıdakiler **V1 kapsamı dışındadır ve yeni iş olarak açılmamıştır**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
+
+- Taranmış / yalnızca görüntü içeren belgeler için OCR fallback (`PROJECT_BRAIN.md` §13; saklanan orijinal dosyalar yeniden işlenebilir).
+- Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi (manuel testte 05 senaryosunda görülen park/bahçeler ↔ zabıta ikilemi gibi durumlar).
+- Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication.

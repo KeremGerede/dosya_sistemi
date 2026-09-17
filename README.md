@@ -2,7 +2,7 @@
 
 Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
-> **Durum:** Backend'in ana MVP akışı tamamlandı: `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. V1 final doğrulaması (gerçek belgelerle manuel test) devam ediyor.
+> **Durum: V1 tamamlandı.** `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. Gerçek belgelerle yapılan manuel doğrulamada 11 senaryonun 11'i de beklenen sonucu verdi.
 
 ## MVP Akışı
 
@@ -87,13 +87,13 @@ Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bo
   - Retry/timeout politikası uygulanmış: 30 sn timeout, en fazla 3 deneme, 1 sn / 2 sn bekleme.
   - `gemini-3.5-flash-lite` gerçek API smoke testiyle doğrulandı.
 - **Aşama 5 — tamamlandı:** `POST /api/documents/classify` endpoint'i; backend ana MVP akışı tamamlandı. Upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt akışı, gerçek Docker PostgreSQL ve gerçek Gemini ile uçtan uca doğrulandı.
-- **Aşama 6 — son adımda:** frontend ve V1 doğrulaması.
+- **Aşama 6 — tamamlandı:** frontend ve V1 doğrulaması.
   - Adım 1 tamamlandı: classify yanıtı katalog adlarını (`document_type_name`, `institution_name`) da döndürüyor.
   - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si.
   - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
   - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
-  - Adım 5 devam ediyor: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik) tamamlandı; gerçek belgelerle manuel test bekleniyor.
-- **Sıradaki adım:** manuel test sonuçlarının değerlendirilmesi, final kontroller ve V1 final commit'i.
+  - Adım 5 tamamlandı: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik); ardından gerçek belgelerle 11 senaryoluk manuel test matrisi (11/11 beklenen sonuç), sentetik test verilerinin temizlenmesi ve final kontroller — `pytest` 97 passed, `pip check` temiz, `alembic current` head, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz.
+- **V1 kapsamında bilinen blocker yok.** OCR fallback, kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları V1 kapsamı dışındadır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Kurulum ve Çalıştırma
 
