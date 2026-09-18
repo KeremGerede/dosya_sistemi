@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import './App.css'
 
@@ -20,8 +20,8 @@ const DETAIL_FAILED_MESSAGE = 'Belge ayrıntısı yüklenemedi. Lütfen tekrar d
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   classified: 'Sınıflandırıldı',
-  needs_review: 'İnceleme gerekiyor',
-  failed: 'İşlenemedi',
+  needs_review: 'İnceleme gerekli',
+  failed: 'Başarısız',
 }
 
 type DocumentStatus = 'classified' | 'needs_review' | 'failed'
@@ -199,71 +199,98 @@ function RecordsView() {
         <p className="empty">Henüz sınıflandırılmış belge yok. İlk belgeyi "Belge Sınıflandırma" sekmesinden yükleyebilirsiniz.</p>
       )}
 
-      <ul className="record-list">
-        {(documents ?? []).map((item) => (
-          <li key={item.document_id} className="record">
-            <div className="record-row">
-              <button
-                type="button"
-                className="record-main"
-                onClick={() => void toggle(item.document_id)}
-                aria-expanded={openId === item.document_id}
-              >
-                <span className="record-name">{item.file_name}</span>
-                <span className="record-meta">
-                  {item.document_type_name ?? 'Tür belirlenemedi'} · {item.institution_name ?? 'Kurum belirlenemedi'}
-                </span>
-                <span className="record-date">{formatDate(item.created_at)}</span>
-              </button>
-              <div className="record-actions">
-                <span className={`badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
-                <a
-                  className="download"
-                  href={`/api/documents/${item.document_id}/download`}
-                  title={`${item.file_name} dosyasını indir`}
-                >
-                  <FileTypeIcon fileType={item.file_type} />
-                  <span className="visually-hidden">{item.file_name} dosyasını indir</span>
-                </a>
-              </div>
-            </div>
+      {(documents ?? []).length > 0 && (
+        <table className="records-table">
+          <thead>
+            <tr>
+              <th scope="col">Belge Adı</th>
+              <th scope="col">Gideceği Kurum</th>
+              <th scope="col">Durum</th>
+              <th scope="col">Tarih</th>
+              <th scope="col" className="col-file">Dosya</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(documents ?? []).map((item) => (
+              <Fragment key={item.document_id}>
+                <tr className={openId === item.document_id ? 'open' : undefined}>
+                  <td data-label="Belge Adı">
+                    {/* Detayı yalnızca bu buton açar; indirme ayrı hücrede olduğundan tıklamalar çakışmaz. */}
+                    <button
+                      type="button"
+                      className="record-main"
+                      onClick={() => void toggle(item.document_id)}
+                      aria-expanded={openId === item.document_id}
+                    >
+                      <span className="chevron" aria-hidden="true" />
+                      {/* Tam ad DOM içinde kalır; kısaltma yalnızca görseldir, title fare kullanıcısı içindir. */}
+                      <span className="record-name" title={item.file_name}>
+                        {item.file_name}
+                      </span>
+                    </button>
+                  </td>
+                  <td data-label="Gideceği Kurum" className="col-institution">
+                    {item.institution_name ?? 'Belirlenemedi'}
+                  </td>
+                  <td data-label="Durum">
+                    <span className={`badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
+                  </td>
+                  <td data-label="Tarih" className="record-date">
+                    {formatDate(item.created_at)}
+                  </td>
+                  <td data-label="Dosya" className="col-file">
+                    <a
+                      className="download"
+                      href={`/api/documents/${item.document_id}/download`}
+                      title={`${item.file_name} dosyasını indir`}
+                    >
+                      <FileTypeIcon fileType={item.file_type} />
+                      <span className="visually-hidden">{item.file_name} dosyasını indir</span>
+                    </a>
+                  </td>
+                </tr>
 
-            {(item.summary !== null ||
-              item.sender_name !== null ||
-              item.sender_institution !== null ||
-              (item.status === 'needs_review' && item.review_reason !== null)) && (
-              <div className="record-body">
-                {item.summary !== null && <p className="record-summary">{item.summary}</p>}
+                {openId === item.document_id && (
+                  <tr className="detail-row">
+                    <td colSpan={5}>
+                      <div className="record-detail">
+                        {item.summary !== null && <p className="record-summary">{item.summary}</p>}
 
-                {(item.sender_name !== null || item.sender_institution !== null) && (
-                  <p className="record-sender">
-                    <strong>Gönderen:</strong>{' '}
-                    {[item.sender_name, item.sender_institution].filter((value) => value !== null).join(' · ')}
-                  </p>
+                        {(item.sender_name !== null || item.sender_institution !== null) && (
+                          <p className="record-sender">
+                            <strong>Gönderen:</strong>{' '}
+                            {[item.sender_name, item.sender_institution].filter((value) => value !== null).join(' · ')}
+                          </p>
+                        )}
+
+                        {item.status === 'needs_review' && item.review_reason !== null && (
+                          <p className="review-reason">
+                            <strong>İnceleme nedeni:</strong> {item.review_reason}
+                          </p>
+                        )}
+
+                        {detailLoading && (
+                          <p className="status" role="status">
+                            Belge metni yükleniyor...
+                          </p>
+                        )}
+                        {detail !== null && (
+                          <>
+                            <h3>Çıkarılan metin</h3>
+                            <pre className="extracted-text">
+                              {detail.extracted_text ?? 'Bu belgeden metin çıkarılamadı.'}
+                            </pre>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
                 )}
-
-                {item.status === 'needs_review' && item.review_reason !== null && (
-                  <p className="review-reason">
-                    <strong>İnceleme nedeni:</strong> {item.review_reason}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {openId === item.document_id && (
-              <div className="record-detail">
-                {detailLoading && <p className="status" role="status">Belge metni yükleniyor...</p>}
-                {detail !== null && (
-                  <>
-                    <h3>Çıkarılan metin</h3>
-                    <pre className="extracted-text">{detail.extracted_text ?? 'Bu belgeden metin çıkarılamadı.'}</pre>
-                  </>
-                )}
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }

@@ -381,9 +381,20 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Erişilebilirlik korundu: `label`/`for`, `aria-describedby`, `role="status"`, `aria-live="polite"`, sekmelerde `aria-current`, kayıtlarda `aria-expanded`, indirme bağlantısında ekran okuyucu metni, `h1 → h2 → h3` sırası.
 - [x] Doğrulama: `npm run build` ve `npm run lint` temiz; `pytest` 133 passed; `git diff --check` temiz. Tarayıcıda boş ekran, dosya seçimi, yükleniyor, `classified`, `needs_review`, hata (502), kayıt listesi, detay aç/kapat, gerçek indirme (200 · `application/pdf` · orijinal dosya adı), boş liste ve 375 px dar ekran kontrol edildi; konsol hatası yok, dar ekranda yatay kaydırma yok (375 = 375). Uzun dosya adı, uzun özet ve uzun çıkarılan metin taşma yapmıyor. Gerçek Gemini çağrısı yapılmadı; sentetik kayıtlar silindi (`documents` 0, storage yalnız `.gitkeep`).
 
+**V1.2 · Adım 3 devamı — Kayıtlar tablo düzeni (2026-09-18)**
+
+- [x] Yalnızca `RecordsView` görünümü: kart listesi gerçek bir tabloya çevrildi. Sütunlar: Belge Adı · Gideceği Kurum · Durum · Tarih · Dosya. Backend, API, DB, prompt ve OCR'a dokunulmadı; yeni bağımlılık, router veya UI kütüphanesi eklenmedi.
+- [x] Belge adı hücresindeki buton detayı açar (`aria-expanded`, açılış yönünü gösteren ok); indirme ayrı hücrede olduğu için tıklamalar çakışmıyor — doğrulandı, indirmeye tıklamak `aria-expanded` değerlerini değiştirmiyor.
+- [x] Uzun dosya adları `table-layout: fixed` + ellipsis ile kısaltılıyor; tam ad DOM'da kaldığı için ekran okuyucuya eksiksiz geçiyor, fare için `title` var. Kurum boşsa "Belirlenemedi".
+- [x] Durum etiketleri güncellendi: `classified` → "Sınıflandırıldı" (yeşil), `needs_review` → "İnceleme gerekli" (sarı), `failed` → "Başarısız" (kırmızı).
+- [x] Detay, satırın altında tam genişlikte genişleyen ayrı bir satır. Özet, gönderen bilgisi, inceleme nedeni ve çıkarılan metin artık bu panelde toplandı (önceden özet/gönderen/inceleme nedeni satırda hep görünüyordu; tablo düzeninde sütun olmadığı için detaya taşındı).
+- [x] Dar ekranda (≤ 45 rem) satırlar etiketli dikey bloklara dönüşüyor; masaüstünde tablo korunuyor.
+- [x] Düzeltilen iki hata: uzun dosya adı `nowrap` ile tabloyu konteynerin dışına taşırıyordu (1242 px > 816 px, sayfada yatay kayma) — `table-layout: fixed` ve yüzdelik sütun genişlikleriyle giderildi; DOCX indirme rozeti PDF'ten geniş olduğu için dosya sütununu 3 px taşıyordu — sütun %9'dan %13'e çıkarıldı.
+- [x] Doğrulama: `npm run build`, `npm run lint`, `pytest` 133 passed, `git diff --check` temiz. Tarayıcıda 5 kayıtla `classified`/`needs_review`/`failed`, uzun dosya adı, kurumu boş kayıt, detay aç/kapat, PDF ve DOCX indirme (200 · doğru media type) ve 375 px dar ekran kontrol edildi; konsol hatası yok, yatay kayma yok. Sınıflandırma görünümü ve erişilebilirlik özellikleri değişmedi. Gerçek Gemini çağrısı yapılmadı.
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1, Adım 2 ve Adım 3 (frontend polish) tamamlandı; Adım 3 commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1, Adım 2 ve Adım 3 (frontend polish + Kayıtlar tablo düzeni) tamamlandı; tablo düzeni commit bekliyor. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
