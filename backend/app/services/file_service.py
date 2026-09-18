@@ -103,9 +103,10 @@ def delete_file(file_reference: str) -> None:
 def extract_text(content: bytes, file_type: str) -> str:
     """Normalize edilmiş TAM metni döndürür (50.000 karakter kesmesi yapılmaz).
 
-    PDF'te gömülü metin MIN_TEXT_LENGTH'in altında kalırsa taranmış belge sayılır ve OCR fallback denenir
-    (D-042). OCR yapılandırılmamışsa veya hata verirse gömülü metin olduğu gibi döner; yetersizliğe
-    check_text_length karar verir, yani mevcut failed davranışı değişmez.
+    PDF'te OCR kararı sayfa sayfa verilir (D-003, D-042): kendi metni MIN_TEXT_LENGTH'in altında kalan
+    sayfalar OCR'lanır, diğerleri gömülü metniyle kalır. OCR yapılandırılmamışsa veya hata verirse o
+    sayfanın gömülü metni kullanılır; yetersizliğe check_text_length karar verir, yani mevcut failed
+    davranışı değişmez.
     """
     if file_type not in FILE_TYPES:
         raise ValueError(f"Geçersiz file_type: {file_type!r}")
@@ -113,37 +114,42 @@ def extract_text(content: bytes, file_type: str) -> str:
         raw_text = _extract_pdf_text(content) if file_type == "pdf" else _extract_docx_text(content)
     except Exception as exc:  # bozuk, şifreli veya okunamayan dosya
         raise TextExtractionError(f"{file_type} metni çıkarılamadı: {exc}") from exc
-    text = normalize_text(raw_text)
-    if file_type == "pdf" and len(text) < MIN_TEXT_LENGTH:
-        text = _ocr_pdf_text(content) or text
-    return text
-
-
-def _ocr_pdf_text(content: bytes) -> str:
-    """Taranmış PDF'i Tesseract ile okur; yapılandırılmamışsa veya hata verirse boş metin döner.
-
-    Hata yükseltmez: OCR bir iyileştirmedir, başarısızlığı belgeyi "metin çıkarılamadı" yoluna bırakır.
-    """
-    if not settings.TESSDATA_PREFIX:
-        logger.warning("TESSDATA_PREFIX tanımlı değil; taranmış PDF için OCR atlanıyor.")
-        return ""
-    try:
-        with pymupdf.open(stream=content, filetype="pdf") as pdf:
-            pages = []
-            for page in pdf:
-                textpage = page.get_textpage_ocr(
-                    language=OCR_LANGUAGE, dpi=OCR_DPI, full=True, tessdata=settings.TESSDATA_PREFIX
-                )
-                pages.append(page.get_text(textpage=textpage))
-    except Exception as exc:  # Tesseract yapılandırması, dil dosyası veya sayfa render hatası
-        logger.warning("OCR başarısız (%s); belge gömülü metniyle değerlendiriliyor.", type(exc).__name__)
-        return ""
-    return normalize_text("\n".join(pages))
+    return normalize_text(raw_text)
 
 
 def _extract_pdf_text(content: bytes) -> str:
+    """Sayfalar belge sırasıyla okunur; her sayfa kendi metnine göre ayrı değerlendirilir."""
     with pymupdf.open(stream=content, filetype="pdf") as pdf:
-        return "\n".join(page.get_text() for page in pdf)
+        return "\n".join(_page_text(page) for page in pdf)
+
+
+def _page_text(page) -> str:
+    """Sayfanın gömülü metni yeterliyse onu, değilse yalnızca o sayfanın OCR'ını döndürür.
+
+    Hybrid PDF'lerde kapak sayfasının metni, taranmış sayfaların OCR'lanmasını engellemez.
+    """
+    embedded = page.get_text()
+    if len(normalize_text(embedded)) >= MIN_TEXT_LENGTH:
+        return embedded
+    return _ocr_page_text(page) or embedded
+
+
+def _ocr_page_text(page) -> str:
+    """Tek sayfayı Tesseract ile okur; yapılandırılmamışsa veya hata verirse boş metin döner.
+
+    Hata yükseltmez: OCR bir iyileştirmedir, başarısızlığı sayfayı gömülü metnine bırakır.
+    """
+    if not settings.TESSDATA_PREFIX:
+        logger.warning("TESSDATA_PREFIX tanımlı değil; taranmış sayfa için OCR atlanıyor.")
+        return ""
+    try:
+        textpage = page.get_textpage_ocr(
+            language=OCR_LANGUAGE, dpi=OCR_DPI, full=True, tessdata=settings.TESSDATA_PREFIX
+        )
+        return page.get_text(textpage=textpage)
+    except Exception as exc:  # Tesseract yapılandırması, dil dosyası veya sayfa render hatası
+        logger.warning("Sayfa OCR'ı başarısız (%s); sayfa gömülü metniyle değerlendiriliyor.", type(exc).__name__)
+        return ""
 
 
 def _extract_docx_text(content: bytes) -> str:

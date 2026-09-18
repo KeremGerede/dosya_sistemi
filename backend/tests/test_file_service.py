@@ -1,4 +1,5 @@
 import io
+import logging
 import uuid
 import zipfile
 
@@ -9,6 +10,7 @@ import pytest
 from app.services import file_service
 from app.services.file_service import (
     MAX_FILE_SIZE,
+    MIN_TEXT_LENGTH,
     FileTooLargeError,
     TextExtractionError,
     UnsupportedFileTypeError,
@@ -236,27 +238,27 @@ def test_file_size_limit_is_50_mb():
 
 
 def test_pdf_with_enough_text_does_not_use_ocr(monkeypatch):
-    def fail_if_called(content):
-        raise AssertionError("Yeterli metni olan PDF'te OCR çağrılmamalı.")
+    def fail_if_called(page):
+        raise AssertionError("Yeterli metni olan sayfada OCR çağrılmamalı.")
 
-    monkeypatch.setattr(file_service, "_ocr_pdf_text", fail_if_called)
+    monkeypatch.setattr(file_service, "_ocr_page_text", fail_if_called)
     assert extract_text(make_pdf("Bu dilekçe yeterli uzunlukta metin içerir."), "pdf") == (
         "Bu dilekçe yeterli uzunlukta metin içerir."
     )
 
 
 def test_pdf_without_enough_text_uses_ocr_fallback(monkeypatch):
-    monkeypatch.setattr(file_service, "_ocr_pdf_text", lambda content: "OCR ile okunan şikayet dilekçesi.")
+    monkeypatch.setattr(file_service, "_ocr_page_text", lambda page: "OCR ile okunan şikayet dilekçesi.")
     assert extract_text(make_pdf(""), "pdf") == "OCR ile okunan şikayet dilekçesi."
 
 
 def test_ocr_output_long_enough_passes_length_check(monkeypatch):
-    monkeypatch.setattr(file_service, "_ocr_pdf_text", lambda content: "OCR ile okunan yeterli metin.")
+    monkeypatch.setattr(file_service, "_ocr_page_text", lambda page: "OCR ile okunan yeterli metin.")
     check_text_length(extract_text(make_pdf(""), "pdf"))  # hata yükselmemeli
 
 
 def test_ocr_output_still_too_short_is_rejected(monkeypatch):
-    monkeypatch.setattr(file_service, "_ocr_pdf_text", lambda content: "kısa")
+    monkeypatch.setattr(file_service, "_ocr_page_text", lambda page: "kısa")
     text = extract_text(make_pdf(""), "pdf")
     assert text == "kısa"
     with pytest.raises(TextExtractionError):
@@ -298,9 +300,122 @@ def test_ocr_is_called_with_turkish_and_300_dpi(monkeypatch):
 
 
 def test_docx_never_uses_ocr(monkeypatch):
-    def fail_if_called(content):
+    def fail_if_called(page):
         raise AssertionError("DOCX için OCR çağrılmamalı.")
 
-    monkeypatch.setattr(file_service, "_ocr_pdf_text", fail_if_called)
+    monkeypatch.setattr(file_service, "_ocr_page_text", fail_if_called)
     with pytest.raises(TextExtractionError):
         check_text_length(extract_text(make_docx("kısa"), "docx"))
+
+
+# --- Sayfa düzeyinde OCR kararı (V1.2 · P1 düzeltmesi) ---
+
+OCR_PAGE_TEXT = "Bu sayfa OCR ile okunan taranmis dilekce metnidir."
+
+
+def make_mixed_pdf(*pages: tuple[str, str]) -> bytes:
+    """pages: ("text", içerik) gerçek text layer, ("image", içerik) metin katmanı olmayan taranmış sayfa."""
+    with pymupdf.open() as pdf:
+        for kind, content in pages:
+            if kind == "text":
+                page = pdf.new_page()
+                if content:
+                    page.insert_text((72, 72), content)
+                continue
+            with pymupdf.open() as source:  # önce çiz, sonra yalnızca görüntü olarak göm
+                drawn = source.new_page()
+                drawn.insert_text((72, 72), content)
+                png = drawn.get_pixmap(dpi=72).tobytes("png")
+            page = pdf.new_page()
+            page.insert_image(page.rect, stream=png)
+        return pdf.tobytes()
+
+
+@pytest.fixture
+def ocr_spy(monkeypatch):
+    """_ocr_page_text yerine geçer; OCR'lanan sayfa numaralarını kaydeder."""
+    pages = []
+
+    def fake_ocr(page):
+        pages.append(page.number)
+        return OCR_PAGE_TEXT
+
+    monkeypatch.setattr(file_service, "_ocr_page_text", fake_ocr)
+    return pages
+
+
+def test_all_text_pages_never_trigger_ocr(ocr_spy):
+    content = make_mixed_pdf(("text", "Birinci sayfanin yeterli uzunlukta metni."),
+                             ("text", "Ikinci sayfanin yeterli uzunlukta metni."))
+
+    text = extract_text(content, "pdf")
+
+    assert ocr_spy == []  # hiçbir sayfada OCR yok
+    assert "Birinci sayfanin" in text and "Ikinci sayfanin" in text
+
+
+def test_single_image_only_page_triggers_ocr(ocr_spy):
+    """V1.1 davranışı korunur: metinsiz tek sayfalık PDF OCR'lanır."""
+    text = extract_text(make_mixed_pdf(("image", "Taranmis dilekce metni")), "pdf")
+
+    assert ocr_spy == [0]
+    assert text == OCR_PAGE_TEXT
+
+
+def test_hybrid_pdf_ocrs_only_the_image_page_and_keeps_order(ocr_spy):
+    """P1: kapak sayfasının metni, taranmış ikinci sayfanın OCR'lanmasını engellememeli."""
+    cover = "EVRAK KAYIT FORMU Bu belge resmi evrak kayit sistemine alinmistir."
+    content = make_mixed_pdf(("text", cover), ("image", "Asil dilekce taranmis sayfada"))
+
+    text = extract_text(content, "pdf")
+
+    assert ocr_spy == [1]  # yalnızca 2. sayfa
+    assert cover.split()[0] in text and OCR_PAGE_TEXT in text
+    assert text.index("EVRAK") < text.index(OCR_PAGE_TEXT)  # belge sırası korunur
+
+
+def test_multi_page_hybrid_ocrs_only_image_pages(ocr_spy):
+    content = make_mixed_pdf(
+        ("text", "Birinci sayfanin yeterli uzunlukta metni."),
+        ("image", "Ikinci sayfa taranmis"),
+        ("text", "Ucuncu sayfanin yeterli uzunlukta metni."),
+        ("image", "Dorduncu sayfa taranmis"),
+    )
+
+    text = extract_text(content, "pdf")
+
+    assert ocr_spy == [1, 3]  # yalnızca görüntü sayfaları, sırasıyla
+    assert text.count(OCR_PAGE_TEXT) == 2
+    assert "Birinci sayfanin" in text and "Ucuncu sayfanin" in text
+
+
+@pytest.mark.parametrize(
+    "page_text, ocr_expected",
+    [("123456789", True), ("1234567890", False)],  # 9 karakter -> OCR, 10 karakter -> OCR yok
+)
+def test_page_level_threshold_is_min_text_length(ocr_spy, page_text, ocr_expected):
+    assert len(page_text) == (MIN_TEXT_LENGTH - 1 if ocr_expected else MIN_TEXT_LENGTH)
+
+    extract_text(make_mixed_pdf(("text", page_text)), "pdf")
+
+    assert ocr_spy == ([0] if ocr_expected else [])
+
+
+def test_hybrid_page_ocr_failure_falls_back_to_embedded_text(monkeypatch, caplog):
+    """OCR hatası yeni hata sınıfı üretmez; sayfa gömülü metnine düşer, teknik detay sızmaz."""
+    secret = "TARANMIS_SAYFA_ICERIGI"
+    cover = "EVRAK KAYIT FORMU Bu belge resmi evrak kayit sistemine alinmistir."
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(f"tesseract patladi: {secret}")
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", boom)
+
+    with caplog.at_level(logging.WARNING):
+        text = extract_text(make_mixed_pdf(("text", cover), ("image", secret)), "pdf")
+
+    assert "EVRAK" in text  # kapak metni korunur, istek hata vermez
+    assert secret not in text
+    assert secret not in caplog.text  # ham hata mesajı ve belge metni loglanmaz
+    assert "RuntimeError" in caplog.text  # güvenli bağlam: yalnızca hata türü

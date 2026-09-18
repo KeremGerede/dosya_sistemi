@@ -22,15 +22,15 @@
 - **Gerekçe:** Hızlı, yaygın kullanılan ve ek sistem bağımlılığı gerektirmeyen kütüphaneler.
 
 ### D-003 — Taranmış PDF'ler için OCR fallback (V1.1)
-- **Karar:** PDF'te gömülü metin minimum uzunluğa (D-026) ulaşmazsa belge taranmış sayılır ve OCR ile yeniden okunur (teknik ayrıntı: D-042). DOCX'te OCR yapılmaz. OCR'dan sonra metin hâlâ kısaysa veya OCR kullanılamıyorsa belge `failed` olarak kaydedilir.
-- **Gerekçe:** V1'de OCR kapsam dışıydı ve taranmış dilekçeler doğrudan `failed` oluyordu. Lokal OCR, ek servis ya da API maliyeti getirmeden bu belgeleri sınıflandırılabilir hale getirir; başarısız olduğunda akış V1'deki davranışa döner.
+- **Karar:** PDF'te OCR kararı **sayfa sayfa** verilir: kendi metni minimum uzunluğa (D-026) ulaşmayan her sayfa taranmış sayılıp yalnızca o sayfa OCR ile okunur, diğer sayfalar gömülü metniyle kalır (teknik ayrıntı: D-042). Sayfaların metni belge sırasıyla birleştirilir. DOCX'te OCR yapılmaz. Birleşik metin hâlâ kısaysa veya OCR kullanılamıyorsa belge `failed` olarak kaydedilir.
+- **Gerekçe:** V1'de OCR kapsam dışıydı ve taranmış dilekçeler doğrudan `failed` oluyordu. Lokal OCR, ek servis ya da API maliyeti getirmeden bu belgeleri sınıflandırılabilir hale getirir; başarısız olduğunda akış V1'deki davranışa döner. Karar belge düzeyinde verildiğinde hybrid PDF'ler kaçıyordu: kapak/evrak sayfasının metni eşiği geçtiği için taranmış asıl dilekçe hiç okunmuyor ve belge emin şekilde yanlış kuruma atanabiliyordu (V1.2 benchmarkında kanıtlandı). Sayfa düzeyi karar bu kaybı kapatır ve tamamen metin tabanlı PDF'lerde hiç OCR çağrısı üretmez.
 
 ### D-042 — OCR fallback: PyMuPDF'in yerleşik Tesseract'ı, `tur`, 300 dpi
 - **Karar:**
-  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle yapılır. `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
+  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle **sayfa başına** yapılır (D-003). `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
   - Dil `tur`, çözünürlük 300 dpi. İkisi de `file_service` içinde tek yerde sabittir. Belgeler Türkçe olduğu için İngilizce model eklenmez: gerçekçi bozulma testlerinde `tur+eng` Türkçe karakterleri daha çok kaybediyordu (özellikle `Ç→C`) ve hiçbir senaryoda öne geçmedi.
   - Tesseract dil dosyalarının klasörü `TESSDATA_PREFIX` ortam değişkeninden okunur ve OCR çağrısına doğrudan geçilir. Değişken **opsiyoneldir**: tanımlı değilse OCR atlanır. Kodda platforma özel kurulum yolu yazılmaz.
-  - OCR hatası yükseltilmez: loglanır ve belge gömülü metniyle değerlendirilir; böylece mevcut `failed` + `422` davranışı korunur.
+  - OCR hatası yükseltilmez: loglanır ve **o sayfa** gömülü metniyle değerlendirilir; diğer sayfalar etkilenmez ve mevcut `failed` + `422` davranışı korunur.
 - **Gerekçe:** PyMuPDF zaten bir bağımlılık ve Tesseract'ı derlenmiş olarak içeriyor; yeni Python paketi veya PATH'te `tesseract` binary'si gerekmiyor. OCR bir iyileştirme olduğu için başarısızlığı yeni bir hata sınıfı doğurmamalı. Ortam değişkeni, kurulum yolunun makineden makineye değişmesine izin verir.
 
 ### D-004 — Hatalı dosya ve `failed` kayıt davranışı

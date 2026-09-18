@@ -49,7 +49,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu sınırın altında kalınırsa belge taranmış sayılır ve **OCR fallback** devreye girer (`tur`, 300 dpi). OCR'dan sonra da 10 karakterin altındaysa belge `failed` olarak kaydedilir.
+- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 300 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir.
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
 - Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
@@ -248,7 +248,7 @@ npm run dev
 4. Sonuçta **Belge Türü**, **Gönderileceği Kurum** ve **Belge Özeti** görünür; belgede açıkça yazıyorsa **Gönderen Kişi** ve **Gönderen Kurum** satırları da eklenir (yazmıyorsa bu satırlar hiç gösterilmez). Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
 5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki PDF/DOCX aksiyonuyla orijinal dosyanın indirilmesi.
 
-- **Taranmış PDF'ler:** gömülü metin yetersizse OCR fallback devreye girer; bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
+- **Taranmış PDF'ler:** bir sayfanın gömülü metni yetersizse yalnızca o sayfada OCR fallback devreye girer (metin sayfalarıyla taranmış sayfaları karışık taşıyan PDF'ler dahil); bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
 - Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
 - API'yi doğrudan denemek için Swagger UI'ı ya da şu komutu kullanabilirsiniz: `curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify`
 
