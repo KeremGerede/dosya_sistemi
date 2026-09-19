@@ -30,6 +30,12 @@ MEDIA_TYPES = {
 }
 OCR_LANGUAGE = "tur"  # taranmış PDF fallback'i (D-042)
 OCR_DPI = 300
+OCR_COVERAGE_MIN = 0.5  # sayfa alanının bu oranı görüntüyse sayfa yapısal olarak taranmış sayılır (D-003)
+OCR_SHORT_TEXT_MAX = 200  # taranmış sayfada bu uzunluğa kadar gömülü metin OCR ile birlikte değerlendirilir
+
+# Gömülü metin ile OCR metnini karşılaştırmak için: Türkçe harfler sadeleştirilir, 3+ karakterli parçalar alınır.
+_ASCII_FOLD = str.maketrans("çÇğĞıIİöÖşŞüÜâÂîÎûÛ", "ccggiiioossuuaaiiuu")
+_TOKEN_PATTERN = re.compile(r"[0-9a-z]{3,}")
 
 _DOCX_MAIN_CONTENT_TYPE = b"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 
@@ -124,14 +130,47 @@ def _extract_pdf_text(content: bytes) -> str:
 
 
 def _page_text(page) -> str:
-    """Sayfanın gömülü metni yeterliyse onu, değilse yalnızca o sayfanın OCR'ını döndürür.
+    """Sayfanın gömülü metnini, gerekiyorsa o sayfanın OCR'ını döndürür.
 
-    Hybrid PDF'lerde kapak sayfasının metni, taranmış sayfaların OCR'lanmasını engellemez.
+    Hybrid PDF'lerde kapak sayfasının metni, taranmış sayfaların OCR'lanmasını engellemez (D-003).
+    Yapısal olarak görüntüye dayanan ve gömülü metni kısa kalan sayfalarda OCR da çalıştırılır: böylece
+    bozuk ama MIN_TEXT_LENGTH'i geçen bir metin katmanı görüntüdeki asıl belgeyi gizleyemez.
     """
     embedded = page.get_text()
-    if len(normalize_text(embedded)) >= MIN_TEXT_LENGTH:
+    normalized = normalize_text(embedded)
+    if len(normalized) < MIN_TEXT_LENGTH:
+        return _ocr_page_text(page) or embedded
+    if len(normalized) > OCR_SHORT_TEXT_MAX or _image_coverage(page) < OCR_COVERAGE_MIN:
         return embedded
-    return _ocr_page_text(page) or embedded
+    return _merge_page_text(embedded, _ocr_page_text(page))
+
+
+def _image_coverage(page) -> float:
+    """Sayfa alanının görüntülerle kaplı oranı; taranmış sayfayı dijital sayfadan ayırır."""
+    page_area = abs(page.rect)
+    if not page_area:
+        return 0.0
+    covered = sum(abs(pymupdf.Rect(image["bbox"]) & page.rect) for image in page.get_image_info())
+    return min(covered / page_area, 1.0)
+
+
+def _merge_page_text(embedded: str, ocr: str) -> str:
+    """OCR metni gömülü metni zaten kapsıyorsa yalnızca OCR'ı, kapsamıyorsa ikisini de döndürür.
+
+    Aynı içerik iki kez yazılmaz; gömülü metindeki benzersiz bilgi (evrak no, tarih vb.) kaybolmaz.
+    Kelime benzeri parçası olmayan bozuk katmanlar korunacak bilgi taşımadığı için OCR'a bırakılır.
+    """
+    if not ocr:
+        return embedded
+    ocr_tokens = set(_comparison_tokens(ocr))
+    if all(token in ocr_tokens for token in _comparison_tokens(embedded)):
+        return ocr
+    return f"{embedded}\n{ocr}"
+
+
+def _comparison_tokens(text: str) -> list[str]:
+    """Karşılaştırma için kelime benzeri parçalar; OCR'ın Türkçe karakter kayıpları sadeleştirilir."""
+    return _TOKEN_PATTERN.findall(text.translate(_ASCII_FOLD).lower())
 
 
 def _ocr_page_text(page) -> str:

@@ -18,7 +18,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 2. Kabul kontrolü: dosya PDF veya DOCX değilse ya da 50 MB'ı aşıyorsa **kayıt oluşturmadan** 4xx ile reddedilir.
 3. Belge için `document_id` (UUID) üretilir; orijinal dosya `backend/storage/<document_id>.<uzanti>` olarak kaydedilir.
 4. Metin çıkarılır: PDF → PyMuPDF, DOCX → python-docx.
-5. PDF'te her sayfa ayrı değerlendirilir: kendi metni 10 karakterden kısa olan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** çalışır (`tur`, 300 dpi; D-003, D-042). Sayfa metinleri belge sırasıyla birleştirilir. Çıkarım hata verirse ya da birleşik metin 10 karakterden kısaysa belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
+5. PDF'te her sayfa ayrı değerlendirilir ve yalnızca gereken sayfalarda **OCR fallback** çalışır (`tur`, 300 dpi; D-003, D-042): kendi metni 10 karakterden kısa olan sayfalar taranmış sayılır; ayrıca alanının en az %50'si görüntü olan ve gömülü metni en fazla 200 karakter kalan sayfalar da OCR'lanır (bozuk metin katmanı olasılığı). İkinci durumda gömülü metin ile OCR metni karşılaştırılır: OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa yalnızca OCR metni, içermiyorsa ikisi birden kullanılır. Sayfa metinleri belge sırasıyla birleştirilir. Çıkarım hata verirse ya da birleşik metin 10 karakterden kısaysa belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
 6. Metnin en fazla ilk 50.000 karakteri, belge türü ve kurum kataloglarıyla birlikte **tek bir** Gemini çağrısına gönderilir; yanıt Pydantic şemasına uygun structured output olarak alınır. Geçici hatalarda (network, timeout, `429`, `5xx`, geçersiz model çıktısı) aynı çağrı toplam en fazla 3 kez denenir.
 7. Backend çıktıyı kataloglara karşı doğrular ve `status` değerini belirler. Gemini çağrısı sonuç vermezse belge `failed` olur.
 8. Dosya referansı, çıkarılan metin ve sınıflandırma sonucu `documents` tablosuna yazılır.
@@ -81,7 +81,7 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 - Daha basit bir alternatif varsa tercih edilir (ör. `gemini_client.py` tek fonksiyondan ibaret kalırsa `classification_service.py` içine katlanabilir).
 - Endpoint doğrudan SQLAlchemy session kullanabilir; repository, factory veya ek servis katmanı eklenmez.
 - Yeni bir soyutlama katmanı için somut gerekçe ve `DECISIONS.md` kaydı gerekir.
-- Sayısal sınırlar (50 MB, 10 karakter, 50.000 karakter, 3 deneme, 30 sn timeout, 1/2 sn bekleme) kodda tek bir yerde tanımlanır. Tek istisna: 50 MB sınırı D-040 gereği frontend ön kontrolünde de tanımlıdır; ikisi birlikte güncellenir.
+- Sayısal sınırlar (50 MB, 10 karakter, %50 görüntü kapsaması, 200 karakter, 50.000 karakter, 3 deneme, 30 sn timeout, 1/2 sn bekleme) kodda tek bir yerde tanımlanır. Tek istisna: 50 MB sınırı D-040 gereği frontend ön kontrolünde de tanımlıdır; ikisi birlikte güncellenir.
 
 **Geliştirme ortamı** (D-036):
 
@@ -106,7 +106,8 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 
 **Metin çıkarımı ve yeterlilik:**
 
-- PDF'te bir sayfanın gömülü metni yetersizse yalnızca o sayfada OCR fallback devreye girer (D-003, D-042); böylece taranmış PDF'ler ve metin sayfalarıyla taranmış sayfaları karışık taşıyan hybrid PDF'ler de okunabilir. Tamamen metin tabanlı PDF'lerde OCR çağrısı yapılmaz. DOCX'te OCR yapılmaz.
+- PDF'te bir sayfanın gömülü metni yetersizse ya da sayfa yapısal olarak taranmışken (alanının en az %50'si görüntü) gömülü metni 200 karakterin altında kalıyorsa yalnızca o sayfada OCR fallback devreye girer (D-003, D-042); böylece taranmış PDF'ler, hybrid PDF'ler ve bozuk metin katmanı taşıyan taramalar da okunabilir. Tamamen metin tabanlı PDF'lerde OCR çağrısı yapılmaz. DOCX'te OCR yapılmaz.
+- Aynı sayfada hem gömülü metin hem OCR metni varsa ikisi deterministik olarak karşılaştırılır (D-003): OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa aynı içerik tekrar yazılmaz, içermiyorsa iki metin de korunur. Karşılaştırma için ek LLM çağrısı yapılmaz.
 - OCR, `TESSDATA_PREFIX` tanımlı değilse veya hata verirse atlanır; belge bu durumda V1'deki gibi "yeterli metin yok" sayılır.
 - DOCX'te paragrafların yanında tablo hücrelerindeki metin de alınır (python-docx `paragraphs` tabloları kapsamaz).
 - Normalizasyon: ardışık boşluk karakterleri (boşluk, sekme, satır sonu) tek boşluğa indirilir, baştaki ve sondaki boşluklar kırpılır.
@@ -312,7 +313,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 ## 11. MVP kapsamı
 
 - En fazla 50 MB metin tabanlı PDF ve DOCX yükleme; PyMuPDF ve python-docx ile metin çıkarımı
-- Normalize edilmiş metin için 10 karakter alt sınırı; PDF'te sınırın altında kalan **sayfalarda** `tur` / 300 dpi OCR fallback
+- Normalize edilmiş metin için 10 karakter alt sınırı; PDF'te sınırın altında kalan **sayfalarda** ve görüntüye dayalı olup metni 200 karakteri geçmeyen sayfalarda `tur` / 300 dpi OCR fallback; aynı sayfada gömülü metin ile OCR metninin tekrarsız birleştirilmesi
 - Orijinal dosyanın storage alanında, çıkarılan metnin veritabanında saklanması
 - Metnin ilk 50.000 karakteriyle tek Gemini çağrısı; 30 sn timeout, geçici hatalarda toplam en fazla 3 deneme
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi

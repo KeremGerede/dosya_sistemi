@@ -419,3 +419,219 @@ def test_hybrid_page_ocr_failure_falls_back_to_embedded_text(monkeypatch, caplog
     assert secret not in text
     assert secret not in caplog.text  # ham hata mesajı ve belge metni loglanmaz
     assert "RuntimeError" in caplog.text  # güvenli bağlam: yalnızca hata türü
+
+
+# --- Yapısal OCR fallback ve embedded/OCR birleştirme (V1.2 · P2) ---
+
+SCAN_OCR_TEXT = (
+    "KADIKOY BELEDIYE BASKANLIGINA Sokagimizdaki cop konteynerleri uzun suredir bosaltilmamakta, "
+    "etrafa yayilan atiklar ve koku nedeniyle rahatsizlik yasanmaktadir. Geregini arz ederim."
+)
+# Bozuk text layer: hatalı ToUnicode CMap'ten gelen, kelime içermeyen ~30 karakter (senaryo 14 ailesi).
+GARBAGE_LAYER = "¤¤ ¬¬ ¸¸ || ~~ ±± §§ ¶¶ ©© ®®"
+
+
+def make_scan_pdf(image_text: str, layer: str = "", coverage: float = 1.0) -> bytes:
+    """Taranmış sayfa: sayfanın `coverage` oranını kaplayan görüntü + isteğe bağlı gömülü metin katmanı."""
+    with pymupdf.open() as source:
+        drawn = source.new_page()
+        drawn.insert_text((72, 72), image_text)
+        png = drawn.get_pixmap(dpi=72).tobytes("png")
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        rect = page.rect
+        page.insert_image(
+            pymupdf.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + rect.height * coverage),
+            stream=png,
+            keep_proportion=False,  # kapsama oranı testte birebir ölçülebilsin
+        )
+        for row, line in enumerate(layer.splitlines()):  # tek satır sayfa kenarında kesilir
+            page.insert_text((72, 30 + row * 12), line, render_mode=3)  # tarayıcı katmanları görünmez yazılır
+        return pdf.tobytes()
+
+
+def layer_of_length(length: int) -> str:
+    """Sayfaya sığan satırlara bölünmüş, normalize edildiğinde tam `length` karakter veren metin katmanı."""
+    lines = -(-length // 50)
+    chars = length - (lines - 1)  # normalize sırasında her satır sonu tek boşluğa döner
+    size, extra = divmod(chars, lines)
+    return "\n".join("a" * (size + (1 if row < extra else 0)) for row in range(lines))
+
+
+@pytest.fixture
+def fake_ocr(monkeypatch):
+    """_ocr_page_text yerine geçer; OCR çağrılan sayfa numaralarını kaydeder, sabit metin döndürür."""
+    def install(text=SCAN_OCR_TEXT):
+        pages = []
+
+        def fake(page):
+            pages.append(page.number)
+            return text
+
+        monkeypatch.setattr(file_service, "_ocr_page_text", fake)
+        return pages
+
+    return install
+
+
+def test_scanned_page_with_broken_text_layer_is_ocred(fake_ocr):
+    """P2 / benchmark senaryo 14: 10+ karakterlik ama bozuk katman OCR'ı engellememeli."""
+    pages = fake_ocr()
+    content = make_scan_pdf("Taranmis dilekce metni", layer=GARBAGE_LAYER)
+
+    assert len(normalize_text(GARBAGE_LAYER)) >= MIN_TEXT_LENGTH  # bugünkü eşiği geçiyor
+    text = extract_text(content, "pdf")
+
+    assert pages == [0]
+    assert SCAN_OCR_TEXT in text
+
+
+def test_broken_text_layer_does_not_pollute_ocr_text(fake_ocr):
+    """M2: kelime içermeyen bozuk katman nihai metne taşınmaz."""
+    fake_ocr()
+    text = extract_text(make_scan_pdf("Taranmis dilekce metni", layer=GARBAGE_LAYER), "pdf")
+
+    assert text == SCAN_OCR_TEXT
+    assert "¤¤" not in text and "¶¶" not in text
+
+
+def test_valuable_embedded_text_is_kept_when_ocr_does_not_contain_it(fake_ocr):
+    """M1: OCR metni evrak bilgisini içermiyorsa gömülü metin korunur (bilgi kaybı yok)."""
+    fake_ocr()
+    text = extract_text(make_scan_pdf("Taranmis dilekce", layer="Evrak No: 2026/4417 Tarih: 18.09.2026"), "pdf")
+
+    assert "2026/4417" in text  # gömülü evrak bilgisi
+    assert "18.09.2026" in text
+    assert SCAN_OCR_TEXT in text  # görüntüdeki dilekçe
+    assert text.index("2026/4417") < text.index("KADIKOY")  # sayfa içi sıra korunur
+
+
+def test_embedded_text_already_read_by_ocr_is_not_duplicated(fake_ocr):
+    """M1 gerçek hayatta: OCR tüm sayfayı okuduğu için evrak bilgisini de görür; tekrar eklenmez."""
+    fake_ocr("Evrak No: 2026/4417 Tarih: 18.09.2026 " + SCAN_OCR_TEXT)
+    text = extract_text(make_scan_pdf("Taranmis dilekce", layer="Evrak No: 2026/4417 Tarih: 18.09.2026"), "pdf")
+
+    assert text.count("2026/4417") == 1  # duplicate yok
+    assert "18.09.2026" in text and SCAN_OCR_TEXT in text  # iki kaynağın bilgisi de var
+
+
+def test_identical_embedded_and_ocr_content_is_written_once(fake_ocr):
+    """M3: aynı içerik hem katmanda hem görüntüdeyse tek kez yazılır (Türkçe karakter farkına rağmen)."""
+    fake_ocr("Sikayet Dilekcesi " + SCAN_OCR_TEXT)
+    text = extract_text(make_scan_pdf("Sikayet Dilekcesi", layer="Sikayet Dilekçesi"), "pdf")
+
+    assert text.lower().count("ikayet") == 1
+    assert SCAN_OCR_TEXT in text
+
+
+def test_partial_overlap_keeps_unique_information_from_both_sources(fake_ocr):
+    """M4: ortak kısım tekrar edilmez, her iki kaynağın benzersiz bilgisi korunur."""
+    fake_ocr("FEN ISLERI MUDURLUGUNE, Mahallemizde bulunan yol cukurunun onarilmasini talep ediyorum.")
+    text = extract_text(make_scan_pdf("Yol cukuru dilekcesi", layer="Evrak No: 2026/4417 Fen Isleri Mudurlugu"), "pdf")
+
+    assert "2026/4417" in text  # yalnızca gömülü metinde
+    assert "cukurunun" in text  # yalnızca OCR metninde
+    assert text.lower().count("mudurlug") <= 2  # ortak kısım sınırsız tekrarlanmaz
+
+
+def test_letter_shaped_broken_layer_is_kept_next_to_ocr_text(fake_ocr):
+    """Bilinen sınır: harf görünümlü bozuk katman kelime ürettiği için korunur; OCR metni yine tam."""
+    fake_ocr()
+    text = extract_text(make_scan_pdf("Taranmis dilekce", layer="qwzxk jvbnm xzqwe rtyup"), "pdf")
+
+    assert SCAN_OCR_TEXT in text
+    assert "qwzxk" in text
+
+
+def test_scanned_page_with_healthy_long_text_layer_is_not_ocred(fake_ocr):
+    """Sağlıklı uzun katmanı olan tarama yeniden OCR'lanmaz."""
+    pages = fake_ocr()
+    layer = "\n".join(["Bu taranmis sayfanin metin katmani saglikli ve yeterince uzundur."] * 4)
+
+    assert len(normalize_text(layer)) > file_service.OCR_SHORT_TEXT_MAX
+    extract_text(make_scan_pdf("Taranmis dilekce", layer=layer), "pdf")
+
+    assert pages == []
+
+
+@pytest.mark.parametrize("coverage, ocr_expected", [(0.45, False), (0.55, True)])
+def test_image_coverage_threshold_decides_structural_ocr(fake_ocr, coverage, ocr_expected):
+    pages = fake_ocr()
+
+    extract_text(make_scan_pdf("Taranmis dilekce", layer=GARBAGE_LAYER, coverage=coverage), "pdf")
+
+    assert pages == ([0] if ocr_expected else [])
+    assert file_service.OCR_COVERAGE_MIN == 0.5
+
+
+@pytest.mark.parametrize("extra, ocr_expected", [(0, True), (1, False)])
+def test_short_text_threshold_decides_structural_ocr(fake_ocr, extra, ocr_expected):
+    pages = fake_ocr()
+    content = make_scan_pdf("Taranmis dilekce", layer=layer_of_length(file_service.OCR_SHORT_TEXT_MAX + extra))
+
+    with pymupdf.open(stream=content, filetype="pdf") as pdf:  # eşiğin iki yanında tam uzunluk
+        assert len(normalize_text(pdf[0].get_text())) == file_service.OCR_SHORT_TEXT_MAX + extra
+    extract_text(content, "pdf")
+
+    assert pages == ([0] if ocr_expected else [])
+    assert file_service.OCR_SHORT_TEXT_MAX == 200
+
+
+def test_digital_page_with_background_image_keeps_its_text(fake_ocr):
+    """Bilinen yanlış pozitif (filigran/arka plan): OCR tetiklense de gömülü bilgi kaybolmaz."""
+    fake_ocr("ORNEKTIR Sayi: 89-3345 Tarih: 18.09.2026")
+    text = extract_text(make_scan_pdf("ORNEKTIR", layer="Sayi: 89-3345 Tarih: 18.09.2026"), "pdf")
+
+    assert "89-3345" in text and "18.09.2026" in text
+
+
+@pytest.mark.parametrize(
+    "page_text",
+    [
+        "Evrak Kayit No: 2026/4417 Tarih: 18.09.2026",  # tarih
+        "T.C. Kimlik No: 12345678901 VKN: 1234567890",  # TCKN / VKN
+        "2026/1 1.250,00 2026/2 980,50 2026/3 12.400,00",  # sayı tablosu
+        "1. 2. 3. 4. 5. 6. 7. 8. 9. 10.",  # madde numaraları
+        "Sayfa 1 / 12 - 2026/4417",  # sayfa numarası
+        "SELECT * FROM documents WHERE id = 1;",  # kod
+    ],
+)
+def test_short_digital_pages_without_images_are_never_ocred(fake_ocr, page_text):
+    """Görüntüsü olmayan kısa dijital sayfalar içeriğine bakılmaksızın OCR'lanmaz."""
+    pages = fake_ocr()
+
+    assert extract_text(make_pdf(page_text), "pdf") == normalize_text(page_text)
+    assert pages == []
+
+
+def test_structural_ocr_failure_falls_back_to_embedded_text(monkeypatch, caplog):
+    """OCR hatası yeni hata sınıfı üretmez; sayfa gömülü metniyle devam eder, teknik detay sızmaz."""
+    secret = "TARANMIS_SAYFA_ICERIGI"
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(f"tesseract patladi: {secret}")
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", boom)
+
+    with caplog.at_level(logging.WARNING):
+        text = extract_text(make_scan_pdf(secret, layer="Evrak No: 2026/4417"), "pdf")
+
+    assert text == "Evrak No: 2026/4417"
+    assert secret not in caplog.text
+
+
+def test_document_order_is_kept_across_structural_ocr_pages(fake_ocr):
+    """Çok sayfalı belgede sayfa sırası korunur."""
+    fake_ocr()
+    with pymupdf.open() as pdf:
+        for part in (make_pdf("Birinci sayfanin yeterli uzunlukta metni."),
+                     make_scan_pdf("Taranmis sayfa", layer=GARBAGE_LAYER),
+                     make_pdf("Ucuncu sayfanin yeterli uzunlukta metni.")):
+            with pymupdf.open(stream=part, filetype="pdf") as source:
+                pdf.insert_pdf(source)
+        content = pdf.tobytes()
+
+    text = extract_text(content, "pdf")
+
+    assert text.index("Birinci") < text.index("KADIKOY") < text.index("Ucuncu")
