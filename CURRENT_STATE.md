@@ -8,6 +8,8 @@
 
 **V1.2 üzerinde çalışılıyor — kayıt görünürlüğü.** V1.1 kapandı: taranmış PDF'ler için lokal Tesseract OCR fallback'i (D-003, D-042) eklendi ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15).
 
+Legacy DOC desteği `5695572` (`feat: add legacy DOC document support`) olarak commit'lenip `origin/main`'e push'landı; `main` ile `origin/main` eşit ve working tree temiz. Sürüm sonrası clean-clone doğrulaması yapıldı (2026-09-21): GitHub'dan sıfır klon → yeni venv → `pip install -r requirements.txt` → `pip check` temiz → `pytest` 231 passed → boş veritabanında `alembic upgrade head` (`cedf33674167`, `alembic check` temiz) → backend `/health` 200 → frontend `npm run build` / `npm run lint` temiz → PDF, DOC, DOCX ve JPG ile gerçek uçtan uca smoke testi 4/4 başarılı (4 Gemini çağrısı, 0 retry); liste, detay ve indirme endpoint'leri doğrulandı.
+
 V1.2 · Adım 1 tamamlandı: kayıtları listeleyen, tek kaydın çıkarılan metnini döndüren ve orijinal belgeyi indiren üç salt okunur endpoint (D-043) ve arayüzdeki "Kayıtlar" görünümü.
 
 V1.2 · Adım 9 tamamlandı: legacy **DOC** (Word 97–2003) desteği eklendi — saf Python `legacy-doc 0.2.1` parser'ı doğrudan baytlardan okuyor, Word/LibreOffice gerekmiyor; OLE imzası + `WordDocument` stream kontrolüyle XLS/PPT reddediliyor. Kapsam: PDF, DOC, DOCX, JPG/JPEG, PNG. Migration gerekmedi.
@@ -483,7 +485,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1-9 tamamlandı; Adım 9'daki legacy DOC desteği commit bekliyor. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1-9 tamamlandı; Adım 9'daki legacy DOC desteği `5695572` olarak commit'lenip push'landı ve clean-clone smoke testiyle doğrulandı. Şu anda üzerinde çalışılan açık bir iş yok. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 

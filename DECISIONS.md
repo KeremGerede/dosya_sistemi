@@ -264,5 +264,5 @@
 - **Gerekçe:** Senkron akışın en kötü durumu yaklaşık 93 saniyedir (D-033); 120 saniye bunun üzerine pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir.
 
 ### D-040 — Frontend'de dosya ön kontrolü; otorite backend'de
-- **Karar:** Dosya seçildiğinde frontend uzantının `.pdf` veya `.docx` olduğunu ve boyutun 50 MB'ı aşmadığını kontrol eder; uymayan dosya gönderilmeden kullanıcıya uyarı gösterilir. Bu kontrol yalnızca kullanıcı deneyimi içindir: kabul kararı backend'e aittir (D-001, D-028), backend doğrulamaları kaldırılmaz ve `413` / `415` yanıtları frontend'de ayrıca işlenir.
+- **Karar:** Dosya seçildiğinde frontend uzantının `.pdf`, `.doc`, `.docx`, `.jpg`, `.jpeg` veya `.png` olduğunu ve boyutun 50 MB'ı aşmadığını kontrol eder; uymayan dosya gönderilmeden kullanıcıya uyarı gösterilir. Bu kontrol yalnızca kullanıcı deneyimi içindir: kabul kararı backend'e aittir (D-001, D-028), backend doğrulamaları kaldırılmaz ve `413` / `415` yanıtları frontend'de ayrıca işlenir.
 - **Gerekçe:** Kullanıcı yanlış veya büyük dosyada anında geri bildirim alır; gereksiz yükleme ve sunucu işi önlenir. İstemci kontrolü atlatılabileceği için güvenlik sınırı sayılmaz. 50 MB sınırı bu nedenle frontend'de de yazılır; sınır değişirse iki yer birlikte güncellenmelidir.

@@ -338,7 +338,7 @@ Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenme
 
 ## 13. Gelecekteki genişleme yönü (taahhüt değil)
 
-- `.doc` ve diğer dosya formatları
+- Hâlen kapsam dışı olan dosya formatları (GIF, TIFF, BMP, WebP, HEIC)
 - Gerçek ihtiyaç görülürse 50.000 karakteri aşan uzun belgeler için daha kapsamlı işleme
 - Belge türü ve kurum kataloglarının genişletilmesi; gerekirse veritabanına taşınıp yönetim arayüzü eklenmesi
 - Başka sistemlerle entegrasyon
