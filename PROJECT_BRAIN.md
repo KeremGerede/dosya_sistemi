@@ -18,7 +18,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 2. Kabul kontrolü: dosya PDF veya DOCX değilse ya da 50 MB'ı aşıyorsa **kayıt oluşturmadan** 4xx ile reddedilir.
 3. Belge için `document_id` (UUID) üretilir; orijinal dosya `backend/storage/<document_id>.<uzanti>` olarak kaydedilir.
 4. Metin çıkarılır: PDF → PyMuPDF, DOCX → python-docx.
-5. PDF'te her sayfa ayrı değerlendirilir ve yalnızca gereken sayfalarda **OCR fallback** çalışır (`tur`, 300 dpi; D-003, D-042): kendi metni 10 karakterden kısa olan sayfalar taranmış sayılır; ayrıca alanının en az %50'si görüntü olan ve gömülü metni en fazla 200 karakter kalan sayfalar da OCR'lanır (bozuk metin katmanı olasılığı). İkinci durumda gömülü metin ile OCR metni karşılaştırılır: OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa yalnızca OCR metni, içermiyorsa ikisi birden kullanılır. Sayfa metinleri belge sırasıyla birleştirilir. Çıkarım hata verirse ya da birleşik metin 10 karakterden kısaysa belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
+5. PDF'te her sayfa ayrı değerlendirilir ve yalnızca gereken sayfalarda **OCR fallback** çalışır (`tur`, 400 dpi; D-003, D-042): kendi metni 10 karakterden kısa olan sayfalar taranmış sayılır; ayrıca alanının en az %50'si görüntü olan ve gömülü metni en fazla 200 karakter kalan sayfalar da OCR'lanır (bozuk metin katmanı olasılığı). İkinci durumda gömülü metin ile OCR metni karşılaştırılır: OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa yalnızca OCR metni, içermiyorsa ikisi birden kullanılır. Sayfa metinleri belge sırasıyla birleştirilir. Çıkarım hata verirse ya da birleşik metin 10 karakterden kısaysa belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
 6. Metnin en fazla ilk 50.000 karakteri, belge türü ve kurum kataloglarıyla birlikte **tek bir** Gemini çağrısına gönderilir; yanıt Pydantic şemasına uygun structured output olarak alınır. Geçici hatalarda (network, timeout, `429`, `5xx`, geçersiz model çıktısı) aynı çağrı toplam en fazla 3 kez denenir.
 7. Backend çıktıyı kataloglara karşı doğrular ve `status` değerini belirler. Gemini çağrısı sonuç vermezse belge `failed` olur.
 8. Dosya referansı, çıkarılan metin ve sınıflandırma sonucu `documents` tablosuna yazılır.
@@ -313,7 +313,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 ## 11. MVP kapsamı
 
 - En fazla 50 MB metin tabanlı PDF ve DOCX yükleme; PyMuPDF ve python-docx ile metin çıkarımı
-- Normalize edilmiş metin için 10 karakter alt sınırı; PDF'te sınırın altında kalan **sayfalarda** ve görüntüye dayalı olup metni 200 karakteri geçmeyen sayfalarda `tur` / 300 dpi OCR fallback; aynı sayfada gömülü metin ile OCR metninin tekrarsız birleştirilmesi
+- Normalize edilmiş metin için 10 karakter alt sınırı; PDF'te sınırın altında kalan **sayfalarda** ve görüntüye dayalı olup metni 200 karakteri geçmeyen sayfalarda `tur` / 400 dpi OCR fallback; aynı sayfada gömülü metin ile OCR metninin tekrarsız birleştirilmesi
 - Orijinal dosyanın storage alanında, çıkarılan metnin veritabanında saklanması
 - Metnin ilk 50.000 karakteriyle tek Gemini çağrısı; 30 sn timeout, geçici hatalarda toplam en fazla 3 deneme
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi

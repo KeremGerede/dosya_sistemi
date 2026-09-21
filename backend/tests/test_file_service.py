@@ -286,7 +286,7 @@ def test_ocr_is_skipped_when_tessdata_prefix_is_not_configured(monkeypatch):
     assert extract_text(make_pdf(""), "pdf") == ""
 
 
-def test_ocr_is_called_with_turkish_and_300_dpi(monkeypatch):
+def test_ocr_is_called_with_turkish_and_400_dpi(monkeypatch):
     calls = []
 
     def fake_ocr(self, *args, **kwargs):
@@ -296,7 +296,8 @@ def test_ocr_is_called_with_turkish_and_300_dpi(monkeypatch):
     monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
     monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fake_ocr)
     extract_text(make_pdf(""), "pdf")
-    assert [(c["language"], c["dpi"], c["tessdata"]) for c in calls] == [("tur", 300, "/tessdata")]
+    assert file_service.OCR_DPI == 400
+    assert [(c["language"], c["dpi"], c["tessdata"]) for c in calls] == [("tur", 400, "/tessdata")]
 
 
 def test_docx_never_uses_ocr(monkeypatch):
@@ -635,3 +636,25 @@ def test_document_order_is_kept_across_structural_ocr_pages(fake_ocr):
     text = extract_text(content, "pdf")
 
     assert text.index("Birinci") < text.index("KADIKOY") < text.index("Ucuncu")
+
+
+def test_ocr_dpi_is_the_same_on_hybrid_and_structural_pages(monkeypatch):
+    """P1 hybrid ve P2 yapısal yolda da OCR yalnız gereken sayfada ve aynı çözünürlükle çağrılır."""
+    calls = []
+
+    def fake_ocr(self, *args, **kwargs):
+        calls.append((self.number, kwargs["language"], kwargs["dpi"]))
+        return self.get_textpage()
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fake_ocr)
+
+    # P1: kapak metin sayfası + taranmış sayfa -> yalnız 2. sayfa
+    extract_text(make_mixed_pdf(("text", "EVRAK KAYIT FORMU Bu belge kayit sistemine alinmistir."),
+                                ("image", "Asil dilekce taranmis sayfada")), "pdf")
+    assert calls == [(1, "tur", 400)]
+
+    # P2: bozuk metin katmanı taşıyan taranmış sayfa -> o sayfa
+    calls.clear()
+    extract_text(make_scan_pdf("Taranmis dilekce metni", layer=GARBAGE_LAYER), "pdf")
+    assert calls == [(0, "tur", 400)]

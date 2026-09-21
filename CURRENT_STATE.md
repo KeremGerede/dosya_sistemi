@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-18
+> **Son güncelleme:** 2026-09-21
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
@@ -9,6 +9,8 @@
 **V1.2 üzerinde çalışılıyor — kayıt görünürlüğü.** V1.1 kapandı: taranmış PDF'ler için lokal Tesseract OCR fallback'i (D-003, D-042) eklendi ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15).
 
 V1.2 · Adım 1 tamamlandı: kayıtları listeleyen, tek kaydın çıkarılan metnini döndüren ve orijinal belgeyi indiren üç salt okunur endpoint (D-043) ve arayüzdeki "Kayıtlar" görünümü.
+
+V1.2 · Adım 6 tamamlandı: OCR çözünürlüğü ölçüme dayanarak 300 → 400 dpi çıkarıldı (D-042); zor taramalarda düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru rakam 14/22 → 16/22, basılı/dijital belgelerde regresyon yok.
 
 V1.2 · Adım 5 tamamlandı: bozuk metin katmanının OCR'ı engellemesi (P2) giderildi — OCR kararına yapısal koşul (görüntü kapsaması ≥ %50 ve gömülü metin ≤ 200 karakter) eklendi ve aynı sayfadaki gömülü metin ile OCR metni tekrarsız, bilgi kaybetmeden birleştiriliyor (D-003). Benchmark senaryo 14 `other`/`needs_review` → `complaint`/`temizlik_isleri`/`classified`; P1 hybrid 12/13'te regresyon yok.
 
@@ -422,9 +424,20 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Eski/yeni çıkarım farkı 24 belgenin **yalnızca 14 numaralısında** oluştu (26 → 497 karakter); diğer 23 belgede çıkarılan metin baytı baytına aynı kaldı.
 - [x] Temizlik: bu adımda oluşturulan 32 kaydın tamamı id listesiyle silindi, storage dosyaları kaldırıldı; kullanıcının önceden var olan 2 kaydına (`22ab921f…`, `48d852a0…`) ve dosyalarına dokunulmadı. Benchmark belgeleri repo dışında üretildi ve temizlendi.
 
+**V1.2 · Adım 6 — OCR çözünürlüğü 300 → 400 dpi (2026-09-21)**
+
+- [x] Tek ürün değişikliği: `app/services/file_service.py` içinde `OCR_DPI = 300` → `400`. `OCR_LANGUAGE = "tur"`, `full=True`, `tessdata`, PyMuPDF `get_textpage_ocr` çağrı yolu, P1/P2 karar mantığı, birleştirme kuralı, hata yolu ve log güvenliği değişmedi. Yeni bağımlılık, OCR motoru, preprocessing veya PSM/OEM ayarı eklenmedi; Gemini, DB, frontend ve 50.000 karakter stratejisine dokunulmadı.
+- [x] Gerekçe ölçümle sabitlendi (synthetic handwriting proxy + bozulmuş tarama + basılı belge korpusu, 12 senaryo): ortalama CER 0,292 → **0,237**, WER 0,449 → **0,400**, tamamen düşen satır 14 → **10**, kayıp kritik alan 10 → **4**, doğru okunan rakam 14/22 → **16/22**. Zor vakalarda kritik satırlar geri geldi (H06 düşen satır 4/6 → 1/6, kurum ipucu tekrar okunur oldu). Uçtan uca iki belge türü yanlıştan doğruya döndü: H04 `request` → `application`, H06 `request` → `information_request`.
+- [x] 600 dpi de ölçüldü ve **geri adım** attığı için reddedildi: ortalama CER 0,315, düşen satır 16, form senaryosunda rakamların tamamı bozuldu (3/3 → 0/3). PSM/OEM ayarlanmadı: PyMuPDF'in OCR API'si bu parametreleri kabul etmiyor (imza `flags, language, dpi, full, tessdata`) ve ayrı Tesseract süreci D-042 kapsamı dışında; ayrıca `tur.traineddata` legacy bileşen içermediği için OEM 0/2 zaten desteklenmiyor, OEM 1 ile 3 aynı çıktıyı veriyor.
+- [x] Testler (`test_file_service.py` 62 → 63, süit 161 → **162 passed**): mevcut `test_ocr_is_called_with_turkish_and_300_dpi` 400 dpi'ye güncellendi ve `OCR_DPI == 400` doğrulaması eklendi; yeni `test_ocr_dpi_is_the_same_on_hybrid_and_structural_pages` P1 hybrid ve P2 yapısal yolda OCR'ın yalnız gereken sayfada (`page.number` doğrulanarak) ve `("tur", 400)` ile çağrıldığını kontrol ediyor. Text-only PDF ve DOCX'in OCR çağırmadığı, OCR hatasında gömülü metne güvenli düşüldüğü ve ham hatanın loglanmadığı mevcut testler değişmeden geçti.
+- [x] Gerçek regresyon (gerçek PostgreSQL + gerçek Gemini, 5 senaryo): normal text PDF, image-only matbu PDF, P1 hybrid ve P2 bozuk metin katmanı senaryolarında çıkarılan metin uzunluğu **dpi300 ile birebir aynı** (497 / 497 / 616 / 497) ve sonuçlar değişmedi (`complaint` / `temizlik_isleri` / `classified`). H08 mixed-content da 311 karakterde kaldı; `Evrak No: 2026/5521` bir kez geçiyor, duplicate ve bilgi kaybı yok. Tek fark **iyileşme yönünde**: el yazısı imza satırındaki tarih dpi300'de bozuk okunurken 400 dpi'de `19.09.2026` olarak doğru çıktı.
+- [x] Performans: 5 belgede endpoint süreleri 1,7–2,2 sn. Ölçülen genel maliyet sayfa başına 0,47 → 0,70 sn; 12 sayfalık tarama 7,46 → 10,17 sn. 120 sn frontend zaman aşımı (D-039) için pay geniş kaldı.
+- [x] 5 belgede 5 Gemini isteği, **0 retry**, 0 `failed`, 0 uyarı.
+- [x] Temizlik: bu adımda oluşturulan 5 kayıt id listesiyle silindi, storage dosyaları kaldırıldı; kullanıcının önceden var olan 2 kaydına dokunulmadı.
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1-5 tamamlandı; Adım 5'teki P2 düzeltmesi (yapısal OCR koşulu + aynı sayfada gömülü metin/OCR birleştirme) commit bekliyor. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1-6 tamamlandı; Adım 6'daki OCR çözünürlüğü değişikliği (300 → 400 dpi) commit bekliyor. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
@@ -444,7 +457,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Benchmarkta açık kalan noktalar: 90°/180° döndürülmüş taramalarda OCR anlamsız metin üretiyor ve belge `needs_review`'a düşüyor (otomatik döndürme/OSD kullanılmıyor); belirleyici içerik ilk 50.000 karakterden sonra yer alıyorsa (D-027) Gemini'ye hiç gitmiyor. İkisinde de sonuç `needs_review` olduğu için yanlış atama değil, sınıflandırılamama yaşanıyor. Yoğun gürültülü veya gölgeli taramada belge türü kayabiliyor (kurum doğru kalıyor; re-benchmarkta 04 ve 15). Bozuk text layer sorunu (P2) V1.2 · Adım 5'te kapatıldı.
 - P2 düzeltmesinin bilinen sınırı: bozuk metin katmanı **harf görünümlü** ise (ör. `qwzxk jvbnm`) kelime benzeri parça ürettiği için korunacak bilgi sayılır ve OCR metninin yanında kalır. Sembol, kontrol karakteri, U+FFFD ve PUA aileleri (benchmark senaryo 14 bu aileden) düşer. Kalan gürültü en fazla 200 karakterle sınırlıdır ve yanında belgenin tam OCR metni bulunur. Ayırt etmek Türkçe sözlük/dil modeli gerektireceği için kapsam dışı bırakıldı.
 - Yapısal OCR koşulunun bilinen yanlış pozitifi: tam sayfa arka plan/filigran görüntüsü olan **dijital** bir sayfada gömülü metin 200 karakterin altındaysa OCR gereksiz yere çalışır. Ölçülen maliyet ~0,2 sn; gömülü bilgi kaybolmuyor (birleştirme kuralı koruyor). Aynı durumda OCR metni gömülü metnin yerine geçtiği için, paylaşılan kısımda Tesseract'ın Türkçe karakter kayıpları (`İ→I`, `Ç→C`) nihai metne yansıyabilir; ölçülen senaryoların hiçbirinde görülmedi.
-- OCR yalnızca PDF'te çalışır ve iki koşuldan biri gerekir: sayfanın kendi gömülü metni 10 karakterin altında olmalı, ya da sayfa alanının en az %50'si görüntüyken metni 200 karakteri geçmemeli. Normal metin PDF'lerinde ek maliyet yoktur — uzun metinli sayfa yapısal ölçüme hiç girmez. Tek sayfalık temiz bir taramada ~0,6 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
+- OCR yalnızca PDF'te çalışır ve iki koşuldan biri gerekir: sayfanın kendi gömülü metni 10 karakterin altında olmalı, ya da sayfa alanının en az %50'si görüntüyken metni 200 karakteri geçmemeli. Normal metin PDF'lerinde ek maliyet yoktur — uzun metinli sayfa yapısal ölçüme hiç girmez. Tek sayfalık temiz bir taramada 400 dpi'de ~0,7 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
 - Tesseract büyük harf Türkçe metinde noktalı **İ**'yi noktasız I, **Ç**'yi C okuyabiliyor (smoke testinde "ŞİKAYET DİLEKÇESİ" → "ŞIKAYET DILEKCESI"). Gövde metni doğru çıktığı için sınıflandırma etkilenmedi; başlığa dayanan belgelerde dikkat edilmeli.
 - OCR kalitesi gerçek bir taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle gürültü, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) ile ölçüldü; ayrıca 15 senaryoluk manuel testte normal, temiz taranmış ve bozulmuş belgeler uçtan uca doğrulandı. Tablo ağırlıklı taranmış belgeler hâlâ denenmedi.
 - Çok gürültülü taramalarda Tesseract kağıt dokusunu karakter sanıp beklenenden çok daha uzun metin üretebiliyor (ölçülen en kötü durumda 349 karakterlik belgeden 4282 karakter, süre ~5×). Üretilen fazlalık apaçık çöp parçalarıdır, akıcı ama yanlış metin değildir; ölçülen durumda sınıflandırma yine doğru sonuçlandı ve 50.000 karakter sınırının %8,6'sı kullanıldı. Çok sayfalı çok kötü taramalarda süre birikebilir.

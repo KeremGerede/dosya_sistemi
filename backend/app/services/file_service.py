@@ -29,7 +29,7 @@ MEDIA_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 OCR_LANGUAGE = "tur"  # taranmış PDF fallback'i (D-042)
-OCR_DPI = 300
+OCR_DPI = 400
 OCR_COVERAGE_MIN = 0.5  # sayfa alanının bu oranı görüntüyse sayfa yapısal olarak taranmış sayılır (D-003)
 OCR_SHORT_TEXT_MAX = 200  # taranmış sayfada bu uzunluğa kadar gömülü metin OCR ile birlikte değerlendirilir
 

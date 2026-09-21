@@ -49,7 +49,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 300 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir.
+- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 400 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir.
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
 - Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
@@ -104,7 +104,7 @@ Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bo
   - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
   - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
   - Adım 5 tamamlandı: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik); ardından gerçek belgelerle 11 senaryoluk manuel test matrisi (11/11 beklenen sonuç), sentetik test verilerinin temizlenmesi ve final kontroller — `pytest` 97 passed, `pip check` temiz, `alembic current` head, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz.
-- **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i (`tur`, 300 dpi); 15 senaryoluk manuel test matrisiyle doğrulandı.
+- **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i (`tur`, 400 dpi); 15 senaryoluk manuel test matrisiyle doğrulandı.
 - **V1.2 — devam ediyor:** kayıt görünürlüğü. Adım 1: salt okunur liste/detay/indirme endpoint'leri ve arayüzdeki "Kayıtlar" görünümü. Adım 2: aynı Gemini çağrısından gelen belge özeti ve gönderen kişi/kurum bilgisi (D-044). Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Kurulum ve Çalıştırma
