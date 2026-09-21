@@ -494,3 +494,26 @@ def test_retry_and_timeout_policy_is_unchanged_with_new_fields(fake_gemini, slee
     assert result.summary == SAMPLE_SUMMARY
     assert len(fake.prompts) == 3
     assert sleeps == [1, 2]
+
+
+def test_prompt_forbids_deriving_sender_institution_from_a_person():
+    """D-044: kurum adı metinde açıkça yoksa null; kişi adı/unvanından kurum türetilemez."""
+    prompt = classification_service.build_prompt(SAMPLE_TEXT)
+
+    # Kurum yalnızca metinde kurum adı olarak açıkça yazılıysa doldurulur.
+    assert "kurum adı olarak açıkça ve doğrudan yazılıysa" in prompt
+    assert "Gönderen kurumun tam adı metinde açıkça yoksa null ver" in prompt
+    # Kişi adı/soyadı/unvanından kurum üretmek açıkça yasaktır (B2-12: "Beyaz Proje").
+    assert "kurum adı TÜRETME" in prompt
+    assert "Beyaz Proje" in prompt
+    # Metinde yalnızca konu olarak geçen üçüncü kurumlar da gönderen değildir.
+    assert "konu olarak geçen üçüncü kurumlar da gönderen değildir" in prompt
+
+
+def test_prompt_forbids_splitting_or_inventing_sender_name():
+    """D-044: kişinin adı parçalanmaz, yeni isim üretilmez; tam ad yoksa null."""
+    prompt = classification_service.build_prompt(SAMPLE_TEXT)
+
+    assert "Kişinin adını parçalama ve yeni bir isim oluşturma" in prompt
+    assert "belgede yazan adı soyadını olduğu gibi kullan" in prompt
+    assert "Açıkça yazmıyorsa null ver" in prompt and "isim üretme" in prompt

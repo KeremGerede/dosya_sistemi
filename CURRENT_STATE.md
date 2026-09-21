@@ -10,6 +10,8 @@
 
 V1.2 · Adım 1 tamamlandı: kayıtları listeleyen, tek kaydın çıkarılan metnini döndüren ve orijinal belgeyi indiren üç salt okunur endpoint (D-043) ve arayüzdeki "Kayıtlar" görünümü.
 
+V1.2 · Adım 8 tamamlandı: gönderen metadata uydurması (B2-12 / P2) kapatıldı — prompt, kişi adı veya unvanından kurum adı türetilmesini açıkça yasaklıyor; sekiz odaklı vakada uydurma 8/8 → 0, `document_type`/`institution_id` ve `sender_name` regresyonu yok (D-044 aynen geçerli).
+
 V1.2 · Adım 7 tamamlandı: kabul edilen dosya türlerine **JPG, JPEG ve PNG** eklendi (D-001). Görüntüler tek sayfalık belge olarak doğrudan mevcut Tesseract hattına veriliyor (`tur`, 400 dpi); yeni motor, servis veya bağımlılık yok, migration gerekmedi. PDF/DOCX davranışı değişmedi.
 
 V1.2 · Adım 6 tamamlandı: OCR çözünürlüğü ölçüme dayanarak 300 → 400 dpi çıkarıldı (D-042); zor taramalarda düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru rakam 14/22 → 16/22, basılı/dijital belgelerde regresyon yok.
@@ -452,9 +454,20 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] PDF/DOCX regresyonu (gerçek endpoint): normal text PDF (497), image-only matbu PDF (497), P1 hybrid (616), P2 bozuk metin katmanı (497), DOCX (231) ve DOCX tablo (129) — çıkarılan metin uzunlukları ve sınıflandırma sonuçları önceki turla birebir aynı.
 - [x] Temizlik: bu adımda oluşturulan 13 kayıt id listesiyle silindi, storage dosyaları kaldırıldı; kullanıcının önceden var olan 2 kaydına dokunulmadı. Geçici görüntü ve script dosyaları repo dışında tutuldu.
 
+**V1.2 · Adım 8 — Gönderen metadata uydurmasının kapatılması (P2, 2026-09-21)**
+
+- [x] **Kanıtlanan sorun (B2+B3 benchmarkı, B2-12).** DOCX header/footer çıkarım kapsamında olmadığı için gerçek gönderen kurum `extracted_text`'e ulaşmıyor; model boşluğu gövdedeki imzadan **uydurarak** dolduruyordu: `sender_name="Serkan"`, `sender_institution="Beyaz Proje"`, `needs_review=false`. Bu, D-044'ün "açıkça yazmıyorsa null" kuralıyla çelişiyordu. Sorun kuralın eksikliği değil, modelin kişi adı/unvanından kurum türetmesiydi; mevcut promptta "tahmin etme", "çıkarım yapma", "isim üretme" ve "muhatap gönderen değildir" ifadeleri zaten vardı.
+- [x] Sekiz odaklı vaka dondurulmuş beklentilerle ölçüldü (açık gönderen kurum, kurum yok + kişi/unvan, soyadı kurum gibi görünen ad, yalnız muhatap kurum, metinde konu olarak geçen üçüncü kurum, kurum + kişi, üç kurumlu belge, B2-12 regresyon metni). **Baseline: 7/8, 1 uydurma** — B2-12 metni `sender_institution="Proje Müdürü"` üretti (benchmarktaki "Beyaz Proje" ile aynı hata biçimi). Kök neden: normalize metinde imza satırı gövdeye yapışınca unvan bağımsız bir kurum gibi görünüyor.
+- [x] Aday prompt varyantı ölçüldü: **8/8, 0 uydurma**. Ancak gerçek endpoint regresyonunda B2-04'te `sender_name` kayboldu; A/B ile izole edildi (eski prompt 2/2 doğru, aday 1/2). Regresyon, eklenen "tam adı açıkça yazmıyorsa null ver" ifadesinden geliyordu. Bu tek cümle çıkarılıp yalnız `sender_institution` sıkılaştırması bırakıldı (varyant C): **8/8, 0 uydurma** ve B2-04 3/3 kararlı.
+- [x] Uygulanan değişiklik yalnız `classification_service.PROMPT_TEMPLATE` içindeki iki kural maddesi: `sender_name` için "kişinin adını parçalama ve yeni bir isim oluşturma"; `sender_institution` için "metinde kurum adı olarak açıkça ve doğrudan yazılıysa", "kişi adı/soyadı/unvan/görev adından kurum adı TÜRETME" (örnekle birlikte), "yalnızca konu olarak geçen üçüncü kurumlar da gönderen değildir" ve "tam adı metinde açıkça yoksa null". Şema, API, DB, frontend, katalog, retry/timeout ve ek çağrı yok; belge başına hâlâ tek Gemini çağrısı.
+- [x] Testler (202 → **204 passed**): `test_classification_service.py` içine promptun (1) kurumun metinde açıkça yazılı olması, (2) kişi adı/unvanından kurum türetme yasağı, (3) açık kurum yoksa null, (4) kişi adını parçalamama/türetmeme kurallarını içerdiğini doğrulayan iki test eklendi. Yeni test altyapısı veya snapshot eklenmedi.
+- [x] Gerçek regresyon (gerçek PostgreSQL + gerçek Gemini, 14 belge): sekiz S vakası + önceki benchmarktan kişi+kurum, kişi var kurum yok, kurum var kişi yok, ikisi de yok, birden fazla kişi ve muhatap kurum var/sender yok vakaları → **14/14 geçti, uydurma 0**. `document_type` ve `institution_id` sonuçlarında regresyon yok; 14 istek, **0 retry**, 0 `failed`.
+- [x] Kapsam dışı bırakılanlar (bu adımda yapılmadı): DOCX header/footer çıkarımı, OCR/tablo düzeltmeleri, summary hallucination düzeltmesi, deterministik backend guard, yeni validator veya LLM çağrısı.
+- [x] Temizlik: bu adımda oluşturulan 14 kayıt id listesiyle silindi, storage dosyaları kaldırıldı; kullanıcının önceden var olan 2 kaydına dokunulmadı.
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1-7 tamamlandı; Adım 7'deki JPG/JPEG/PNG desteği commit bekliyor. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+- V1.2 · Adım 1-8 tamamlandı; Adım 8'deki gönderen metadata prompt düzeltmesi commit bekliyor. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
 
 ## Bilinen problemler ve riskler
 
