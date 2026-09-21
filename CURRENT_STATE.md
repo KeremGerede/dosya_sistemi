@@ -493,6 +493,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Bu makinede host 5432'yi yerel bir Windows PostgreSQL 18 servisi (`postgresql-x64-18`) kullanıyor. Docker PostgreSQL bu yüzden 5433'te; `DATABASE_URL`'deki port 5433 olmalı, aksi halde yanlış veritabanına bağlanılabilir.
 - `DATABASE_URL`'de `localhost` kullanılmamalı: port yalnızca IPv4 `127.0.0.1`'e açık ve `localhost` önce `::1` olarak denendiğinde bağlantı asılı kalıyor (Aşama 2'de `alembic current` bu yüzden takıldı). `127.0.0.1` kullanılıyor.
 - PostgreSQL 18 image'ında volume `/var/lib/postgresql` yoluna bağlanır. Eski sürümlerdeki `/var/lib/postgresql/data` yolu kullanılmamalı.
+- `docker-compose.yml` sabit `container_name: dosya-sistemi-postgres`, sabit host portu `127.0.0.1:5433`, sabit `dosya_sistemi_pgdata` volume'u ve klasör adından gelen aynı compose proje kimliğini kullanır. Bu yüzden **aynı makinede** aynı projenin ikinci bir klonu, ana proje PostgreSQL'i çalışırken kendi compose stack'ini yan yana başlatamaz (container/port/volume çakışması); başlatılabilseydi de aynı volume'u, yani aynı veritabanını paylaşırdı. Normal fresh-clone kullanımı için blocker değildir: temiz bir makinede tek klon `docker compose up -d` ile çalışır ve clean-clone testinde klonun `docker compose config` çıktısı geçerli doğrulandı. Clean-clone smoke testinde bu nedenle mevcut container korunup ayrı bir `dosya_sistemi_cleantest` veritabanı kullanıldı. Yalnızca yerel geliştirme/test sınırıdır; `docker-compose.yml` değiştirilmedi.
 - Backend ve migration komutları için Docker Desktop çalışıyor ve `docker compose up -d` yapılmış olmalı; kapalıyken yapılan classify isteği aşağıda anlatıldığı gibi yaklaşık 10 sn sonra `500` ile biter.
 - `main.py` artık documents router'ını import ettiği için `DATABASE_URL`, `GEMINI_API_KEY` ve `GEMINI_MODEL` uygulama başlangıcında zorunludur; biri eksikse uygulama (ve `/health`) başlamaz (D-031, D-035).
 - `status` ve `file_type` değerleri veritabanında CHECK/ENUM ile kısıtlanmadı (PROJECT_BRAIN §8: string). Geçerli değerleri uygulama katmanı belirliyor: `file_type` yalnızca `file_service.FILE_TYPES` değerlerinden, `status` yalnızca endpoint kodunda atanıyor.
@@ -549,7 +550,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 ## Sıradaki geliştirme adımları
 
-V1.1 tamamlandığı için planlanmış bir sonraki geliştirme adımı yok.
+V1.2'nin mevcut planlanan adımları (Adım 1-9) tamamlandı; şu anda açılmış bir sonraki geliştirme işi yok.
 
 Aşağıdakiler **V1 kapsamı dışındadır ve yeni iş olarak açılmamıştır**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
