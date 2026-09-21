@@ -4,12 +4,12 @@ import './App.css'
 
 // Kullanıcı deneyimi için ön kontroller; kabul kararı backend'e aittir (D-040).
 const MAX_FILE_SIZE = 50 * 1024 * 1024
-const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.jpg', '.jpeg', '.png']
+const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']
 const REQUEST_TIMEOUT_MS = 120_000 // D-039
 
-const UNSUPPORTED_FILE_MESSAGE = 'Yalnızca PDF, DOCX, JPG, JPEG veya PNG dosyaları desteklenir.'
+const UNSUPPORTED_FILE_MESSAGE = 'Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları desteklenir.'
 const FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB'ı aşamaz."
-const NOT_SENT_MESSAGE = 'Dosya gönderilemedi. Lütfen bir PDF, DOCX, JPG, JPEG veya PNG dosyası seçip tekrar deneyin.'
+const NOT_SENT_MESSAGE = 'Dosya gönderilemedi. Lütfen bir PDF, DOC, DOCX, JPG, JPEG veya PNG dosyası seçip tekrar deneyin.'
 const TEXT_FAILED_MESSAGE = 'Belge içeriği işlenemedi veya yeterli metin çıkarılamadı.'
 const CLASSIFICATION_FAILED_MESSAGE = 'Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin.'
 const UNEXPECTED_MESSAGE = 'Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.'
@@ -383,13 +383,13 @@ function App() {
         <div>
           <label htmlFor="document-file">Belge dosyası</label>
           <p id="document-file-hint" className="hint">
-            PDF, DOCX, JPG, JPEG veya PNG, en fazla 50 MB.
+            PDF, DOC, DOCX, JPG, JPEG veya PNG, en fazla 50 MB.
           </p>
         </div>
         <input
           id="document-file"
           type="file"
-          accept=".pdf,.docx,.jpg,.jpeg,.png"
+          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
           aria-describedby="document-file-hint"
           onChange={handleFileChange}
           disabled={loading}

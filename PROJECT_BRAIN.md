@@ -7,7 +7,7 @@
 
 ## 1. Amaç
 
-Kullanıcının yüklediği bir **PDF, DOCX, JPG/JPEG veya PNG** belgesini **tek bir Gemini sınıflandırma çağrısıyla** belge türü ve ilgili kurum/birim açısından sınıflandıran; orijinal dosyayı, çıkarılan metni ve sonucu saklayan küçük bir modül.
+Kullanıcının yüklediği bir **PDF, DOC, DOCX, JPG/JPEG veya PNG** belgesini **tek bir Gemini sınıflandırma çağrısıyla** belge türü ve ilgili kurum/birim açısından sınıflandıran; orijinal dosyayı, çıkarılan metni ve sonucu saklayan küçük bir modül.
 İleride başka sistemlerle entegre edilecek; bu yüzden API odaklı, bağımsız çalışabilen ve sade olmalı.
 
 Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişletilebilirlik.**
@@ -15,9 +15,9 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 ## 2. Temel akış
 
 1. İstemci `POST /api/documents/classify` ile dosya yükler (`multipart/form-data`).
-2. Kabul kontrolü: dosya PDF, DOCX, JPG/JPEG veya PNG değilse ya da 50 MB'ı aşıyorsa **kayıt oluşturmadan** 4xx ile reddedilir.
+2. Kabul kontrolü: dosya PDF, DOC, DOCX, JPG/JPEG veya PNG değilse ya da 50 MB'ı aşıyorsa **kayıt oluşturmadan** 4xx ile reddedilir.
 3. Belge için `document_id` (UUID) üretilir; orijinal dosya `backend/storage/<document_id>.<uzanti>` olarak kaydedilir.
-4. Metin çıkarılır: PDF → PyMuPDF, DOCX → python-docx, JPG/JPEG/PNG → doğrudan OCR (D-001).
+4. Metin çıkarılır: PDF → PyMuPDF, DOC → legacy-doc, DOCX → python-docx, JPG/JPEG/PNG → doğrudan OCR (D-001).
 5. Görüntü belgelerinde (JPG/JPEG/PNG) gömülü metin aranmaz; belge tek sayfalık görüntü olarak doğrudan OCR'lanır. PDF'te her sayfa ayrı değerlendirilir ve yalnızca gereken sayfalarda **OCR fallback** çalışır (`tur`, 400 dpi; D-003, D-042): kendi metni 10 karakterden kısa olan sayfalar taranmış sayılır; ayrıca alanının en az %50'si görüntü olan ve gömülü metni en fazla 200 karakter kalan sayfalar da OCR'lanır (bozuk metin katmanı olasılığı). İkinci durumda gömülü metin ile OCR metni karşılaştırılır: OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa yalnızca OCR metni, içermiyorsa ikisi birden kullanılır. Sayfa metinleri belge sırasıyla birleştirilir. Çıkarım hata verirse ya da birleşik metin 10 karakterden kısaysa belge Gemini'ye gönderilmeden `failed` olarak kaydedilir.
 6. Metnin en fazla ilk 50.000 karakteri, belge türü ve kurum kataloglarıyla birlikte **tek bir** Gemini çağrısına gönderilir; yanıt Pydantic şemasına uygun structured output olarak alınır. Geçici hatalarda (network, timeout, `429`, `5xx`, geçersiz model çıktısı) aynı çağrı toplam en fazla 3 kez denenir.
 7. Backend çıktıyı kataloglara karşı doğrular ve `status` değerini belirler. Gemini çağrısı sonuç vermezse belge `failed` olur.
@@ -32,6 +32,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 |---|---|
 | Backend | Python, FastAPI |
 | PDF metin çıkarımı | PyMuPDF |
+| DOC metin çıkarımı | legacy-doc (saf Python, Word/LibreOffice gerekmez) |
 | DOCX metin çıkarımı | python-docx |
 | LLM | Google Gemini API, `google-genai` SDK (structured output, Pydantic şema) |
 | Veri doğrulama | Pydantic |
@@ -65,7 +66,7 @@ backend/
     settings.py                         # ortam değişkenleri (backend/.env), require_env(); DATABASE_URL zorunlu
     database.py                         # engine, session
     api/documents.py                    # POST /api/documents/classify — akışı sırayla çağırır, status belirler
-    services/file_service.py            # kabul kontrolü, storage'a kaydetme, PDF/DOCX/görüntü metin çıkarımı
+    services/file_service.py            # kabul kontrolü, storage'a kaydetme, PDF/DOC/DOCX/görüntü metin çıkarımı
     services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, retry politikası (D-033)
     llm/gemini_client.py                # google-genai ince sarmalayıcısı: tek istek, 30 sn timeout, SDK retry kapalı
     schemas/classification.py           # LLM çıktı şeması + API yanıt şeması
@@ -95,6 +96,7 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 | `file_type` | Uzantı | Metin çıkarımı |
 |---|---|---|
 | `pdf` | `.pdf` | PyMuPDF (gerekirse sayfa bazlı OCR) |
+| `doc` | `.doc` | legacy-doc (Word 97–2003 binary, OCR yok) |
 | `docx` | `.docx` | python-docx (OCR yok) |
 | `jpg` | `.jpg` | PyMuPDF + Tesseract (doğrudan OCR) |
 | `jpeg` | `.jpeg` | PyMuPDF + Tesseract (doğrudan OCR) |
@@ -103,14 +105,15 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 **Kabul kontrolü** — dosya storage'a yazılmadan ve kayıt oluşturulmadan önce yapılır:
 
 - Maksimum dosya boyutu **50 MB**. Aşan dosya `413` ile reddedilir.
-- `.doc` ve desteklenenler dışındaki tüm türler (GIF, TIFF, BMP, WebP, HEIC dahil) `415` ile reddedilir.
-- Tür yalnızca istemcinin gönderdiği content-type'a bakılarak belirlenmez; uzantı ve dosya imzası (PDF: `%PDF`, DOCX: ZIP + WordprocessingML, JPEG: `FF D8 FF`, PNG: `89 50 4E 47 0D 0A 1A 0A`) birlikte kontrol edilir. Uzantısı doğru ama imzası uymayan dosya (ör. `.png` uzantılı düz metin) reddedilir.
+- Desteklenenler dışındaki tüm türler (GIF, TIFF, BMP, WebP, HEIC dahil) `415` ile reddedilir.
+- Tür yalnızca istemcinin gönderdiği content-type'a bakılarak belirlenmez; uzantı ve dosya imzası (PDF: `%PDF`, DOC: OLE imzası `D0 CF 11 E0 A1 B1 1A E1` **ve** Word'e özgü `WordDocument` stream'i, DOCX: ZIP + WordprocessingML, JPEG: `FF D8 FF`, PNG: `89 50 4E 47 0D 0A 1A 0A`) birlikte kontrol edilir. Uzantısı doğru ama imzası uymayan dosya (ör. `.png` uzantılı düz metin) reddedilir.
 - Reddedilen dosya saklanmaz, `documents` kaydı oluşturulmaz.
 
 **Metin çıkarımı ve yeterlilik:**
 
 - PDF'te bir sayfanın gömülü metni yetersizse ya da sayfa yapısal olarak taranmışken (alanının en az %50'si görüntü) gömülü metni 200 karakterin altında kalıyorsa yalnızca o sayfada OCR fallback devreye girer (D-003, D-042); böylece taranmış PDF'ler, hybrid PDF'ler ve bozuk metin katmanı taşıyan taramalar da okunabilir. Tamamen metin tabanlı PDF'lerde OCR çağrısı yapılmaz. DOCX'te OCR yapılmaz.
 - Aynı sayfada hem gömülü metin hem OCR metni varsa ikisi deterministik olarak karşılaştırılır (D-003): OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa aynı içerik tekrar yazılmaz, içermiyorsa iki metin de korunur. Karşılaştırma için ek LLM çağrısı yapılmaz.
+- DOC (Word 97–2003) belgelerde gövde paragrafları ve tablo hücreleri saf Python `legacy-doc` parser'ıyla okunur; OCR yapılmaz ve harici program çalıştırılmaz. Gömülü görüntü, makro ve biçimlendirme kapsam dışıdır.
 - JPG/JPEG/PNG belgelerde gömülü metin aranmaz; dosya tek sayfalık görüntü olarak açılıp doğrudan OCR'lanır (D-001, D-042). PDF'e özgü sayfa/yapı kararları uygulanmaz.
 - OCR, `TESSDATA_PREFIX` tanımlı değilse veya hata verirse atlanır; belge bu durumda V1'deki gibi "yeterli metin yok" sayılır. Görüntü belgelerde bu, `failed` + `422` anlamına gelir.
 - DOCX'te paragrafların yanında tablo hücrelerindeki metin de alınır (python-docx `paragraphs` tabloları kapsamaz).
@@ -120,7 +123,7 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 **Depolama:**
 
 - Orijinal dosya PostgreSQL'e binary olarak **yazılmaz**; `backend/storage/` altında düz bir klasörde saklanır, veritabanında `file_reference` tutulur.
-- Dosya adı `<document_id>.<uzanti>` formatındadır (ör. `3f6c2a9e-8b1d-4c7a-9e2f-5a4b6c7d8e9f.pdf`); uzantı `file_type`'tan gelir (`pdf` / `docx` / `jpg` / `jpeg` / `png`; yüklenen uzantı korunur). Bu nedenle `document_id` dosya kaydedilmeden önce uygulama tarafında üretilir.
+- Dosya adı `<document_id>.<uzanti>` formatındadır (ör. `3f6c2a9e-8b1d-4c7a-9e2f-5a4b6c7d8e9f.pdf`); uzantı `file_type`'tan gelir (`pdf` / `doc` / `docx` / `jpg` / `jpeg` / `png`; yüklenen uzantı korunur). Bu nedenle `document_id` dosya kaydedilmeden önce uygulama tarafında üretilir.
 - Kullanıcının orijinal dosya adı yalnızca `file_name` alanında saklanır; disk yolu olarak kullanılmaz.
 - `file_reference`, storage klasörüne göre göreli yoldur (`<document_id>.<uzanti>`).
 - Çıkarılan metnin tamamı `documents.extracted_text` (TEXT) alanında saklanır. 50.000 karakter sınırı yalnızca Gemini çağrısı için geçerlidir.
@@ -205,7 +208,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 |---|---|---|
 | `id` | UUID, birincil anahtar | API yanıtında `document_id` olarak döner |
 | `file_name` | string, not null | Yüklenen dosyanın orijinal adı |
-| `file_type` | string, not null | `pdf` \| `docx` \| `jpg` \| `jpeg` \| `png` |
+| `file_type` | string, not null | `pdf` \| `doc` \| `docx` \| `jpg` \| `jpeg` \| `png` |
 | `file_reference` | string, not null | Saklanan dosyanın `backend/storage/` klasörüne göre göreli yolu (`<document_id>.<uzanti>`) |
 | `extracted_text` | text, null | Çıkarılan metnin tamamı; hiç metin çıkmadıysa `null` |
 | `document_type` | string, null | Katalog `id`; `failed` ise `null` |
@@ -228,7 +231,7 @@ Kabul edilmeyen dosyalar (desteklenmeyen tür, 50 MB üstü) için satır oluşt
 
 ## 9. API
 
-**`POST /api/documents/classify`** — girdi: `multipart/form-data` içinde en fazla 50 MB boyutunda tek bir PDF, DOCX, JPG/JPEG veya PNG dosyası.
+**`POST /api/documents/classify`** — girdi: `multipart/form-data` içinde en fazla 50 MB boyutunda tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası.
 
 Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
 
@@ -269,7 +272,7 @@ Hata ve red davranışı:
 | Durum | Veritabanı | İstemciye |
 |---|---|---|
 | Dosya gönderilmemiş (istek doğrulama hatası) | Kayıt yok | `422`, FastAPI'nin standart `{"detail": [...]}` gövdesi |
-| Desteklenen tür değil (`.doc`, GIF, TIFF vb. dahil) veya imza uyuşmuyor | Kayıt yok, dosya saklanmaz | `415`, genel mesaj |
+| Desteklenen tür değil (GIF, TIFF, BMP, WebP, HEIC vb.) veya imza uyuşmuyor | Kayıt yok, dosya saklanmaz | `415`, genel mesaj |
 | 50 MB'ı aşıyor | Kayıt yok, dosya saklanmaz | `413`, genel mesaj |
 | Metin çıkarımı başarısız veya normalize metin < 10 karakter | `failed` kaydı | `422`, `failed` gövdesi |
 | Gemini geçici hatası (network, timeout, `429`, `5xx`) veya geçersiz model çıktısı, 3 deneme de başarısız | `failed` kaydı | `502`, `failed` gövdesi |
@@ -316,7 +319,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 ## 11. MVP kapsamı
 
-- En fazla 50 MB PDF, DOCX, JPG/JPEG ve PNG yükleme; PyMuPDF, python-docx ve Tesseract OCR ile metin çıkarımı
+- En fazla 50 MB PDF, DOC, DOCX, JPG/JPEG ve PNG yükleme; PyMuPDF, legacy-doc, python-docx ve Tesseract OCR ile metin çıkarımı
 - Normalize edilmiş metin için 10 karakter alt sınırı; PDF'te sınırın altında kalan **sayfalarda** ve görüntüye dayalı olup metni 200 karakteri geçmeyen sayfalarda `tur` / 400 dpi OCR fallback; aynı sayfada gömülü metin ile OCR metninin tekrarsız birleştirilmesi; JPG/JPEG/PNG'de doğrudan OCR
 - Orijinal dosyanın storage alanında, çıkarılan metnin veritabanında saklanması
 - Metnin ilk 50.000 karakteriyle tek Gemini çağrısı; 30 sn timeout, geçici hatalarda toplam en fazla 3 deneme
@@ -329,7 +332,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 ## 12. Açıkça kapsam dışı
 
-DOCX için OCR · `.doc` ve desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · görüntüler için otomatik döndürme/OSD ve ön işleme · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kayıt güncelleme/silme endpoint'leri · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri
+DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kayıt güncelleme/silme endpoint'leri · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 

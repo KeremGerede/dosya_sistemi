@@ -1,6 +1,6 @@
 # dosya_sistemi — Belge Sınıflandırma Modülü
 
-Yüklenen **PDF** ve **DOCX** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
+Yüklenen **PDF**, **DOC**, **DOCX** ve **görüntü (JPG/JPEG/PNG)** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
 
 > **Durum: V1.1 tamamlandı, V1.2 üzerinde çalışılıyor.** `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. Taranmış PDF'ler OCR fallback'iyle okunuyor ve kayıtlar arayüzden görüntülenip indirilebiliyor. V1.1 manuel doğrulamasında 15 senaryonun 15'i de beklenen sonucu verdi.
 
@@ -20,14 +20,14 @@ Dosya yükleme
 
 - PDF (metin tabanlı)
 - PDF (taranmış / yalnızca görüntü) — OCR fallback ile, Tesseract kuruluysa
+- DOC (Word 97–2003 binary) — saf Python parser ile; **Word veya LibreOffice kurulu olması gerekmez**
 - DOCX
 - JPG / JPEG / PNG (fotoğraf veya tarama) — doğrudan OCR ile, Tesseract kuruluysa
 
 Şimdilik desteklenmeyen:
 
-- DOC
 - GIF, TIFF, BMP, WebP, HEIC ve diğer dosya türleri
-- DOCX içindeki görüntüler (DOCX'te OCR yapılmaz)
+- DOC/DOCX içindeki görüntüler, makrolar ve biçimlendirme (bu türlerde OCR yapılmaz)
 
 ## Sınıflandırma
 
@@ -41,7 +41,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 ## Teknoloji Yığını
 
-**Backend:** Python · FastAPI · PyMuPDF · python-docx · Google Gemini API (`google-genai`) · Pydantic · SQLAlchemy · PostgreSQL · Alembic
+**Backend:** Python · FastAPI · PyMuPDF · python-docx · legacy-doc · Google Gemini API (`google-genai`) · Pydantic · SQLAlchemy · PostgreSQL · Alembic
 
 **Frontend:** React · Vite · TypeScript (npm, düz CSS)
 
@@ -50,7 +50,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 400 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir. JPG/JPEG/PNG belgelerde gömülü metin aranmaz: dosya tek sayfalık görüntü olarak doğrudan OCR'lanır (`tur`, 400 dpi) ve aynı 10 karakter kuralı uygulanır.
+- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 400 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir. JPG/JPEG/PNG belgelerde gömülü metin aranmaz: dosya tek sayfalık görüntü olarak doğrudan OCR'lanır (`tur`, 400 dpi) ve aynı 10 karakter kuralı uygulanır. DOC (Word 97–2003) belgelerde gövde paragrafları ve tablo hücreleri saf Python `legacy-doc` parser'ıyla okunur; OCR yapılmaz.
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
 - Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
@@ -66,11 +66,11 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 |---|---|
 | `GET /api/documents` | Kayıtları en yeniden eskiye listeler. Yanıt alanları aşağıdakiler (özet ve gönderen bilgisi dahil) + `created_at`; `extracted_text` ve dosyanın storage yolu dönmez |
 | `GET /api/documents/{document_id}` | Tek kaydı, çıkarılan metnin tamamıyla (`extracted_text`) döndürür. Kayıt yoksa `404` |
-| `GET /api/documents/{document_id}/download` | Orijinal dosyayı, yüklendiği adla ve doğru media type ile indirir (PDF / DOCX). Kayıt ya da dosya yoksa `404` |
+| `GET /api/documents/{document_id}/download` | Orijinal dosyayı, yüklendiği adla ve doğru media type ile indirir (PDF, DOC, DOCX, JPG/JPEG, PNG). Kayıt ya da dosya yoksa `404` |
 
 Bu endpoint'ler salt okunurdur: kayıt güncelleme, silme, arama, filtre, sayfalama ve authentication yoktur.
 
-**`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF, DOCX, JPG, JPEG veya PNG dosyası.
+**`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF, DOC, DOCX, JPG, JPEG veya PNG dosyası.
 
 Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
 
@@ -119,6 +119,7 @@ Komutlar Windows PowerShell içindir (macOS/Linux farkları en sonda). Kurulum �
 - **Node.js ve npm** — Vite 8'in desteklediği bir Node.js sürümü (`vite` paketinin `engines` alanı: `^20.19.0 || >=22.12.0`). Proje Node.js 26.7 ve npm 11.19 ile doğrulandı.
 - **Docker Desktop** — `docker compose` komutuyla; yalnızca yerel PostgreSQL 18 için kullanılır.
 - **Gemini API anahtarı** — sınıflandırma gerçek Google Gemini API'sini çağırır; anahtar olmadan backend başlamaz. Testler anahtar gerektirmez.
+- **`.doc` desteği için ek kurulum gerekmez** — Word 97–2003 belgeleri saf Python `legacy-doc` paketiyle okunur. Bu paket `requirements.txt` içindedir; **Microsoft Word, LibreOffice, antiword veya başka bir harici program kurulu olmasına gerek yoktur.**
 - **Tesseract OCR (opsiyonel)** — taranmış PDF'ler ve JPG/JPEG/PNG belgeleri için gerekir; **`tur` dil paketiyle** kurulmalıdır. Kurulu değilse uygulama normal çalışır, ancak taranmış PDF'ler ve görüntü belgeleri `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
   - Windows: `winget install --id tesseract-ocr.tesseract`, kurulum sihirbazında **Turkish** dil bileşenini seçin.
   - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur`
@@ -243,13 +244,14 @@ npm run dev
 
 ### 8. Sistemi kullanma
 
-1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF, DOCX, JPG, JPEG veya PNG seçin.
+1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF, DOC, DOCX, JPG, JPEG veya PNG seçin.
 2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve desteklenen türler dışındaki dosyaları göndermez.
 3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
 4. Sonuçta **Belge Türü**, **Gönderileceği Kurum** ve **Belge Özeti** görünür; belgede açıkça yazıyorsa **Gönderen Kişi** ve **Gönderen Kurum** satırları da eklenir (yazmıyorsa bu satırlar hiç gösterilmez). Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
-5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki dosya türü aksiyonuyla orijinal dosyanın indirilmesi (PDF/DOCX doğru media type ile, JPG/JPEG `image/jpeg`, PNG `image/png`).
+5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki dosya türü aksiyonuyla orijinal dosyanın indirilmesi (PDF `application/pdf`, DOC `application/msword`, DOCX WordprocessingML media type'ı, JPG/JPEG `image/jpeg`, PNG `image/png`).
 
-- **Taranmış PDF'ler:** bir sayfanın gömülü metni yetersizse ya da sayfa görüntüye dayalıyken metni kısa kalıyorsa yalnızca o sayfada OCR fallback devreye girer (metin sayfalarıyla taranmış sayfaları karışık taşıyan PDF'ler ve bozuk metin katmanı olan taramalar dahil); bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
+- **Taranmış PDF'ler:** bir sayfanın gömülü metni yetersizse ya da sayfa görüntüye dayalıyken metni kısa kalıyorsa yalnızca o sayfada OCR fallback devreye girer (metin sayfalarıyla taranmış sayfaları karışık taşıyan PDF'ler ve bozuk metin katmanı olan taramalar dahil); bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOC ve DOCX'te OCR yapılmaz.
+- **`.doc` (Word 97–2003):** gövde paragrafları ve tablo hücreleri saf Python parser ile okunur; Word/LibreOffice gerekmez ve Tesseract kurulu olmasa da çalışır. Bilinen sınırlar: gömülü görüntülerdeki metin, makrolar, header/footer ve biçimlendirme alınmaz; şifreli veya bozuk `.doc` dosyaları `failed` kaydedilir. `.doc` uzantılı ancak Word olmayan OLE dosyaları (XLS/PPT) `415` ile reddedilir.
 - Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
 - API'yi doğrudan denemek için Swagger UI'ı ya da şu komutu kullanabilirsiniz: `curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify`
 

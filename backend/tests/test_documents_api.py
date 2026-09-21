@@ -1,5 +1,6 @@
 import io
 import logging
+import pathlib
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -264,7 +265,7 @@ def test_unsupported_file_returns_415_without_db_or_storage(client, session_fact
     response = upload(client, file_name, content)
 
     assert response.status_code == 415
-    assert response.json() == {"detail": "Yalnızca PDF, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."}
+    assert response.json() == {"detail": "Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."}
     assert all_documents(session_factory) == []
     assert stored_files(storage_dir) == []
 
@@ -832,4 +833,106 @@ def test_list_and_detail_return_image_records_without_file_reference(client, fak
     assert all("file_reference" not in item and "extracted_text" not in item for item in listed)
     assert detail["file_type"] == "png"
     assert detail["extracted_text"] == IMAGE_TEXT
+    assert "file_reference" not in detail
+
+
+# --- Legacy DOC (Word 97-2003) desteği ---
+
+DOC_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "ornek_dilekce.doc"
+DOC_KISA_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "ornek_kisa.doc"
+DOC_TEXT_PARCASI = "Sokağımızdaki çöp konteynerlerinin boşaltılmaması"
+
+
+def doc_content() -> bytes:
+    return DOC_FIXTURE.read_bytes()
+
+
+def test_doc_upload_is_classified(client, session_factory, storage_dir, fake_classify, caplog):
+    calls = fake_classify(classification())
+
+    with caplog.at_level(logging.DEBUG):
+        response = upload(client, "dilekçe raporu.doc", doc_content())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS  # file_reference ve extracted_text yanıtta yok
+    assert body["file_type"] == "doc"
+    assert body["file_name"] == "dilekçe raporu.doc"
+    assert body["status"] == "classified"
+    assert (body["summary"], body["sender_name"], body["sender_institution"]) == (
+        SUMMARY, SENDER_NAME, SENDER_INSTITUTION,
+    )
+    assert len(calls) == 1  # belge başına tek sınıflandırma işlemi
+    assert DOC_TEXT_PARCASI in calls[0]
+    [document] = all_documents(session_factory)
+    assert DOC_TEXT_PARCASI in document.extracted_text
+    assert document.file_reference == f"{document.id}.doc"
+    assert stored_files(storage_dir) == [f"{document.id}.doc"]
+
+
+def test_doc_without_enough_text_is_failed_with_422(client, session_factory):
+    response = upload(client, "kisa.doc", DOC_KISA_FIXTURE.read_bytes())
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["message"] == TEXT_FAILED_MESSAGE
+    assert body["document_type"] is None and body["institution_id"] is None
+    assert all_documents(session_factory)[0].status == "failed"
+
+
+@pytest.mark.parametrize(
+    "file_name, content",
+    [
+        ("sahte.doc", b"duz metin dosyasi"),
+        ("sahte.doc", make_pdf(PDF_TEXT)),
+        ("sahte.doc", make_docx(DOCX_TEXT)),
+    ],
+    ids=["plain-text", "pdf-bytes", "docx-bytes"],
+)
+def test_fake_doc_returns_415(client, session_factory, storage_dir, file_name, content):
+    response = upload(client, file_name, content)
+
+    assert response.status_code == 415
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_oversized_doc_returns_413(client, session_factory, storage_dir, monkeypatch):
+    monkeypatch.setattr(file_service, "MAX_FILE_SIZE", 1000)
+
+    response = upload(client, "buyuk.doc", doc_content())
+
+    assert response.status_code == 413
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_doc_download_returns_original_bytes_with_msword_media_type(client, fake_classify):
+    fake_classify(classification())
+    content = doc_content()
+    document_id = upload(client, "dilekçe raporu.doc", content).json()["document_id"]
+
+    response = client.get(f"{LIST_URL}/{document_id}/download")
+
+    assert response.status_code == 200
+    assert response.content == content  # byte-for-byte aynı dosya
+    assert response.headers["content-type"] == "application/msword"
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment")
+    assert "dilek" in disposition
+    assert document_id not in disposition  # UUID storage adı sızmaz
+
+
+def test_list_and_detail_return_doc_records_without_file_reference(client, fake_classify):
+    fake_classify(classification())
+    document_id = upload(client, "dilekce.doc", doc_content()).json()["document_id"]
+
+    listed = client.get(LIST_URL).json()
+    detail = client.get(f"{LIST_URL}/{document_id}").json()
+
+    assert [item["file_type"] for item in listed] == ["doc"]
+    assert all("file_reference" not in item and "extracted_text" not in item for item in listed)
+    assert detail["file_type"] == "doc"
+    assert DOC_TEXT_PARCASI in detail["extracted_text"]
     assert "file_reference" not in detail

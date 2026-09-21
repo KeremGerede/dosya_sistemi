@@ -1,4 +1,4 @@
-"""Dosya kabul kontrolü, storage'a kaydetme ve PDF/DOCX/görüntü metin çıkarımı.
+"""Dosya kabul kontrolü, storage'a kaydetme ve PDF/DOC/DOCX/görüntü metin çıkarımı.
 
 HTTP yanıtı üretmez ve veritabanına yazmaz. Hataların eşlemesi API katmanında yapılır:
 FileTooLargeError → 413, UnsupportedFileTypeError → 415, TextExtractionError → failed + 422.
@@ -13,8 +13,10 @@ import zipfile
 from pathlib import Path
 
 import docx
+import legacy_doc
 import pymupdf
 from docx.text.paragraph import Paragraph
+from legacy_doc.ole import OleReader
 
 from app import settings
 
@@ -23,9 +25,10 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (D-028)
 MIN_TEXT_LENGTH = 10  # normalize edilmiş metin için (D-026)
 STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"  # backend/storage (D-017)
-FILE_TYPES = ("pdf", "docx", "jpg", "jpeg", "png")
+FILE_TYPES = ("pdf", "doc", "docx", "jpg", "jpeg", "png")
 MEDIA_TYPES = {
     "pdf": "application/pdf",
+    "doc": "application/msword",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
@@ -43,6 +46,10 @@ _ASCII_FOLD = str.maketrans("çÇğĞıIİöÖşŞüÜâÂîÎûÛ", "ccggiiioos
 _TOKEN_PATTERN = re.compile(r"[0-9a-z]{3,}")
 
 _DOCX_MAIN_CONTENT_TYPE = b"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # OLE Compound File (.doc, .xls, .ppt ortak)
+_DOC_WORD_STREAM = "WordDocument"  # yalnızca Word belgelerinde bulunur (D-001)
+# Parser'ın dosya boyutu sınırı kabul sınırıyla aynı tutulur; diğer koruma limitleri varsayılan kalır.
+_DOC_OPTIONS = legacy_doc.ExtractionOptions(max_file_bytes=MAX_FILE_SIZE)
 
 
 class FileTooLargeError(Exception):
@@ -67,11 +74,26 @@ def detect_file_type(file_name: str, content: bytes) -> str:
     extension = Path(file_name).suffix.lower().removeprefix(".")
     if extension == "pdf" and content.startswith(b"%PDF"):
         return "pdf"
+    if extension == "doc" and _is_doc(content):
+        return "doc"
     if extension == "docx" and _is_docx(content):
         return "docx"
     if extension in IMAGE_SIGNATURES and content.startswith(IMAGE_SIGNATURES[extension]):
         return extension
     raise UnsupportedFileTypeError(f"Desteklenmeyen dosya veya içerik uzantıyla uyuşmuyor: {file_name!r}")
+
+
+def _is_doc(content: bytes) -> bool:
+    """OLE imzası tek başına yetmez: XLS/PPT gibi diğer OLE belgeleri de aynı imzayı taşır.
+
+    Word'e özgü `WordDocument` stream'i aranır; bu yalnızca OLE dizinini okur, metin çıkarmaz.
+    """
+    if not content.startswith(_OLE_SIGNATURE):
+        return False
+    try:
+        return OleReader(content, options=_DOC_OPTIONS).has_stream(_DOC_WORD_STREAM)
+    except Exception:  # OLE değil, bozuk ya da okunamayan yapı: geçerli DOC sayılmaz
+        return False
 
 
 def _is_docx(content: bytes) -> bool:
@@ -119,13 +141,15 @@ def extract_text(content: bytes, file_type: str) -> str:
     PDF'te OCR kararı sayfa sayfa verilir (D-003, D-042): kendi metni MIN_TEXT_LENGTH'in altında kalan
     sayfalar OCR'lanır, diğerleri gömülü metniyle kalır. OCR yapılandırılmamışsa veya hata verirse o
     sayfanın gömülü metni kullanılır; yetersizliğe check_text_length karar verir, yani mevcut failed
-    davranışı değişmez. JPG/JPEG/PNG doğrudan OCR'lanır; DOCX'te OCR yapılmaz.
+    davranışı değişmez. JPG/JPEG/PNG doğrudan OCR'lanır; DOC ve DOCX'te OCR yapılmaz.
     """
     if file_type not in FILE_TYPES:
         raise ValueError(f"Geçersiz file_type: {file_type!r}")
     try:
         if file_type == "pdf":
             raw_text = _extract_pdf_text(content)
+        elif file_type == "doc":
+            raw_text = _extract_doc_text(content)
         elif file_type == "docx":
             raw_text = _extract_docx_text(content)
         else:
@@ -212,6 +236,15 @@ def _ocr_page_text(page) -> str:
     except Exception as exc:  # Tesseract yapılandırması, dil dosyası veya sayfa render hatası
         logger.warning("Sayfa OCR'ı başarısız (%s); sayfa gömülü metniyle değerlendiriliyor.", type(exc).__name__)
         return ""
+
+
+def _extract_doc_text(content: bytes) -> str:
+    """Word 97-2003 binary DOC gövde metni; paragraflar ve tablo hücreleri alınır (D-002).
+
+    Saf Python parser kullanılır: Word, LibreOffice veya başka bir harici program gerekmez.
+    OCR yapılmaz; gömülü görüntüler, makrolar ve biçimlendirme kapsam dışıdır.
+    """
+    return legacy_doc.extract_text(content, options=_DOC_OPTIONS).text
 
 
 def _extract_docx_text(content: bytes) -> str:

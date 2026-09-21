@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB sınırını aşıyor."
-UNSUPPORTED_FILE_MESSAGE = "Yalnızca PDF, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."
+UNSUPPORTED_FILE_MESSAGE = "Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."
 TEXT_EXTRACTION_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
 DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."

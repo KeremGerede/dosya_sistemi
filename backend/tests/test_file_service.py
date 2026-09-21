@@ -1,5 +1,6 @@
 import io
 import logging
+import pathlib
 import uuid
 import zipfile
 
@@ -817,4 +818,168 @@ def test_image_media_types():
     assert file_service.MEDIA_TYPES["jpg"] == "image/jpeg"
     assert file_service.MEDIA_TYPES["jpeg"] == "image/jpeg"
     assert file_service.MEDIA_TYPES["png"] == "image/png"
-    assert set(file_service.FILE_TYPES) == {"pdf", "docx", "jpg", "jpeg", "png"}
+    assert set(file_service.FILE_TYPES) == {"pdf", "doc", "docx", "jpg", "jpeg", "png"}
+
+
+# --- Legacy DOC (Word 97-2003) desteği ---
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+DOC_DILEKCE = FIXTURES / "ornek_dilekce.doc"
+DOC_TABLO = FIXTURES / "ornek_tablo.doc"
+DOC_KISA = FIXTURES / "ornek_kisa.doc"
+DOC_UZUN = FIXTURES / "ornek_uzun.doc"
+
+
+def doc_bytes(path: pathlib.Path = DOC_DILEKCE) -> bytes:
+    return path.read_bytes()
+
+
+def test_valid_doc_is_accepted_and_text_extracted():
+    data = doc_bytes()
+
+    assert detect_file_type("dilekce.doc", data) == "doc"
+    text = extract_text(data, "doc")
+    assert "KADIKÖY BELEDİYE BAŞKANLIĞINA" in text
+    assert "çöp konteynerleri" in text
+    assert "şikayetimle birlikte talep ediyorum" in text
+    assert "Ayşe Yıldırım" in text and "21.09.2026" in text
+    check_text_length(text)
+
+
+def test_doc_extension_is_case_insensitive():
+    data = doc_bytes()
+
+    assert detect_file_type("DILEKCE.DOC", data) == "doc"
+    assert detect_file_type("Dilekce.Doc", data) == "doc"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"Bu duz metin, Word belgesi degil.",
+        b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n",
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 64,
+        b"\xff\xd8\xff\xe0" + b"\x00" * 64,
+        b"",
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",  # yalnızca OLE imzası, gövde yok
+    ],
+    ids=["plain-text", "pdf-bytes", "png-bytes", "jpeg-bytes", "empty", "ole-signature-only"],
+)
+def test_doc_extension_with_non_doc_content_is_rejected(content):
+    with pytest.raises(UnsupportedFileTypeError):
+        detect_file_type("dilekce.doc", content)
+
+
+def test_docx_bytes_with_doc_extension_are_rejected():
+    """DOCX bir ZIP'tir, OLE değildir: .doc uzantısıyla gelse de kabul edilmez."""
+    with pytest.raises(UnsupportedFileTypeError):
+        detect_file_type("dilekce.doc", make_docx("Gerçek bir DOCX içeriği"))
+
+
+def test_non_word_ole_with_doc_extension_is_rejected():
+    """OLE imzası tek başına yetmez: WordDocument stream'i olmayan OLE reddedilir (XLS/PPT vb.)."""
+    data = bytearray(doc_bytes())
+    # Dizin girdisindeki "WordDocument" adını bozarak Word olmayan bir OLE taklit edilir.
+    konum = data.find("WordDocument".encode("utf-16-le"))
+    assert konum > 0, "fixture'da WordDocument stream adı bulunamadı"
+    data[konum:konum + 2] = "X".encode("utf-16-le")
+
+    with pytest.raises(UnsupportedFileTypeError):
+        detect_file_type("tablo.doc", bytes(data))
+
+
+def test_truncated_doc_raises_text_extraction_error():
+    """Kabulü geçen ama gövdesi bozuk DOC yeni hata sınıfı üretmez."""
+    bozuk = doc_bytes()[:512] + b"\x00" * 4096
+
+    if _kabul_edildi(bozuk):
+        with pytest.raises(TextExtractionError):
+            extract_text(bozuk, "doc")
+
+
+def _kabul_edildi(content: bytes) -> bool:
+    try:
+        detect_file_type("bozuk.doc", content)
+        return True
+    except UnsupportedFileTypeError:
+        return False
+
+
+def test_doc_turkish_characters_are_preserved():
+    """Fixture metninde geçen Türkçe harfler bozulmadan çıkmalı."""
+    text = extract_text(doc_bytes(), "doc")
+
+    for harf in "çğıöşüĞİÖŞ":
+        assert harf in text, f"Türkçe karakter kayboldu: {harf}"
+    assert "KADIKÖY BELEDİYE BAŞKANLIĞINA" in text
+    assert "Sokağımızdaki çöp konteynerlerinin boşaltılmaması" in text
+
+
+def test_doc_table_cells_are_extracted():
+    text = extract_text(doc_bytes(DOC_TABLO), "doc")
+
+    assert "MALİ HİZMETLER MÜDÜRLÜĞÜNE" in text
+    for hucre in ("Ad Soyad", "Kadir Yalçın", "Evrak No", "2026/7421", "21.09.2026",
+                  "Emlak vergisi tahakkukuna itiraz", "12.450,75 TL"):
+        assert hucre in text, f"tablo hücresi kayıp: {hucre}"
+
+
+def test_long_doc_is_extracted_without_truncation():
+    text = extract_text(doc_bytes(DOC_UZUN), "doc")
+
+    assert len(text) > 5000
+    assert "Paragraf 1." in text and "Paragraf 40." in text  # ilk ve son dolgu paragrafı
+    assert "Asıl talebim" in text and "Mehmet Aksoy" in text  # son bölüm kesilmemiş
+
+
+def test_doc_shorter_than_10_characters_is_rejected():
+    text = extract_text(doc_bytes(DOC_KISA), "doc")
+
+    assert len(text) < MIN_TEXT_LENGTH
+    with pytest.raises(TextExtractionError):
+        check_text_length(text)
+
+
+def test_doc_never_uses_ocr(monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("DOC için OCR çağrılmamalı.")
+
+    monkeypatch.setattr(file_service, "_ocr_page_text", fail_if_called)
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fail_if_called)
+
+    assert "KADIKÖY" in extract_text(doc_bytes(), "doc")
+
+
+def test_doc_storage_file_name_keeps_doc_extension(storage_dir):
+    data = doc_bytes()
+    document_id = uuid.uuid4()
+
+    file_reference = save_file(data, document_id, detect_file_type("Belgem.doc", data))
+
+    assert file_reference == f"{document_id}.doc"
+    assert (storage_dir / file_reference).read_bytes() == data
+    assert "Belgem" not in file_reference  # kullanıcının adı yol olarak kullanılmaz
+
+
+def test_doc_media_type_and_file_types():
+    assert file_service.MEDIA_TYPES["doc"] == "application/msword"
+    assert set(file_service.FILE_TYPES) == {"pdf", "doc", "docx", "jpg", "jpeg", "png"}
+
+
+def test_doc_parser_failure_becomes_text_extraction_error(monkeypatch):
+    """Parser hatası yeni bir hata sınıfı üretmez; mevcut failed + 422 yoluna düşer.
+
+    Belge metni hata mesajına taşınmaz; kullanıcıya dönen genel mesaj API katmanında üretilir.
+    """
+    belge_metni = "GIZLI_DOC_ICERIGI"
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("OLE sector index is outside the file")
+
+    monkeypatch.setattr(file_service, "_extract_doc_text", boom)
+
+    with pytest.raises(TextExtractionError) as exc_info:
+        extract_text(doc_bytes(), "doc")
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)  # özgün hata zincirde kalır
+    assert belge_metni not in str(exc_info.value)
