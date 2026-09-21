@@ -1,4 +1,4 @@
-"""Dosya kabul kontrolü, storage'a kaydetme ve PDF/DOCX metin çıkarımı.
+"""Dosya kabul kontrolü, storage'a kaydetme ve PDF/DOCX/görüntü metin çıkarımı.
 
 HTTP yanıtı üretmez ve veritabanına yazmaz. Hataların eşlemesi API katmanında yapılır:
 FileTooLargeError → 413, UnsupportedFileTypeError → 415, TextExtractionError → failed + 422.
@@ -23,12 +23,17 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (D-028)
 MIN_TEXT_LENGTH = 10  # normalize edilmiş metin için (D-026)
 STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage"  # backend/storage (D-017)
-FILE_TYPES = ("pdf", "docx")
+FILE_TYPES = ("pdf", "docx", "jpg", "jpeg", "png")
 MEDIA_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
 }
-OCR_LANGUAGE = "tur"  # taranmış PDF fallback'i (D-042)
+# Görüntüde uzantı tek başına yetmez; dosya imzası da eşleşmelidir (D-001).
+IMAGE_SIGNATURES = {"jpg": b"\xff\xd8\xff", "jpeg": b"\xff\xd8\xff", "png": b"\x89PNG\r\n\x1a\n"}
+OCR_LANGUAGE = "tur"  # taranmış PDF fallback'i ve görüntü belgeleri (D-042)
 OCR_DPI = 400
 OCR_COVERAGE_MIN = 0.5  # sayfa alanının bu oranı görüntüyse sayfa yapısal olarak taranmış sayılır (D-003)
 OCR_SHORT_TEXT_MAX = 200  # taranmış sayfada bu uzunluğa kadar gömülü metin OCR ile birlikte değerlendirilir
@@ -45,7 +50,7 @@ class FileTooLargeError(Exception):
 
 
 class UnsupportedFileTypeError(Exception):
-    """Dosya geçerli bir PDF veya DOCX değil."""
+    """Dosya geçerli bir PDF, DOCX, JPG/JPEG veya PNG değil."""
 
 
 class TextExtractionError(Exception):
@@ -58,12 +63,14 @@ def check_file_size(size: int) -> None:
 
 
 def detect_file_type(file_name: str, content: bytes) -> str:
-    """Uzantı ve içerik birlikte doğrulanır (content-type'a güvenilmez). "pdf" veya "docx" döner."""
-    extension = Path(file_name).suffix.lower()
-    if extension == ".pdf" and content.startswith(b"%PDF"):
+    """Uzantı ve içerik birlikte doğrulanır (content-type'a güvenilmez); FILE_TYPES değerlerinden biri döner."""
+    extension = Path(file_name).suffix.lower().removeprefix(".")
+    if extension == "pdf" and content.startswith(b"%PDF"):
         return "pdf"
-    if extension == ".docx" and _is_docx(content):
+    if extension == "docx" and _is_docx(content):
         return "docx"
+    if extension in IMAGE_SIGNATURES and content.startswith(IMAGE_SIGNATURES[extension]):
+        return extension
     raise UnsupportedFileTypeError(f"Desteklenmeyen dosya veya içerik uzantıyla uyuşmuyor: {file_name!r}")
 
 
@@ -112,15 +119,31 @@ def extract_text(content: bytes, file_type: str) -> str:
     PDF'te OCR kararı sayfa sayfa verilir (D-003, D-042): kendi metni MIN_TEXT_LENGTH'in altında kalan
     sayfalar OCR'lanır, diğerleri gömülü metniyle kalır. OCR yapılandırılmamışsa veya hata verirse o
     sayfanın gömülü metni kullanılır; yetersizliğe check_text_length karar verir, yani mevcut failed
-    davranışı değişmez.
+    davranışı değişmez. JPG/JPEG/PNG doğrudan OCR'lanır; DOCX'te OCR yapılmaz.
     """
     if file_type not in FILE_TYPES:
         raise ValueError(f"Geçersiz file_type: {file_type!r}")
     try:
-        raw_text = _extract_pdf_text(content) if file_type == "pdf" else _extract_docx_text(content)
+        if file_type == "pdf":
+            raw_text = _extract_pdf_text(content)
+        elif file_type == "docx":
+            raw_text = _extract_docx_text(content)
+        else:
+            raw_text = _extract_image_text(content, file_type)
     except Exception as exc:  # bozuk, şifreli veya okunamayan dosya
         raise TextExtractionError(f"{file_type} metni çıkarılamadı: {exc}") from exc
     return normalize_text(raw_text)
+
+
+def _extract_image_text(content: bytes, file_type: str) -> str:
+    """Görüntü belgesi tek sayfa olarak doğrudan OCR'lanır (D-001, D-042).
+
+    Gömülü metin aranmaz ve PDF'e özgü sayfa/yapı kararları (D-003) uygulanmaz: görüntü zaten
+    baştan taranmış bir belgedir. OCR yapılandırılmamışsa veya hata verirse boş metin döner ve
+    yetersizliğe check_text_length karar verir.
+    """
+    with pymupdf.open(stream=content, filetype=file_type) as image:
+        return _ocr_page_text(image[0])
 
 
 def _extract_pdf_text(content: bytes) -> str:

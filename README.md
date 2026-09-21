@@ -21,11 +21,12 @@ Dosya yükleme
 - PDF (metin tabanlı)
 - PDF (taranmış / yalnızca görüntü) — OCR fallback ile, Tesseract kuruluysa
 - DOCX
+- JPG / JPEG / PNG (fotoğraf veya tarama) — doğrudan OCR ile, Tesseract kuruluysa
 
 Şimdilik desteklenmeyen:
 
 - DOC
-- diğer dosya türleri
+- GIF, TIFF, BMP, WebP, HEIC ve diğer dosya türleri
 - DOCX içindeki görüntüler (DOCX'te OCR yapılmaz)
 
 ## Sınıflandırma
@@ -49,7 +50,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 ## Temel MVP Kuralları
 
 - Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 400 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir.
+- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 400 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir. JPG/JPEG/PNG belgelerde gömülü metin aranmaz: dosya tek sayfalık görüntü olarak doğrudan OCR'lanır (`tur`, 400 dpi) ve aynı 10 karakter kuralı uygulanır.
 - Gemini'ye en fazla **50.000 karakter** gönderilir.
 - Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
 - Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
@@ -69,7 +70,7 @@ Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar ara
 
 Bu endpoint'ler salt okunurdur: kayıt güncelleme, silme, arama, filtre, sayfalama ve authentication yoktur.
 
-**`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF veya DOCX dosyası.
+**`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF, DOCX, JPG, JPEG veya PNG dosyası.
 
 Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
 
@@ -118,7 +119,7 @@ Komutlar Windows PowerShell içindir (macOS/Linux farkları en sonda). Kurulum �
 - **Node.js ve npm** — Vite 8'in desteklediği bir Node.js sürümü (`vite` paketinin `engines` alanı: `^20.19.0 || >=22.12.0`). Proje Node.js 26.7 ve npm 11.19 ile doğrulandı.
 - **Docker Desktop** — `docker compose` komutuyla; yalnızca yerel PostgreSQL 18 için kullanılır.
 - **Gemini API anahtarı** — sınıflandırma gerçek Google Gemini API'sini çağırır; anahtar olmadan backend başlamaz. Testler anahtar gerektirmez.
-- **Tesseract OCR (opsiyonel)** — yalnızca taranmış PDF'ler için gerekir; **`tur` dil paketiyle** kurulmalıdır. Kurulu değilse uygulama normal çalışır, taranmış PDF'ler `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
+- **Tesseract OCR (opsiyonel)** — taranmış PDF'ler ve JPG/JPEG/PNG belgeleri için gerekir; **`tur` dil paketiyle** kurulmalıdır. Kurulu değilse uygulama normal çalışır, ancak taranmış PDF'ler ve görüntü belgeleri `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
   - Windows: `winget install --id tesseract-ocr.tesseract`, kurulum sihirbazında **Turkish** dil bileşenini seçin.
   - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur`
   - macOS: `brew install tesseract tesseract-lang`
@@ -168,7 +169,7 @@ Ardından `backend/.env` dosyasını düzenleyin:
 | `GEMINI_API_KEY` | Kendi Gemini API anahtarınız (şablonda boştur) |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` (şablondaki değer) |
 | `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` (şablondaki değer) |
-| `TESSDATA_PREFIX` | **Opsiyonel.** Tesseract `tessdata` klasörünün yolu; taranmış PDF'lerde OCR için. Boş bırakılırsa OCR atlanır |
+| `TESSDATA_PREFIX` | **Opsiyonel.** Tesseract `tessdata` klasörünün yolu; taranmış PDF'lerde ve JPG/JPEG/PNG belgelerinde OCR için. Boş bırakılırsa OCR atlanır |
 
 - İlk üç değişken zorunludur; biri eksikse backend (ve `/health`) başlamaz. Model adının kodda varsayılanı yoktur.
 - `TESSDATA_PREFIX` opsiyoneldir ve yalnızca OCR fallback'ini etkiler; tanımlı değilse uygulama normal başlar. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` bulunmalıdır (aktif OCR dili yalnızca `tur`).
@@ -200,7 +201,7 @@ alembic upgrade head
 alembic current
 ```
 
-- `alembic current` çıktısı `(head)` ile bitmelidir (şu an `2ab2daa5828a (head)`).
+- `alembic current` çıktısı `(head)` ile bitmelidir (şu an `cedf33674167 (head)`).
 - Alembic `alembic.ini` dosyasını ve `app` paketini çalışma dizininden bulduğu için bu komutlar `backend/` içinden çalıştırılmalıdır. Bağlantı adresi `.env`'deki `DATABASE_URL`'den okunur.
 
 ### 6. Backend'i başlatma
@@ -242,11 +243,11 @@ npm run dev
 
 ### 8. Sistemi kullanma
 
-1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF veya DOCX seçin.
-2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve PDF/DOCX dışındaki dosyaları göndermez.
+1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF, DOCX, JPG, JPEG veya PNG seçin.
+2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve desteklenen türler dışındaki dosyaları göndermez.
 3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
 4. Sonuçta **Belge Türü**, **Gönderileceği Kurum** ve **Belge Özeti** görünür; belgede açıkça yazıyorsa **Gönderen Kişi** ve **Gönderen Kurum** satırları da eklenir (yazmıyorsa bu satırlar hiç gösterilmez). Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
-5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki PDF/DOCX aksiyonuyla orijinal dosyanın indirilmesi.
+5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki dosya türü aksiyonuyla orijinal dosyanın indirilmesi (PDF/DOCX doğru media type ile, JPG/JPEG `image/jpeg`, PNG `image/png`).
 
 - **Taranmış PDF'ler:** bir sayfanın gömülü metni yetersizse ya da sayfa görüntüye dayalıyken metni kısa kalıyorsa yalnızca o sayfada OCR fallback devreye girer (metin sayfalarıyla taranmış sayfaları karışık taşıyan PDF'ler ve bozuk metin katmanı olan taramalar dahil); bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOCX'te OCR yapılmaz.
 - Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.

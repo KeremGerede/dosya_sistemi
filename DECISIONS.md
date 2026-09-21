@@ -13,9 +13,13 @@
 
 ## Kapsam ve dosya işleme
 
-### D-001 — Desteklenen dosya türleri: PDF ve DOCX
-- **Karar:** Sistem yalnızca PDF ve DOCX dosyalarını kabul eder. PDF'te gömülü metin yoksa OCR fallback devreye girer (D-003), yani taranmış PDF'ler de desteklenir; DOCX'te OCR yapılmaz, dolayısıyla DOCX metin tabanlı olmalıdır. Eski `.doc` formatı ve diğer tüm dosya türleri desteklenmez ve reddedilir.
-- **Gerekçe:** Dilekçe ve başvurularda yaygın iki format; ikisi de hafif Python kütüphaneleriyle doğrudan okunabilir. `.doc` eski ikili format olduğundan ek dönüştürme aracı gerektirir.
+### D-001 — Desteklenen dosya türleri: PDF, DOCX, JPG/JPEG ve PNG
+- **Karar:** Sistem PDF, DOCX, JPG/JPEG ve PNG dosyalarını kabul eder. Metin çıkarımı türe göre ayrışır:
+  - **PDF** — gömülü metin okunur; gereken sayfalarda OCR fallback devreye girer (D-003), yani taranmış ve hybrid PDF'ler de desteklenir.
+  - **DOCX** — python-docx ile okunur, OCR yapılmaz; dolayısıyla DOCX metin tabanlı olmalıdır.
+  - **JPG/JPEG/PNG** — gömülü metin aranmaz, belge tek sayfalık bir görüntü kabul edilip **doğrudan** OCR'lanır (D-042). PDF'e özgü sayfa/yapı kararları (D-003) uygulanmaz.
+  Kabulde uzantı tek başına yetmez: uzantı ile dosya imzası birlikte doğrulanır (PDF `%PDF`, DOCX ZIP + WordprocessingML, JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`); istemcinin gönderdiği content-type'a güvenilmez. Eski `.doc` formatı ve GIF, TIFF, BMP, WebP, HEIC dahil diğer tüm türler desteklenmez ve reddedilir.
+- **Gerekçe:** Vatandaş dilekçeleri sıklıkla telefonla fotoğraflanarak veya taranarak JPG/PNG olarak geliyordu ve bu belgeler sisteme hiç alınamıyordu. Görüntüler için gereken OCR hattı taranmış PDF'ler nedeniyle zaten mevcut; yeni motor, servis veya bağımlılık gerekmeden PyMuPDF görüntüyü tek sayfalık belge olarak açıp aynı Tesseract yoluna verebiliyor. `.doc` eski ikili format olduğundan ek dönüştürme aracı gerektirir; diğer görüntü formatları ise gerçek bir ihtiyaç doğmadan kapsamı genişletirdi.
 
 ### D-002 — Metin çıkarımı: PDF için PyMuPDF, DOCX için python-docx
 - **Karar:** PDF metni PyMuPDF ile, DOCX metni python-docx ile çıkarılır.
@@ -29,9 +33,9 @@
 - **Aynı sayfada gömülü metin + OCR:** İkinci durumda iki metin deterministik olarak karşılaştırılır (ikinci bir LLM çağrısı yoktur): gömülü metnin kelime benzeri parçalarının tamamı OCR metninde de varsa yalnızca OCR metni kullanılır (aynı içerik iki kez yazılmaz), en az biri yoksa iki metin de sayfa sırasıyla korunur (bilgi kaybı olmaz). Kelime benzeri parçası olmayan bozuk katmanlar korunacak bilgi taşımadığı için OCR metnine bırakılır.
 - **Gerekçe:** V1'de OCR kapsam dışıydı ve taranmış dilekçeler doğrudan `failed` oluyordu. Lokal OCR, ek servis ya da API maliyeti getirmeden bu belgeleri sınıflandırılabilir hale getirir; başarısız olduğunda akış V1'deki davranışa döner. Karar belge düzeyinde verildiğinde hybrid PDF'ler kaçıyordu (P1): kapak/evrak sayfasının metni eşiği geçtiği için taranmış asıl dilekçe hiç okunmuyordu. Yalnızca uzunluğa bakmak da yetmiyordu (P2): benchmark senaryo 14'te görüntü tamamen okunabilirken 26–33 karakterlik bozuk bir metin katmanı eşiği geçtiği için OCR hiç çalışmıyor ve belge `other` / `needs_review` olarak kapanıyordu; yapısal koşul eklendikten sonra aynı belge `complaint` / `temizlik_isleri` / `classified` oldu. Eşikler ölçülerek seçildi: kapsama %30–%72 ve uzunluk 100–400 aralığının tamamı 30 sayfalık korpusta sapmasız çalıştı, %50 ve 200 bu aralıkların ortasıdır. İçerik temelli "% alfabetik karakter" gibi kurallar ölçümde elendi: gerçek tarih, TCKN/VKN, sayı tablosu, madde numarası ve kısa resmi form metinlerinin çoğunu bozuk sayıyorlardı. Yapısal koşul bu metinlere hiç bakmaz, çünkü dijital sayfalarda görüntü kapsaması sıfıra yakındır.
 
-### D-042 — OCR fallback: PyMuPDF'in yerleşik Tesseract'ı, `tur`, 400 dpi
+### D-042 — OCR: PyMuPDF'in yerleşik Tesseract'ı, `tur`, 400 dpi
 - **Karar:**
-  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle **sayfa başına** yapılır (D-003). `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
+  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle **sayfa başına** yapılır: PDF'te gereken sayfalarda fallback olarak (D-003), JPG/JPEG/PNG'de ise tek sayfalık görüntünün tamamında doğrudan (D-001). `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
   - Sayfanın "yapısal olarak görüntüye dayandığı", PyMuPDF'in `get_image_info` bilgisiyle ölçülür: sayfa dikdörtgeniyle kesişen görüntü alanlarının toplamı / sayfa alanı. Yeni kütüphane, sayfa render'ı veya ön işleme eklenmez; bu ölçüm yalnızca gömülü metni 10–200 karakter arasında olan sayfalarda yapılır.
   - Dil `tur`, çözünürlük 400 dpi. İkisi de `file_service` içinde tek yerde sabittir. Belgeler Türkçe olduğu için İngilizce model eklenmez: gerçekçi bozulma testlerinde `tur+eng` Türkçe karakterleri daha çok kaybediyordu (özellikle `Ç→C`) ve hiçbir senaryoda öne geçmedi. Çözünürlük 300'den 400'e ölçümle çıkarıldı: el yazısı ve bozulmuş tarama korpusunda ortalama CER 0,292 → 0,237, tamamen düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru okunan rakam 14/22 → 16/22; basılı/dijital belgelerde çıkarılan metin değişmedi. 600 dpi ölçüldü ve **geri adım** attığı için (CER 0,315; form senaryosunda rakamların tamamı bozuldu) kullanılmaz. PSM/OEM ayarlanmaz: PyMuPDF'in `get_textpage_ocr` API'si bu parametreleri kabul etmez ve ayrı bir Tesseract süreci bu kararın kapsamı dışındadır.
   - Tesseract dil dosyalarının klasörü `TESSDATA_PREFIX` ortam değişkeninden okunur ve OCR çağrısına doğrudan geçilir. Değişken **opsiyoneldir**: tanımlı değilse OCR atlanır. Kodda platforma özel kurulum yolu yazılmaz.
@@ -40,8 +44,8 @@
 
 ### D-004 — Hatalı dosya ve `failed` kayıt davranışı
 - **Karar:**
-  - PDF veya DOCX olmayan dosyalar ve 50 MB'ı aşan dosyalar (D-028) sisteme kabul edilmez: storage'a yazılmaz, `documents` kaydı oluşturulmaz, 4xx ile reddedilir.
-  - Kabul edilen PDF/DOCX için metin çıkarımı başarısız olursa, yeterli metin çıkarılamazsa (D-026) veya Gemini çağrısı başarısız olursa (D-033) belge `status = failed` olarak kaydedilir.
+  - Desteklenen türler (D-001: PDF, DOCX, JPG/JPEG, PNG) dışındaki dosyalar ve 50 MB'ı aşan dosyalar (D-028) sisteme kabul edilmez: storage'a yazılmaz, `documents` kaydı oluşturulmaz, 4xx ile reddedilir. Uzantısı doğru ama imzası uymayan dosyalar da (ör. `.png` uzantılı düz metin) kabul edilmez.
+  - Kabul edilen belgede metin çıkarımı başarısız olursa, yeterli metin çıkarılamazsa (D-026) veya Gemini çağrısı başarısız olursa (D-033) belge `status = failed` olarak kaydedilir. Görüntülerde OCR yapılandırılmamışsa ya da dosya bozuk/eksikse akış aynı `failed` yoluna düşer; yeni hata sınıfı veya HTTP kodu eklenmez.
   - `failed` kayıtlarında `document_type = null`, `institution_id = null`, `needs_review = false`, `review_reason = null`.
   - Teknik hata detayları kullanıcıya gösterilmez; loglanır. Kullanıcıya genel bir mesaj döner (HTTP kodları ve yanıt gövdesi: D-034).
 - **Gerekçe:** Kabul edilmeyen dosyalar gereksiz kayıt üretmez; işlenmeye alınmış belgeler izlenebilir kalır. Teknik detaylar kullanıcıya fayda sağlamaz ve sistemin iç yapısını açığa çıkarır.
@@ -181,7 +185,7 @@
 ## API ve mimari
 
 ### D-019 — Tek yazma endpoint'i: `POST /api/documents/classify`, ayrıca operasyonel `GET /health`
-- **Karar:** Kayıt **oluşturan** tek endpoint `POST /api/documents/classify`'dır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF veya DOCX dosyası. Kayıtları görüntülemeye yönelik salt okunur endpoint'ler ayrıca tanımlıdır (D-043). Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. Güncelleme ve silme endpoint'i yoktur. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
+- **Karar:** Kayıt **oluşturan** tek endpoint `POST /api/documents/classify`'dır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF, DOCX, JPG/JPEG veya PNG dosyası (D-001). Kayıtları görüntülemeye yönelik salt okunur endpoint'ler ayrıca tanımlıdır (D-043). Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. Güncelleme ve silme endpoint'i yoktur. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
 - **Gerekçe:** Sınıflandırma akışının tamamı tek çağrıda karşılanır; yazma yüzeyi tek noktada kalır. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
 
 ### D-043 — Salt okunur kayıt endpoint'leri (V1.2)

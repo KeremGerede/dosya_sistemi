@@ -658,3 +658,163 @@ def test_ocr_dpi_is_the_same_on_hybrid_and_structural_pages(monkeypatch):
     calls.clear()
     extract_text(make_scan_pdf("Taranmis dilekce metni", layer=GARBAGE_LAYER), "pdf")
     assert calls == [(0, "tur", 400)]
+
+
+# --- JPG / JPEG / PNG desteği ---
+
+IMAGE_OCR_TEXT = "KADIKOY BELEDIYE BASKANLIGINA Sokagimizdaki copler toplanmiyor, geregini arz ederim."
+
+
+def make_image(text: str = "Taranmis dilekce metni", image_format: str = "jpeg") -> bytes:
+    """Tek sayfalık bir belge görüntüsü üretir (gerçek JPEG/PNG baytları)."""
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        if text:
+            page.insert_text((72, 72), text)
+        pixmap = page.get_pixmap(dpi=96)
+        return pixmap.tobytes("jpeg", jpg_quality=90) if image_format == "jpeg" else pixmap.tobytes("png")
+
+
+@pytest.fixture
+def image_ocr_spy(monkeypatch):
+    """_ocr_page_text yerine geçer; OCR çağrısı sayısını kaydeder."""
+    def install(text=IMAGE_OCR_TEXT):
+        calls = []
+
+        def fake(page):
+            calls.append(page.number)
+            return text
+
+        monkeypatch.setattr(file_service, "_ocr_page_text", fake)
+        return calls
+
+    return install
+
+
+@pytest.mark.parametrize(
+    "file_name, image_format, expected",
+    [
+        ("foto.jpg", "jpeg", "jpg"),
+        ("foto.jpeg", "jpeg", "jpeg"),
+        ("foto.png", "png", "png"),
+        ("FOTO.JPG", "jpeg", "jpg"),  # uzantı büyük harfli olabilir (PDF/DOCX ile aynı davranış)
+        ("FOTO.PNG", "png", "png"),
+    ],
+)
+def test_valid_images_are_accepted(file_name, image_format, expected):
+    assert detect_file_type(file_name, make_image(image_format=image_format)) == expected
+
+
+@pytest.mark.parametrize(
+    "file_name, content",
+    [
+        ("sahte.jpg", b"bu duz metin, JPEG degil"),
+        ("sahte.jpeg", b"bu duz metin, JPEG degil"),
+        ("sahte.png", b"bu duz metin, PNG degil"),
+        ("karisik.png", make_image(image_format="jpeg")),  # JPEG baytları .png uzantısıyla
+        ("karisik.jpg", make_image(image_format="png")),  # PNG baytları .jpg uzantısıyla
+        ("foto.gif", make_image(image_format="png")),  # kapsam dışı uzantı
+        ("foto.bmp", make_image(image_format="jpeg")),
+    ],
+    ids=["txt-as-jpg", "txt-as-jpeg", "txt-as-png", "jpeg-bytes-png-ext", "png-bytes-jpg-ext", "gif", "bmp"],
+)
+def test_image_extension_and_signature_must_match(file_name, content):
+    with pytest.raises(UnsupportedFileTypeError):
+        detect_file_type(file_name, content)
+
+
+@pytest.mark.parametrize("file_type, image_format", [("jpg", "jpeg"), ("jpeg", "jpeg"), ("png", "png")])
+def test_image_is_read_with_ocr_in_turkish_at_400_dpi(monkeypatch, file_type, image_format):
+    calls = []
+
+    def fake_ocr(self, *args, **kwargs):
+        calls.append((kwargs["language"], kwargs["dpi"], kwargs["tessdata"]))
+        return self.get_textpage()
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fake_ocr)
+
+    extract_text(make_image(image_format=image_format), file_type)
+
+    assert calls == [("tur", 400, "/tessdata")]
+
+
+@pytest.mark.parametrize("file_type, image_format", [("jpg", "jpeg"), ("jpeg", "jpeg"), ("png", "png")])
+def test_image_text_comes_from_ocr_only(image_ocr_spy, file_type, image_format):
+    """Görüntüde gömülü metin aranmaz; PDF'e özgü P1/P2 yapısal mantığı uygulanmaz."""
+    calls = image_ocr_spy()
+
+    text = extract_text(make_image(image_format=image_format), file_type)
+
+    assert text == IMAGE_OCR_TEXT
+    assert calls == [0]  # tek sayfalık görüntü, tek OCR çağrısı
+    check_text_length(text)
+
+
+def test_image_with_too_short_ocr_result_is_rejected(image_ocr_spy):
+    image_ocr_spy("kısa")
+
+    text = extract_text(make_image(), "jpg")
+
+    assert text == "kısa"
+    with pytest.raises(TextExtractionError):
+        check_text_length(text)
+
+
+def test_image_ocr_failure_falls_back_to_safe_text_extraction_failure(monkeypatch, caplog):
+    """OCR hatası yeni hata sınıfı üretmez; belge yetersiz metinle failed olur, ham hata sızmaz."""
+    secret = "GORUNTU_BELGE_ICERIGI"
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(f"tesseract patladi: {secret}")
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", "/tessdata")
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", boom)
+
+    with caplog.at_level(logging.WARNING):
+        text = extract_text(make_image(secret), "png")
+
+    assert text == ""
+    with pytest.raises(TextExtractionError):
+        check_text_length(text)
+    assert secret not in caplog.text
+
+
+def test_image_ocr_is_skipped_when_tessdata_prefix_is_not_configured(monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("TESSDATA_PREFIX tanımlı değilken OCR denenmemeli.")
+
+    monkeypatch.setattr(file_service.settings, "TESSDATA_PREFIX", None)
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fail_if_called)
+
+    assert extract_text(make_image(), "jpeg") == ""
+
+
+@pytest.mark.parametrize("file_type", ["jpg", "jpeg", "png"])
+def test_truncated_image_raises_text_extraction_error(file_type):
+    truncated = make_image(image_format="png" if file_type == "png" else "jpeg")[:120]
+
+    with pytest.raises(TextExtractionError):
+        extract_text(truncated, file_type)
+
+
+@pytest.mark.parametrize(
+    "file_name, image_format, extension",
+    [("foto.jpg", "jpeg", "jpg"), ("foto.jpeg", "jpeg", "jpeg"), ("foto.png", "png", "png")],
+)
+def test_image_storage_file_name_keeps_uploaded_extension(storage_dir, file_name, image_format, extension):
+    content = make_image(image_format=image_format)
+    document_id = uuid.uuid4()
+
+    file_reference = save_file(content, document_id, detect_file_type(file_name, content))
+
+    assert file_reference == f"{document_id}.{extension}"
+    assert (storage_dir / file_reference).read_bytes() == content
+    assert "foto" not in file_reference  # kullanıcının dosya adı yol olarak kullanılmaz
+
+
+def test_image_media_types():
+    assert file_service.MEDIA_TYPES["jpg"] == "image/jpeg"
+    assert file_service.MEDIA_TYPES["jpeg"] == "image/jpeg"
+    assert file_service.MEDIA_TYPES["png"] == "image/png"
+    assert set(file_service.FILE_TYPES) == {"pdf", "docx", "jpg", "jpeg", "png"}

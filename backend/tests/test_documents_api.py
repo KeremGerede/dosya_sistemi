@@ -264,7 +264,7 @@ def test_unsupported_file_returns_415_without_db_or_storage(client, session_fact
     response = upload(client, file_name, content)
 
     assert response.status_code == 415
-    assert response.json() == {"detail": "Yalnızca metin tabanlı PDF veya DOCX dosyaları kabul edilir."}
+    assert response.json() == {"detail": "Yalnızca PDF, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."}
     assert all_documents(session_factory) == []
     assert stored_files(storage_dir) == []
 
@@ -706,3 +706,130 @@ def test_model_columns_match_migrated_schema():
     assert {"summary", "sender_name", "sender_institution"} <= columns
     for name in ("summary", "sender_name", "sender_institution"):
         assert Document.__table__.columns[name].nullable is True
+
+
+# --- JPG / JPEG / PNG desteği ---
+
+IMAGE_TEXT = f"Sayin yetkili, sokaktaki cukur onarilmali. {SECRET_MARKER}"
+
+
+def make_image(text: str = IMAGE_TEXT, image_format: str = "jpeg") -> bytes:
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        if text:
+            page.insert_text((72, 72), text)
+        pixmap = page.get_pixmap(dpi=96)
+        return pixmap.tobytes("jpeg", jpg_quality=90) if image_format == "jpeg" else pixmap.tobytes("png")
+
+
+@pytest.fixture
+def fake_image_ocr(monkeypatch):
+    """Görüntü OCR'ını sabit metinle değiştirir; testler gerçek Tesseract gerektirmez."""
+    def install(text=IMAGE_TEXT):
+        monkeypatch.setattr(file_service, "_ocr_page_text", lambda page: text)
+
+    return install
+
+
+@pytest.mark.parametrize(
+    "file_name, image_format, expected_type",
+    [("foto.jpg", "jpeg", "jpg"), ("foto.jpeg", "jpeg", "jpeg"), ("foto.png", "png", "png")],
+)
+def test_image_upload_is_classified(client, fake_classify, fake_image_ocr, session_factory, storage_dir,
+                                    file_name, image_format, expected_type):
+    fake_image_ocr()
+    calls = fake_classify(classification())
+
+    response = upload(client, file_name, make_image(image_format=image_format))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS
+    assert body["file_type"] == expected_type
+    assert body["file_name"] == file_name
+    assert body["status"] == "classified"
+    assert body["institution_id"] == INSTITUTION
+    assert calls == [IMAGE_TEXT]  # OCR metni tek Gemini çağrısına gitti
+    document = all_documents(session_factory)[0]
+    assert document.extracted_text == IMAGE_TEXT
+    assert stored_files(storage_dir) == [f"{body['document_id']}.{expected_type}"]
+
+
+def test_image_without_enough_text_is_failed_with_422(client, fake_image_ocr, session_factory):
+    fake_image_ocr("kısa")
+
+    response = upload(client, "foto.png", make_image(image_format="png"))
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["message"] == TEXT_FAILED_MESSAGE
+    assert body["document_type"] is None and body["institution_id"] is None
+    assert all_documents(session_factory)[0].status == "failed"
+
+
+@pytest.mark.parametrize(
+    "file_name, content",
+    [
+        ("sahte.jpg", b"duz metin dosyasi"),
+        ("sahte.png", b"duz metin dosyasi"),
+        ("foto.gif", make_image(image_format="png")),
+    ],
+    ids=["fake-jpg", "fake-png", "gif"],
+)
+def test_unsupported_image_returns_415(client, session_factory, storage_dir, file_name, content):
+    response = upload(client, file_name, content)
+
+    assert response.status_code == 415
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_oversized_image_returns_413(client, session_factory, storage_dir, monkeypatch):
+    monkeypatch.setattr(file_service, "MAX_FILE_SIZE", 1000)
+
+    response = upload(client, "foto.jpg", make_image() + b"\x00" * 1001)
+
+    assert response.status_code == 413
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+@pytest.mark.parametrize(
+    "file_name, image_format, media_type",
+    [
+        ("foto.jpg", "jpeg", "image/jpeg"),
+        ("foto.jpeg", "jpeg", "image/jpeg"),
+        ("tarama raporu.png", "png", "image/png"),
+    ],
+)
+def test_image_download_returns_original_bytes_and_media_type(client, fake_classify, fake_image_ocr,
+                                                              file_name, image_format, media_type):
+    fake_image_ocr()
+    fake_classify(classification())
+    content = make_image(image_format=image_format)
+    document_id = upload(client, file_name, content).json()["document_id"]
+
+    response = client.get(f"{LIST_URL}/{document_id}/download")
+
+    assert response.status_code == 200
+    assert response.content == content  # byte-for-byte aynı dosya
+    assert response.headers["content-type"] == media_type
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment")
+    assert document_id not in disposition  # storage adı (UUID) sızmaz
+
+
+def test_list_and_detail_return_image_records_without_file_reference(client, fake_classify, fake_image_ocr):
+    fake_image_ocr()
+    fake_classify(classification())
+    document_id = upload(client, "foto.png", make_image(image_format="png")).json()["document_id"]
+
+    listed = client.get(LIST_URL).json()
+    detail = client.get(f"{LIST_URL}/{document_id}").json()
+
+    assert [item["file_type"] for item in listed] == ["png"]
+    assert all("file_reference" not in item and "extracted_text" not in item for item in listed)
+    assert detail["file_type"] == "png"
+    assert detail["extracted_text"] == IMAGE_TEXT
+    assert "file_reference" not in detail
