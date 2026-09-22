@@ -1,132 +1,294 @@
-# dosya_sistemi — Belge Sınıflandırma Modülü
+# dosya_sistemi
 
-Yüklenen **PDF**, **DOC**, **DOCX** ve **görüntü (JPG/JPEG/PNG)** belgelerinden metni çıkarıp belgenin **türünü** ve ilgili **kurum/birimi** Google Gemini ile sınıflandıran küçük bir modül. Başka sistemlere entegre edilebilecek şekilde API odaklı ve bilinçli olarak sade tasarlanmıştır.
+Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki belgeleri işleyen; içerikten metin çıkaran veya gerektiğinde OCR uygulayan; belge türünü ve ilgili kurumu Google Gemini ile belirleyen; belge özeti ile gönderen bilgilerini üreten ve sonuçları PostgreSQL üzerinde saklayan yapay zekâ destekli belge sınıflandırma modülü.
 
-> **Durum: V1.1 tamamlandı, V1.2 üzerinde çalışılıyor.** `POST /api/documents/classify` aşağıdaki akışı uçtan uca çalıştırıyor. Frontend (React + Vite + TypeScript) üzerinden belge yüklenip sonuç Türkçe tür ve kurum adlarıyla gösteriliyor; incelemeye düşen belgeler ve hatalar kullanıcıya anlaşılır mesajlarla bildiriliyor. Taranmış PDF'ler OCR fallback'iyle okunuyor ve kayıtlar arayüzden görüntülenip indirilebiliyor. V1.1 manuel doğrulamasında 15 senaryonun 15'i de beklenen sonucu verdi.
+Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-## MVP Akışı
+**Durum: V1.3 geliştiriliyor** — V1.0, V1.1 ve V1.2 tamamlandı.
 
-```text
-Dosya yükleme
-  → doğrulama (tür, boyut)
-  → storage'a kaydetme
-  → metin çıkarma
-  → Gemini ile sınıflandırma
-  → veritabanına kaydetme
-  → API yanıtı
+## İçindekiler
+
+- [Proje Özeti](#proje-özeti)
+- [Sürüm Geçmişi](#sürüm-geçmişi)
+- [Projenin Amacı](#projenin-amacı)
+- [Temel Özellikler](#temel-özellikler)
+- [Kapsam](#kapsam)
+- [Desteklenen Belge Türleri](#desteklenen-belge-türleri)
+- [Nasıl Çalışır](#nasıl-çalışır)
+- [Mimari](#mimari)
+- [Teknolojiler](#teknolojiler)
+- [API](#api)
+- [Kurulum](#kurulum)
+- [Çalıştırma](#çalıştırma)
+- [Ortam Değişkenleri](#ortam-değişkenleri)
+- [Yararlı Geliştirme Komutları](#yararlı-geliştirme-komutları)
+- [Test ve Kalite](#test-ve-kalite)
+- [Bilinen Sınırlar](#bilinen-sınırlar)
+- [Yol Haritası](#yol-haritası)
+
+## Proje Özeti
+
+Kullanıcı bir belge yükler. Sistem önce dosyayı doğrular (uzantı, içerik imzası ve boyut), ardından türüne uygun yöntemle metnini çıkarır; taranmış sayfalarda ve görüntü belgelerinde OCR devreye girer. Elde edilen metin tek bir Gemini çağrısına gönderilir ve bu çağrıdan belge türü, ilgili kurum/birim, kısa bir özet ve (belgede açıkça yazıyorsa) gönderen kişi ile kurum bilgisi döner. Sonuç PostgreSQL'e kaydedilir, orijinal dosya ise uygulamanın storage klasöründe saklanır.
+
+Sınıflandırma kapalı kataloglar üzerinden yapılır: model yeni belge türü veya kurum üretemez, backend çıktıyı ayrıca doğrular. Belge belirsizse zorla bir kuruma atanmaz; `needs_review` olarak işaretlenir ve gerekçesi kaydedilir. Böylece yanlış otomatik yönlendirme yerine kontrollü bir insan incelemesi tercih edilir.
+
+Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mimari, kapsam) · [`DECISIONS.md`](DECISIONS.md) (aktif ürün ve teknik kararlar) · [`CURRENT_STATE.md`](CURRENT_STATE.md) (güncel durum ve geliştirme geçmişi).
+
+## Sürüm Geçmişi
+
+### V1.0 — Temel Belge Sınıflandırma
+
+- PDF ve DOCX belge işleme
+- Uzantı ve içerik imzasına dayalı dosya doğrulama, 50 MiB boyut sınırı
+- Gemini structured output entegrasyonu (Pydantic şeması, katalogdan üretilen değerler)
+- Belge türü sınıflandırması ve ilgili kuruma yönlendirme
+- PostgreSQL üzerinde `documents` kaydı ve Alembic migration'ları
+- `POST /api/documents/classify` endpoint'i
+- React + Vite + TypeScript temel arayüz (yükleme, sonuç ve hata ekranı)
+
+### V1.1 — OCR ve Taranmış PDF Desteği
+
+- PyMuPDF'in yerleşik Tesseract desteğiyle lokal OCR fallback
+- Taranmış (yalnızca görüntüden oluşan) PDF desteği
+- OCR dilinin `tur` olarak sabitlenmesi
+- İlk gerçek OCR doğrulama matrisi (15 senaryo)
+
+### V1.2 — Belge Yönetimi ve Genişletilmiş Belge İşleme
+
+- Arayüzde "Kayıtlar" görünümü
+- Salt okunur liste, detay ve indirme endpoint'leri
+- Sınıflandırmayla aynı çağrıdan gelen belge özeti (`summary`)
+- Gönderen kişi ve kurum bilgisi (`sender_name`, `sender_institution`)
+- Frontend iyileştirmeleri (sonuç ekranı ve kayıtlar tablo düzeni)
+- Hybrid PDF'ler için sayfa bazlı OCR kararı
+- Kısa veya bozuk metin katmanı taşıyan taramalar için yapısal OCR koşulu
+- Aynı sayfadaki gömülü metin ile OCR metninin tekrarsız birleştirilmesi
+- OCR çözünürlüğünün ölçüme dayanarak 300 → 400 dpi'a çıkarılması
+- JPG / JPEG / PNG desteği (doğrudan OCR)
+- Legacy DOC (Word 97–2003) desteği; Word'e özgü OLE stream doğrulamasıyla XLS/PPT reddi
+- Kişi adı veya unvanından kurum adı türetilmesine karşı koruma (sender hallucination guard)
+- Clean-clone doğrulaması (sıfırdan kurulum, migration ve uçtan uca smoke test)
+
+### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
+
+**Geliştiriliyor.** Aşağıdaki başlıklar henüz tamamlanmadı; planlanan kapsamdır:
+
+- Gerçek insan el yazısı benchmarkı
+- El yazısı OCR kalitesinin iyileştirilmesi
+- OCR çıktısı için deterministik kalite kapısı (quality gate)
+- Taranmış tablo ve form belgelerinde OCR dayanıklılığı
+- Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
+- OCR kaynaklı özet ve gönderen bilgisi güvenilirliğinin artırılması
+
+## Projenin Amacı
+
+Kurumlara gelen belgeler tek tip değildir: dijital PDF, Word dosyası, taranmış evrak, telefonla çekilmiş fotoğraf, Word 97–2003'ten kalma legacy DOC ve birbirinden farklı sayfa düzenleri aynı gelen kutusunda bulunur.
+
+Geleneksel süreçte her belge için bir personelin belgeyi okuması, türünü anlaması, ilgili birimi belirlemesi, kaydetmesi ve yönlendirmesi gerekir. Bu; yavaş, tekrarlayan ve kişiden kişiye değişen bir iştir.
+
+Projenin amacı bu adımları mümkün olduğunca otomatik, standart ve izlenebilir hale getirmektir. Belge bir kez yüklendiğinde metni çıkarılır, türü ve ilgili birimi belirlenir, özeti üretilir ve sonuç kalıcı olarak kaydedilir.
+
+> Sistem insan kararını tamamen ortadan kaldırmayı değil; açık belgeleri otomatik yönlendirirken belirsiz durumları insan incelemesine bırakmayı amaçlar.
+
+Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflandırmak için yeterli bilgi yoksa, katalogdaki hiçbir kurum makul şekilde eşleşmiyorsa, birden fazla kurum arasında ciddi belirsizlik varsa veya belge beklenen kapsamın dışındaysa model zorla atama yapmaz: kayıt `needs_review` durumuna düşer ve gerekçesi `review_reason` alanına yazılır. Yanlış bir otomatik yönlendirme, incelemeye düşen bir belgeden daha maliyetlidir.
+
+## Temel Özellikler
+
+- Çok formatlı belge yükleme (PDF, DOC, DOCX, JPG, JPEG, PNG)
+- Dosya uzantısı ve içerik imzasının birlikte doğrulanması; istemcinin content-type bilgisine güvenilmez
+- PyMuPDF ile PDF metin çıkarımı
+- Saf Python parser ile legacy DOC metin çıkarımı
+- python-docx ile DOCX metin çıkarımı (paragraflar ve tablo hücreleri)
+- JPG/JPEG/PNG belgelerde doğrudan OCR
+- Taranmış ve hybrid PDF'lerde sayfa bazlı OCR fallback
+- Belge türü sınıflandırması (kapalı katalog)
+- İlgili kurum/birim yönlendirmesi (kapalı katalog)
+- Belgenin amacını anlatan kısa Türkçe özet
+- Gönderen kişi ve kurum bilgisinin çıkarımı (yalnızca belgede açıkça yazıyorsa)
+- Belirsizlikte `needs_review` ile insan incelemesine yönlendirme
+- PostgreSQL üzerinde kalıcı kayıt, Alembic ile şema yönetimi
+- Kayıt listesi, detay görüntüleme ve orijinal dosyayı indirme
+- Gemini çağrısı için timeout ve geçici hatalarda sınırlı retry
+- Güvenli loglama: belge metni, API anahtarı ve ham model çıktısı loglanmaz
+
+## Kapsam
+
+### Kapsam Dahil
+
+- PDF, DOC, DOCX, JPG, JPEG ve PNG belgelerin yüklenmesi ve işlenmesi
+- Taranmış PDF, hybrid PDF ve görüntü belgeler için Tesseract OCR
+- Belge başına tek Gemini sınıflandırma işlemi
+- Belge türü, kurum, özet ve gönderen bilgisinin üretilmesi
+- Belirsiz belgelerin `needs_review` olarak işaretlenmesi
+- Sonuçların ve çıkarılan metnin PostgreSQL'de, orijinal dosyanın dosya sisteminde saklanması
+- Kayıtların listelenmesi, detayının görüntülenmesi ve orijinal dosyanın indirilmesi
+- Tek sayfalık React arayüzü (yükleme, sonuç, kayıtlar)
+
+### Şu Anda Kapsam Dışı
+
+Aşağıdakiler bilinçli olarak kapsam dışındadır; gelecekte kesin yapılacak özellikler değildir:
+
+- Authentication / authorization
+- Admin paneli ve kurum kataloğunun arayüzden yönetimi
+- Agent sistemleri ve LangGraph
+- RAG
+- Vector database
+- Kuyruk / arka plan işleri ve asenkron workflow
+- Production deployment mimarisi (containerize etme, reverse proxy, CORS kararı)
+- Desteklenmeyen dosya formatları (GIF, TIFF, BMP, WebP, HEIC)
+
+## Desteklenen Belge Türleri
+
+| Format | İşleme Yöntemi | OCR |
+|---|---|---|
+| PDF | PyMuPDF | Gerektiğinde, sayfa bazlı |
+| DOC | legacy-doc | Hayır |
+| DOCX | python-docx | Hayır |
+| JPG / JPEG | PyMuPDF + Tesseract | Evet |
+| PNG | PyMuPDF + Tesseract | Evet |
+
+- **DOC**, Word 97–2003 binary (OLE) formatıdır. Saf Python bir parser ile doğrudan baytlardan okunur; Microsoft Word, LibreOffice veya antiword kurulu olmasına gerek yoktur.
+- **DOC ve DOCX** belgelerde OCR yapılmaz; gömülü görüntülerdeki metin, makrolar, header/footer ve biçimlendirme alınmaz.
+- **PDF**'lerde dijital ve taranmış sayfaların birlikte bulunduğu hybrid belgeler desteklenir; OCR kararı her sayfa için ayrı verilir.
+- **Desteklenmeyen formatlar:** GIF, TIFF, BMP, WebP, HEIC ve diğerleri `415` ile reddedilir.
+- Görüntü belgelerinde ve taranmış PDF sayfalarında OCR için Tesseract ve `tur` dil paketi gerekir; kurulu değilse bu belgeler `failed` olur.
+
+## Nasıl Çalışır
+
+### Ana Pipeline
+
+```mermaid
+flowchart LR
+    A[Belge Yükleme] --> B[Dosya Doğrulama]
+    B --> C[Storage]
+    C --> D[Metin Çıkarma / OCR]
+    D --> E[Metin Normalizasyonu]
+    E --> F[Gemini]
+    F --> G[Belge Türü]
+    F --> H[Kurum]
+    F --> I[Özet ve Gönderen]
+    G --> J[PostgreSQL]
+    H --> J
+    I --> J
+    J --> K[API / Frontend]
 ```
 
-## Desteklenen Dosya Türleri
+Belge `multipart/form-data` ile yüklenir ve önce kabul kontrolünden geçer: boyut 50 MiB'ı aşmamalı, uzantı ile dosya imzası birbirini doğrulamalıdır. Kabul edilmeyen dosya saklanmaz ve kayıt oluşturulmaz. Kabul edilen belgeye bir UUID verilir, orijinal dosya bu UUID ile storage klasörüne yazılır ve türüne uygun yöntemle metni çıkarılır. Metin normalize edilir (ardışık boşluklar tek boşluğa indirilir) ve en az 10 karakter olmalıdır; aksi halde belge Gemini'ye hiç gönderilmeden `failed` kaydedilir. Yeterli metin varsa ilk 50.000 karakter, iki katalogla birlikte tek bir Gemini çağrısına gönderilir; yanıt structured output olarak alınır ve backend tarafından kataloglara karşı yeniden doğrulanır. Sonuç `documents` tablosuna yazılır ve aynı istekte istemciye döndürülür; işlem baştan sona senkrondur.
 
-- PDF (metin tabanlı)
-- PDF (taranmış / yalnızca görüntü) — OCR fallback ile, Tesseract kuruluysa
-- DOC (Word 97–2003 binary) — saf Python parser ile; **Word veya LibreOffice kurulu olması gerekmez**
-- DOCX
-- JPG / JPEG / PNG (fotoğraf veya tarama) — doğrudan OCR ile, Tesseract kuruluysa
+### Dosya İşleme Pipeline'ı
 
-Şimdilik desteklenmeyen:
+```mermaid
+flowchart TD
+    A[Belge] --> B{Dosya Formatı}
 
-- GIF, TIFF, BMP, WebP, HEIC ve diğer dosya türleri
-- DOC/DOCX içindeki görüntüler, makrolar ve biçimlendirme (bu türlerde OCR yapılmaz)
+    B -->|PDF| C[PyMuPDF]
+    B -->|DOC| D[legacy-doc]
+    B -->|DOCX| E[python-docx]
+    B -->|JPG / JPEG / PNG| F[Doğrudan OCR]
 
-## Sınıflandırma
+    C --> G{Sayfada yeterli gömülü metin var mı?}
+    G -->|Evet| H[Gömülü Metni Kullan]
+    G -->|Hayır / Yapısal OCR Gerekli| I[Tesseract OCR]
 
-Model yalnızca kontrollü kataloglardan seçim yapar; yeni belge türü veya kurum üretmez.
+    H --> J[Normalize Edilmiş Metin]
+    I --> J
+    D --> J
+    E --> J
+    F --> J
+```
 
-**Belge türleri:** Şikayet · Talep Dilekçesi · Başvuru · İtiraz · Bilgi Edinme · Diğer
+PDF'te bir sayfa iki durumda OCR'lanır: kendi gömülü metni 10 karakterin altındaysa (sayfa taranmış sayılır) ya da sayfa alanının en az %50'si görüntüyken gömülü metni 200 karakteri geçmiyorsa (metin katmanı bozuk olabilir). İkinci durumda gömülü metin ile OCR metni deterministik olarak karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Tamamen metin tabanlı PDF'lerde hiç OCR çağrısı yapılmaz. Görüntü belgelerinde gömülü metin aranmaz; dosya tek sayfalık belge olarak doğrudan OCR'lanır. OCR yapılandırılmamışsa veya hata verirse ilgili sayfa gömülü metniyle değerlendirilir: OCR bir iyileştirmedir, başarısızlığı yeni bir hata sınıfı doğurmaz.
 
-**Kurum/birim:** Kontrollü bir kurum kataloğu (`id`, `name`, `description`) üzerinden belirlenir. Başlangıç kataloğunda 9 müdürlük var: Fen İşleri, Park ve Bahçeler, Temizlik İşleri, Zabıta, İmar ve Şehircilik, Sosyal Hizmetler, Kültür ve Sosyal İşler, Mali Hizmetler, Yazı İşleri.
+## Mimari
 
-Bilgi yetersizse, hiçbir kurum makul şekilde eşleşmiyorsa ya da kurumlar arasında ciddi belirsizlik varsa belge zorla bir kuruma atanmaz; `needs_review` olarak işaretlenir ve nedeni `review_reason` alanına yazılır.
+| Bileşen | Sorumluluk |
+|---|---|
+| React + Vite frontend | Belge yükleme, sonuç gösterimi, kayıtlar görünümü |
+| FastAPI backend | HTTP sözleşmesi, akış sıralaması, durum belirleme |
+| Dosya işleme katmanı | Kabul kontrolü, storage, metin çıkarımı ve OCR |
+| Gemini sınıflandırma | Prompt, structured output, çıktı doğrulama, retry politikası |
+| PostgreSQL | `documents` tablosu; sınıflandırma sonucu ve çıkarılan metin |
+| Dosya sistemi storage | Orijinal belgeler (`backend/storage/<uuid>.<uzantı>`) |
 
-## Teknoloji Yığını
+Mimari bilinçli olarak sade tutulur:
 
-**Backend:** Python · FastAPI · PyMuPDF · python-docx · legacy-doc · Google Gemini API (`google-genai`) · Pydantic · SQLAlchemy · PostgreSQL · Alembic
+- Tek bir monolit uygulama; microservice yoktur.
+- İşleme senkrondur: tek istek → tek yanıt; kuyruk veya arka plan işi yoktur.
+- Belge başına **tek** sınıflandırma işlemi yapılır; retry yalnızca aynı çağrının tekrarıdır.
+- Agent sistemi, RAG ve vector database kullanılmaz.
+- Repository/factory gibi ek soyutlama katmanları eklenmez; yeni katman ancak somut gerekçe ve `DECISIONS.md` kaydıyla gelir.
 
-**Frontend:** React · Vite · TypeScript (npm, düz CSS)
+Geliştirme ortamında PostgreSQL Docker Compose ile çalışır; backend ve frontend yerel makinede çalışır ve containerize edilmez.
 
-**Geliştirme ortamı:** PostgreSQL 18 Docker Compose ile çalışır; backend ve frontend yerel makinede çalışır.
+## Teknolojiler
 
-## Temel MVP Kuralları
+| Katman | Teknoloji |
+|---|---|
+| Backend | Python 3.13, FastAPI |
+| LLM | Google Gemini (`google-genai`) |
+| PDF | PyMuPDF |
+| OCR | Tesseract OCR (PyMuPDF'in yerleşik desteği) |
+| DOC | legacy-doc |
+| DOCX | python-docx |
+| Database | PostgreSQL 18 |
+| ORM | SQLAlchemy 2 (senkron, psycopg 3) |
+| Migration | Alembic |
+| Validation | Pydantic |
+| Frontend | React, TypeScript, Vite (düz CSS) |
+| Local Database | Docker Compose |
 
-- Maksimum dosya boyutu **50 MiB** (50 × 1024 × 1024 bayt; arayüzde "50 MB" olarak gösterilir).
-- Çıkarılan metin (boşlukları normalize edilmiş) en az **10 karakter** olmalı. PDF'te bu kontrol **sayfa başına** yapılır: metni bu sınırın altında kalan sayfalar taranmış sayılır ve yalnızca o sayfalarda **OCR fallback** devreye girer (`tur`, 400 dpi). Böylece bir kapak sayfasının arkasındaki taranmış dilekçe de okunur. Ayrıca alanının en az **%50**'si görüntü olan ve gömülü metni **200 karakteri geçmeyen** sayfalar da OCR'lanır; böylece bozuk bir metin katmanı görüntüdeki asıl belgeyi gizleyemez. Bu durumda gömülü metin ile OCR metni karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Birleşik metin yine de 10 karakterin altındaysa belge `failed` olarak kaydedilir. JPG/JPEG/PNG belgelerde gömülü metin aranmaz: dosya tek sayfalık görüntü olarak doğrudan OCR'lanır (`tur`, 400 dpi) ve aynı 10 karakter kuralı uygulanır. DOC (Word 97–2003) belgelerde gövde paragrafları ve tablo hücreleri saf Python `legacy-doc` parser'ıyla okunur; OCR yapılmaz.
-- Gemini'ye en fazla **50.000 karakter** gönderilir.
-- Her belge için **tek** Gemini sınıflandırma işlemi yapılır; belge türü ve kurum aynı çağrıda belirlenir.
-- Geçici Gemini hatalarında ve geçersiz model çıktısında toplam en fazla **3 deneme** yapılır.
-- Belirsiz sınıflandırmalar `needs_review` olarak işaretlenebilir.
-- Orijinal dosya storage alanında saklanır (veritabanında binary olarak tutulmaz).
-- Çıkarılan metin veritabanında saklanır.
+Sürümler `backend/requirements.txt` ve `frontend/package.json` dosyalarında pinlenmiştir.
 
 ## API
 
-Çalışan endpoint'ler: **`GET /health`** → `{"status": "ok"}`, **`POST /api/documents/classify`** ve üç salt okunur kayıt endpoint'i.
+| Method | Endpoint | Açıklama |
+|---|---|---|
+| GET | `/health` | Uygulama sağlık kontrolü → `{"status": "ok"}` |
+| POST | `/api/documents/classify` | Belge yükleme ve sınıflandırma |
+| GET | `/api/documents` | Kayıtları en yeniden eskiye listeler |
+| GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metnin tamamını içerir |
+| GET | `/api/documents/{document_id}/download` | Orijinal belgeyi yüklendiği adla indirir |
 
-| Endpoint | Açıklama |
+Kayıt endpoint'leri salt okunurdur: güncelleme, silme, arama, filtre, sayfalama ve authentication yoktur. Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
+
+**Classify yanıtının alanları:** `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
+
+`summary` başarılı sonuçlarda her zaman doludur. `sender_name` ve `sender_institution` yalnızca belgede açıkça yazıyorsa dolar; yazmıyorsa `null` kalır ve belgenin muhatabı olan müdürlük gönderen sayılmaz. Üç alan da sınıflandırmayla aynı Gemini çağrısından gelir. `document_type_name` ve `institution_name` katalog adlarıdır; ID `null` ise ilgili ad da `null` olur.
+
+**HTTP sözleşmesi:**
+
+| Kod | Anlamı |
 |---|---|
-| `GET /api/documents` | Kayıtları en yeniden eskiye listeler. Yanıt alanları aşağıdakiler (özet ve gönderen bilgisi dahil) + `created_at`; `extracted_text` ve dosyanın storage yolu dönmez |
-| `GET /api/documents/{document_id}` | Tek kaydı, çıkarılan metnin tamamıyla (`extracted_text`) döndürür. Kayıt yoksa `404` |
-| `GET /api/documents/{document_id}/download` | Orijinal dosyayı, yüklendiği adla ve doğru media type ile indirir (PDF, DOC, DOCX, JPG/JPEG, PNG). Kayıt ya da dosya yoksa `404` |
-
-Bu endpoint'ler salt okunurdur: kayıt güncelleme, silme, arama, filtre, sayfalama ve authentication yoktur.
-
-**`POST /api/documents/classify`** — `multipart/form-data` içinde `file` alanında tek bir PDF, DOC, DOCX, JPG, JPEG veya PNG dosyası.
-
-Yanıt alanları: `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
-
-`summary` belgenin amacını ve konusunu anlatan 1-3 kısa Türkçe cümledir ve başarılı sonuçlarda her zaman doludur. `sender_name` ve `sender_institution` yalnızca belgede **açıkça** yazıyorsa dolar; yazmıyorsa `null` kalır (model tahmin etmez, belgenin muhatabı olan müdürlük gönderen sayılmaz). Üçü de sınıflandırmayla **aynı Gemini çağrısından** gelir; `failed` kayıtlarda `null`'dır. `422` ve `502` yanıtlarında ayrıca genel bir `message` alanı bulunur. `document_type_name` ve `institution_name` katalog dosyalarındaki `name` değerleridir; ID `null` ise ilgili ad da `null` olur. Dosyanın storage yolu ve çıkarılan metin veritabanında saklanır, yanıtta dönmez.
-
-| HTTP kodu | Anlamı |
-|---|---|
-| `200` | Sınıflandırıldı (`status`: `classified` veya `needs_review`) |
-| `413` | Dosya 50 MiB sınırını aşıyor (kayıt oluşturulmaz) |
-| `415` | Desteklenmeyen dosya türü (kayıt oluşturulmaz) |
-| `422` | İki durum: (1) belge içeriği işlenemedi / yeterli metin çıkarılamadı — `failed` kaydı, gövdede `status: "failed"` ve `message`; (2) istek doğrulanamadı, ör. `file` alanı gönderilmedi — FastAPI'nin `{"detail": [...]}` gövdesi, kayıt oluşturulmaz |
+| `200` | Sınıflandırıldı (`classified` veya `needs_review`) |
+| `413` | Dosya 50 MiB sınırını aşıyor; kayıt oluşturulmaz |
+| `415` | Desteklenmeyen dosya türü veya imza uyuşmazlığı; kayıt oluşturulmaz |
+| `422` | Belge içeriği işlenemedi (`failed` kaydı + `message`) veya istek doğrulanamadı (kayıt oluşmaz) |
+| `500` | Beklenmeyen sunucu hatası; kayıt oluşmaz, yarım kalan dosya silinir |
 | `502` | Gemini ile sınıflandırma tamamlanamadı (`failed` kaydı) |
-| `500` | Beklenmeyen sunucu hatası, ör. dosya storage'a ya da kayıt veritabanına yazılamadı (ayrıntı dönmez; kayıt oluşmaz, yüklenen ya da yarım yazılmış dosya silinir) |
 
-Endpoint çalışmadan önce çerçevenin standart yanıtları da dönebilir (bozuk çok parçalı gövde için `400`, yanlış HTTP metodu için `405`); bu isteklerde kayıt oluşmaz. Teknik hata detayları kullanıcıya gösterilmez, yalnızca loglanır. OpenAPI şeması `/docs` ve `/openapi.json` adreslerindedir; 422 için iki gövde de belgelenmiştir.
+İki farklı `422` gövdesi, gövdedeki `status` alanıyla ayırt edilir. Teknik hata detayları istemciye gönderilmez, yalnızca loglanır.
 
-## Proje Durumu
+İnteraktif dokümantasyon: `/docs` (Swagger UI), `/redoc` (ReDoc), `/openapi.json` (OpenAPI şeması).
 
-- **Tamamlandı:** MVP mimarisi ve ürün/teknik kararlar.
-- **Aşama 1 — tamamlandı:** FastAPI backend iskeleti; `GET /health` çalışıyor, belge türü ve kurum katalogları eklendi.
-- **Aşama 2 — tamamlandı:** PostgreSQL 18 (Docker Compose), SQLAlchemy `Document` modeli ve `documents` tablosunu oluşturan Alembic migration'ı.
-- **Aşama 3 — tamamlandı:** PDF/DOCX dosya işleme. Tür ve 50 MB doğrulaması, `backend/storage/`'a kaydetme, metin çıkarımı, normalizasyon ve 10 karakter kontrolü mevcut.
-- **Aşama 4 — tamamlandı:** Gemini sınıflandırma katmanı.
-  - Structured output entegrasyonu mevcut; izinli ID'ler kataloglardan gelir.
-  - Belge türü ve kurum aynı çağrıda sınıflandırılır.
-  - Retry/timeout politikası uygulanmış: 30 sn timeout, en fazla 3 deneme, 1 sn / 2 sn bekleme.
-  - `gemini-3.5-flash-lite` gerçek API smoke testiyle doğrulandı.
-- **Aşama 5 — tamamlandı:** `POST /api/documents/classify` endpoint'i; backend ana MVP akışı tamamlandı. Upload → storage → metin çıkarımı → Gemini → PostgreSQL → yanıt akışı, gerçek Docker PostgreSQL ve gerçek Gemini ile uçtan uca doğrulandı.
-- **Aşama 6 — tamamlandı:** frontend ve V1 doğrulaması.
-  - Adım 1 tamamlandı: classify yanıtı katalog adlarını (`document_type_name`, `institution_name`) da döndürüyor.
-  - Adım 2 tamamlandı: `frontend/` iskeleti (React + Vite + TypeScript), `/api` isteklerini backend'e ileten Vite proxy'si.
-  - Adım 3 tamamlandı: yükleme ekranı — dosya seçimi, PDF/DOCX ve 50 MB ön kontrolü, 120 sn zaman aşımlı classify isteği, yükleniyor durumu.
-  - Adım 4 tamamlandı: sonuç ekranı (belge türü ve kurum adı; incelemeye düşen belgeler için "İnsan incelemesi gerekiyor" ve inceleme nedeni) ve HTTP koduna göre kullanıcı dostu hata mesajları.
-  - Adım 5 tamamlandı: V1 öncesi audit ve polish pass (OpenAPI 422 belgesi, log güvenliği, erişilebilirlik); ardından gerçek belgelerle 11 senaryoluk manuel test matrisi (11/11 beklenen sonuç), sentetik test verilerinin temizlenmesi ve final kontroller — `pytest` 97 passed, `pip check` temiz, `alembic current` head, `GET /health` → `200`, `npm run build` ve `npm run lint` temiz.
-- **V1.1 — tamamlandı:** taranmış / yalnızca görüntüden oluşan PDF'ler için lokal Tesseract OCR fallback'i (`tur`, 400 dpi); 15 senaryoluk manuel test matrisiyle doğrulandı.
-- **V1.2 — devam ediyor:** kayıt görünürlüğü. Adım 1: salt okunur liste/detay/indirme endpoint'leri ve arayüzdeki "Kayıtlar" görünümü. Adım 2: aynı Gemini çağrısından gelen belge özeti ve gönderen kişi/kurum bilgisi (D-044). Kurum açıklamalarının gerçek kullanım verisiyle iyileştirilmesi ve deployment/production kararları hâlâ kapsam dışıdır; ayrıntı için [`CURRENT_STATE.md`](CURRENT_STATE.md).
+## Kurulum
 
-## Kurulum ve Çalıştırma
-
-Komutlar Windows PowerShell içindir (macOS/Linux farkları en sonda). Kurulum üç terminal kullanır: repo kökü (Docker), `backend/` (API) ve `frontend/` (arayüz).
+Komutlar Windows PowerShell içindir; macOS/Linux farkları bölümün sonundadır.
 
 ### Gereksinimler
 
 - **Git**
-- **Python 3.13** — proje Python 3.13 ile geliştirildi ve test edildi; repoda ayrıca bir sürüm kısıtı tanımlı değil.
-- **Node.js ve npm** — Vite 8'in desteklediği bir Node.js sürümü (`vite` paketinin `engines` alanı: `^20.19.0 || >=22.12.0`). Proje Node.js 26.7 ve npm 11.19 ile doğrulandı.
-- **Docker Desktop** — `docker compose` komutuyla; yalnızca yerel PostgreSQL 18 için kullanılır.
-- **Gemini API anahtarı** — sınıflandırma gerçek Google Gemini API'sini çağırır; anahtar olmadan backend başlamaz. Testler anahtar gerektirmez.
-- **`.doc` desteği için ek kurulum gerekmez** — Word 97–2003 belgeleri saf Python `legacy-doc` paketiyle okunur. Bu paket `requirements.txt` içindedir; **Microsoft Word, LibreOffice, antiword veya başka bir harici program kurulu olmasına gerek yoktur.**
-- **Tesseract OCR (opsiyonel)** — taranmış PDF'ler ve JPG/JPEG/PNG belgeleri için gerekir; **`tur` dil paketiyle** kurulmalıdır. Kurulu değilse uygulama normal çalışır, ancak taranmış PDF'ler ve görüntü belgeleri `failed` olur. Ayrı bir Python paketi gerekmez: OCR, PyMuPDF'in yerleşik Tesseract desteğiyle yapılır ve yalnızca `tessdata` klasörüne ihtiyaç duyar (`tesseract` komutunun PATH'te olması gerekmez).
-  - Windows: `winget install --id tesseract-ocr.tesseract`, kurulum sihirbazında **Turkish** dil bileşenini seçin.
+- **Python 3.13** — proje bu sürümle geliştirildi ve test edildi.
+- **Node.js ve npm** — Vite 8'in desteklediği bir sürüm (`^20.19.0 || >=22.12.0`). Node.js 26.7 ve npm 11.19 ile doğrulandı.
+- **Docker Desktop** — yalnızca yerel PostgreSQL 18 için.
+- **Gemini API anahtarı** — sınıflandırma gerçek API'yi çağırır; anahtar olmadan backend başlamaz. Otomatik testler anahtar gerektirmez.
+- **`.doc` için ek kurulum gerekmez** — Word 97–2003 belgeleri `requirements.txt` içindeki saf Python `legacy-doc` paketiyle okunur; Microsoft Word, LibreOffice veya antiword gerekmez.
+- **Tesseract OCR (opsiyonel)** — taranmış PDF'ler ve görüntü belgeleri için, **`tur` dil paketiyle**. Kurulu değilse uygulama normal çalışır, yalnızca bu belgeler `failed` olur. Ayrı bir Python paketi veya PATH'te `tesseract` komutu gerekmez; yalnızca `tessdata` klasörü gerekir.
+  - Windows: `winget install --id tesseract-ocr.tesseract` (kurulum sihirbazında **Turkish** bileşenini seçin)
   - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur`
   - macOS: `brew install tesseract tesseract-lang`
   - Doğrulama: `tesseract --list-langs` çıktısında `tur` görünmelidir.
 
-### 1. Repoyu klonlama
+### Repoyu Klonlama
 
 ```powershell
 git clone https://github.com/KeremGerede/dosya_sistemi.git
@@ -140,9 +302,7 @@ dosya_sistemi/
   frontend/            # React + Vite + TypeScript arayüzü
 ```
 
-### 2. Backend ortamını hazırlama
-
-Repo kökünden:
+### Backend Kurulumu
 
 ```powershell
 cd backend
@@ -151,161 +311,222 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-- `python --version` 3.13 göstermelidir. Bağımlılıklar `backend/requirements.txt` içindedir (`pytest` dahil).
-- PowerShell betik çalıştırmayı engelliyorsa sanal ortamı etkinleştirmeden aynı komutları `.\.venv\Scripts\python.exe` ile çalıştırabilirsiniz; ör. `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`, `.\.venv\Scripts\python.exe -m alembic upgrade head`, `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`.
-- `cmd.exe` kullanıyorsanız etkinleştirme komutu `.venv\Scripts\activate.bat`'tır.
-
-### 3. Environment ayarları
-
-`backend/` içinde şablonu kopyalayın (mevcut bir `.env`'nin üzerine yazmaz):
+Ardından ortam değişkeni şablonunu kopyalayın (mevcut bir `.env` varsa üzerine yazmaz) ve değerleri [Ortam Değişkenleri](#ortam-değişkenleri) bölümüne göre doldurun:
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Ardından `backend/.env` dosyasını düzenleyin:
+- PowerShell betik çalıştırmayı engelliyorsa sanal ortamı etkinleştirmeden komutları doğrudan çalıştırabilirsiniz: `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`, `.\.venv\Scripts\python.exe -m alembic upgrade head`, `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`.
+- `cmd.exe` kullanıyorsanız etkinleştirme komutu `.venv\Scripts\activate.bat`'tır.
 
-| Değişken | Değer |
-|---|---|
-| `GEMINI_API_KEY` | Kendi Gemini API anahtarınız (şablonda boştur) |
-| `GEMINI_MODEL` | `gemini-3.5-flash-lite` (şablondaki değer) |
-| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` (şablondaki değer) |
-| `TESSDATA_PREFIX` | **Opsiyonel.** Tesseract `tessdata` klasörünün yolu; taranmış PDF'lerde ve JPG/JPEG/PNG belgelerinde OCR için. Boş bırakılırsa OCR atlanır |
+### PostgreSQL
 
-- İlk üç değişken zorunludur; biri eksikse backend (ve `/health`) başlamaz. Model adının kodda varsayılanı yoktur.
-- `TESSDATA_PREFIX` opsiyoneldir ve yalnızca OCR fallback'ini etkiler; tanımlı değilse uygulama normal başlar. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` bulunmalıdır (aktif OCR dili yalnızca `tur`).
-- `127.0.0.1:5433`, Docker PostgreSQL'in hosttaki portudur; container içinde PostgreSQL 5432'de çalışır. `localhost` yerine `127.0.0.1` kullanın.
-- `connect_timeout=10`: veritabanına ulaşılamazsa bağlantı denemesi 10 sn'de sonlanır. Daha önce oluşturulmuş bir `.env`'de bu parametre yoksa `DATABASE_URL`'in sonuna `?connect_timeout=10` ekleyin; aksi halde bekleme ~130 sn sürer.
-- `postgres`/`postgres` bilgileri yalnızca yerel geliştirme içindir. `.env` Git'e girmez; gerçek anahtarı başka bir dosyaya yazmayın.
-
-### 4. PostgreSQL'i başlatma
-
-Docker Desktop açık olmalı. Repo kökünde:
+Docker Desktop açıkken, repo kökünde:
 
 ```powershell
 docker compose up -d
 docker compose ps
-docker inspect -f '{{.State.Health.Status}}' dosya-sistemi-postgres
 ```
 
-- Beklenen: `docker compose ps` çıktısında `Up … (healthy)`, son komutta `healthy`. İlk açılışta birkaç saniye `starting` görünebilir.
-- Compose yalnızca `dosya-sistemi-postgres` container'ını (`postgres:18`, veritabanı `dosya_sistemi`) çalıştırır; port eşlemesi `127.0.0.1:5433 → 5432`'dir ve yalnızca localhost'a açıktır.
-- Makinede 5432'yi kullanan yerel bir Windows PostgreSQL servisi olabilir; ona dokunulmaz. Proje yalnızca Docker PostgreSQL'e, hosttaki 5433 portundan bağlanır.
+- Beklenen: `dosya-sistemi-postgres` container'ı için `Up ... (healthy)`. İlk açılışta birkaç saniye `starting` görünebilir.
+- Port eşlemesi `127.0.0.1:5433 → 5432`'dir ve yalnızca localhost'a açıktır; makinedeki yerel bir PostgreSQL servisi (5432) etkilenmez.
 - Veriler Docker'ın yönettiği `dosya_sistemi_pgdata` volume'unda kalır.
 
-### 5. Migration
-
-`backend/` içinde, sanal ortam etkinken:
+Şemayı oluşturmak için `backend/` içinde, sanal ortam etkinken:
 
 ```powershell
 alembic upgrade head
 alembic current
 ```
 
-- `alembic current` çıktısı `(head)` ile bitmelidir (şu an `cedf33674167 (head)`).
-- Alembic `alembic.ini` dosyasını ve `app` paketini çalışma dizininden bulduğu için bu komutlar `backend/` içinden çalıştırılmalıdır. Bağlantı adresi `.env`'deki `DATABASE_URL`'den okunur.
+`alembic current` çıktısı `(head)` ile bitmelidir. Bu komutlar `alembic.ini` ve `app` paketi nedeniyle `backend/` klasöründen çalıştırılmalıdır.
 
-### 6. Backend'i başlatma
-
-`backend/` içinde, sanal ortam etkinken:
-
-```powershell
-uvicorn app.main:app --reload
-```
-
-| Adres | İçerik |
-|---|---|
-| http://127.0.0.1:8000 | API |
-| http://127.0.0.1:8000/health | Sağlık kontrolü → `{"status":"ok"}` |
-| http://127.0.0.1:8000/docs | Swagger UI |
-| http://127.0.0.1:8000/redoc | ReDoc |
-| http://127.0.0.1:8000/openapi.json | OpenAPI şeması |
-
-Başka bir PowerShell penceresinden kontrol:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-```
-
-`/health` yalnızca uygulamanın ayakta olduğunu gösterir, veritabanını kontrol etmez; veritabanı için 4. ve 5. adımdaki komutları kullanın.
-
-### 7. Frontend'i hazırlama ve başlatma
-
-Yeni bir terminalde, repo kökünden:
+### Frontend Kurulumu
 
 ```powershell
 cd frontend
 npm install
+```
+
+**macOS/Linux farkları:** sanal ortam için `python3 -m venv .venv` ve `source .venv/bin/activate`, şablon için `cp .env.example .env`, sağlık kontrolü için `curl http://127.0.0.1:8000/health`. Diğer komutlar aynıdır.
+
+## Çalıştırma
+
+Proje kuruluysa günlük kullanım üç terminalden oluşur.
+
+### Terminal 1 — PostgreSQL
+
+Repo kökünde (Docker Desktop açık olmalı):
+
+```powershell
+docker compose up -d
+```
+
+### Terminal 2 — Backend
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+### Terminal 3 — Frontend
+
+```powershell
+cd frontend
 npm run dev
 ```
 
-- Arayüz: **http://localhost:5173**. Adres olarak `localhost` kullanın; Vite varsayılan ayarla bu makinede yalnızca `localhost` (IPv6 `::1`) üzerinden erişilebiliyor.
-- Frontend `/api/...` isteklerini Vite proxy'si ile `http://127.0.0.1:8000` adresine iletir (`frontend/vite.config.ts`). Bu yüzden 6. adımdaki backend çalışıyor olmalıdır; CORS ayarı gerekmez.
+Adresler:
 
-### 8. Sistemi kullanma
+- Frontend: http://localhost:5173
+- Backend: http://127.0.0.1:8000
+- Health: http://127.0.0.1:8000/health
+- Swagger: http://127.0.0.1:8000/docs
 
-1. http://localhost:5173 adresinde **Belge dosyası** alanından bir PDF, DOC, DOCX, JPG, JPEG veya PNG seçin.
-2. Backend'in teknik sınırı 50 MiB'dir (50 × 1024 × 1024 bayt). Arayüz bu sınırı "50 MB" olarak gösterir; daha büyük dosyaları ve desteklenen türler dışındaki dosyaları göndermez.
-3. **Sınıflandır**'a basın. İşlem senkrondur ve genellikle birkaç saniye sürer; Gemini aşaması en kötü durumda (retry'larla) ~93 sn sürebilir, arayüz 120 sn sonra zaman aşımı gösterir.
-4. Sonuçta **Belge Türü**, **Gönderileceği Kurum** ve **Belge Özeti** görünür; belgede açıkça yazıyorsa **Gönderen Kişi** ve **Gönderen Kurum** satırları da eklenir (yazmıyorsa bu satırlar hiç gösterilmez). Belge belirsizse "İnsan incelemesi gerekiyor" başlığıyla inceleme nedeni (`needs_review`, `review_reason`) gösterilir.
-5. **Kayıtlar** sekmesi daha önce sınıflandırılmış belgeleri en yeniden eskiye listeler: durum rozeti (sınıflandırıldı / inceleme gerekiyor / işlenemedi), belge özeti, varsa gönderen kişi/kurum, inceleme nedeni, kayda tıklayınca çıkarılan metin ve sağdaki dosya türü aksiyonuyla orijinal dosyanın indirilmesi (PDF `application/pdf`, DOC `application/msword`, DOCX WordprocessingML media type'ı, JPG/JPEG `image/jpeg`, PNG `image/png`).
+Arayüz adresinde `localhost` kullanın; Vite dev sunucusu varsayılan ayarla `127.0.0.1:5173` üzerinden erişilebilir olmayabilir. Frontend `/api/...` isteklerini Vite proxy'si ile `http://127.0.0.1:8000` adresine iletir, bu yüzden backend çalışıyor olmalıdır; ayrı bir CORS ayarı gerekmez.
 
-- **Taranmış PDF'ler:** bir sayfanın gömülü metni yetersizse ya da sayfa görüntüye dayalıyken metni kısa kalıyorsa yalnızca o sayfada OCR fallback devreye girer (metin sayfalarıyla taranmış sayfaları karışık taşıyan PDF'ler ve bozuk metin katmanı olan taramalar dahil); bunun için Tesseract ve `TESSDATA_PREFIX` gerekir (aşağıdaki 3. adım). Tesseract kurulu değilse ya da OCR'dan sonra da yeterli metin çıkmazsa belge `failed` kaydedilir ve arayüzde "Belgeden sınıflandırma için yeterli metin çıkarılamadı." görünür. DOC ve DOCX'te OCR yapılmaz.
-- **`.doc` (Word 97–2003):** gövde paragrafları ve tablo hücreleri saf Python parser ile okunur; Word/LibreOffice gerekmez ve Tesseract kurulu olmasa da çalışır. Bilinen sınırlar: gömülü görüntülerdeki metin, makrolar, header/footer ve biçimlendirme alınmaz; şifreli veya bozuk `.doc` dosyaları `failed` kaydedilir. `.doc` uzantılı ancak Word olmayan OLE dosyaları (XLS/PPT) `415` ile reddedilir.
-- Her sınıflandırma gerçek Gemini API'sine istek gönderir. Yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
-- API'yi doğrudan denemek için Swagger UI'ı ya da şu komutu kullanabilirsiniz: `curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify`
+Belgeyi arayüzden yükleyebilir ya da API'yi doğrudan çağırabilirsiniz:
 
-### 9. Geliştirici doğrulama komutları
+```powershell
+curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify
+```
+
+Her sınıflandırma gerçek Gemini API'sine istek gönderir; yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
+
+## Ortam Değişkenleri
+
+Değerler `backend/.env` dosyasında tutulur. `.env` Git'e girmez; `.env.example` şablon olarak commit edilir. Gerçek anahtarı başka bir dosyaya yazmayın.
+
+| Değişken | Zorunlu | Açıklama |
+|---|---|---|
+| `GEMINI_API_KEY` | Evet | Google Gemini API anahtarı. Şablonda boştur; kendi anahtarınızı yazın |
+| `GEMINI_MODEL` | Evet | Sınıflandırma modeli. Şablondaki değer `gemini-3.5-flash-lite`; kodda varsayılan yoktur |
+| `DATABASE_URL` | Evet | PostgreSQL bağlantı adresi (psycopg 3). Şablondaki değer yerel Docker veritabanına aittir: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` |
+| `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörünün yolu. Taranmış PDF'lerde OCR fallback'i ve JPG/JPEG/PNG belgelerinde doğrudan OCR için kullanılır |
+
+- İlk üç değişkenden biri eksikse backend (ve `/health`) başlamaz; eksik yapılandırma sessizce bir varsayılana düşmez.
+- `TESSDATA_PREFIX` tanımlı değilse uygulama normal başlar, yalnızca OCR atlanır ve OCR'a bağımlı belgeler `failed` olur. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` bulunmalıdır.
+- `DATABASE_URL`'de `localhost` yerine `127.0.0.1` kullanın; port yalnızca IPv4 localhost'a açıktır.
+- `connect_timeout=10`, veritabanına ulaşılamadığında bağlantı denemesini 10 saniyede sonlandırır. Daha önce oluşturulmuş bir `.env`'de bu parametre yoksa adresin sonuna `?connect_timeout=10` ekleyin.
+- `postgres`/`postgres` kullanıcı bilgileri yalnızca yerel geliştirme içindir.
+
+## Yararlı Geliştirme Komutları
+
+### Backend
 
 `backend/` içinde, sanal ortam etkinken:
 
-```powershell
-python -m pytest
-python -m pip check
-alembic current
-Invoke-RestMethod http://127.0.0.1:8000/health
-```
+| Komut | Amaç |
+|---|---|
+| `python -m pytest` | Otomatik test paketini çalıştırır (Docker veya Gemini gerekmez) |
+| `python -m pip check` | Bağımlılık çakışması olup olmadığını kontrol eder |
+| `alembic current` | Veritabanının hangi migration sürümünde olduğunu gösterir |
+| `alembic check` | Modeller ile şema arasında fark olup olmadığını kontrol eder |
+| `uvicorn app.main:app --reload` | Backend'i geliştirme modunda başlatır |
 
-- `pytest` gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır.
+### Frontend
 
 `frontend/` içinde:
 
-```powershell
-npm run build
-npm run lint
-```
+| Komut | Amaç |
+|---|---|
+| `npm run dev` | Vite dev sunucusunu başlatır |
+| `npm run build` | TypeScript derlemesi ve production build (`dist/`) |
+| `npm run lint` | oxlint ile statik analiz |
 
-- `npm run build`, `tsc -b && vite build` çalıştırır; çıktı `frontend/dist/` klasörüne yazılır ve Git'e girmez. `npm run lint` oxlint'i çalıştırır. Frontend'de otomatik test yoktur.
+### Docker
 
-### 10. Durdurma ve tekrar başlatma
+Repo kökünde:
 
-- Backend ve frontend: çalıştıkları terminalde `Ctrl+C`.
-- PostgreSQL, repo kökünde:
+| Komut | Amaç |
+|---|---|
+| `docker compose up -d` | PostgreSQL container'ını başlatır |
+| `docker compose ps` | Container durumunu gösterir |
+| `docker compose stop` | Container'ı durdurur |
+| `docker compose down` | Container'ı kaldırır; veriler volume'da kalır |
 
-```powershell
-docker compose stop     # container'ı durdurur
-docker compose start    # durdurulmuş container'ı yeniden başlatır
-docker compose down     # container'ı kaldırır; veriler dosya_sistemi_pgdata volume'unda kalır
-docker compose up -d    # container'ı yeniden oluşturup başlatır
-```
+> **Uyarı:** `docker compose down -v` komutu `dosya_sistemi_pgdata` volume'unu da siler ve tüm yerel veritabanı içeriği kaybolur. Yalnızca bilerek kullanın.
 
-- `docker compose down -v` volume'u da siler ve tüm yerel veriler kaybolur; yalnızca bilerek kullanın.
-- PostgreSQL kapalıyken yapılan classify isteği ~10 sn sonra `500` ile biter; `/health` bu durumda da `200` döner.
+### Git / Kalite
 
-Sonraki çalıştırmalarda kısa sıra:
+| Komut | Amaç |
+|---|---|
+| `git status` | Çalışma ağacının durumu |
+| `git diff` | Commit'lenmemiş değişiklikler |
+| `git diff --check` | Whitespace ve satır sonu sorunları |
 
-1. Docker Desktop'ı açın; repo kökünde `docker compose up -d`.
-2. `backend/` içinde `.\.venv\Scripts\Activate.ps1`, `alembic upgrade head`, `uvicorn app.main:app --reload`.
-3. Ayrı bir terminalde `frontend/` içinde `npm run dev`, ardından http://localhost:5173.
+## Test ve Kalite
 
-**macOS/Linux:** sanal ortam için `python3 -m venv .venv` ve `source .venv/bin/activate`, şablon için `cp .env.example .env`, sağlık kontrolü için `curl http://127.0.0.1:8000/health` kullanın; diğer komutlar aynıdır.
+### Otomatik Testler
 
-## Ayrıntılı Proje Dokümantasyonu
+Doğrulanmış baseline: **231 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır.
 
-- [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) — amaç, mimari, kapsam
-- [`DECISIONS.md`](DECISIONS.md) — aktif ürün ve teknik kararlar
-- [`CURRENT_STATE.md`](CURRENT_STATE.md) — güncel durum ve sıradaki adımlar
+Kapsanan alanlar:
 
-## Kapsam Dışı (V1)
+- Dosya türü ve imza doğrulaması, boyut sınırı
+- PDF metin çıkarımı ve sayfa bazlı OCR kararı
+- DOC metin çıkarımı (gerçek `.doc` fixture'ları ile)
+- DOCX metin çıkarımı, tablo hücreleri ve birleştirilmiş hücreler
+- JPG/JPEG/PNG kabulü ve OCR yolu
+- API sözleşmesi ve HTTP durum kodları
+- Liste, detay ve indirme endpoint'leri
+- Gemini retry ve timeout davranışı
+- Structured output doğrulaması ve katalog kısıtları
+- Özet ve gönderen metadata kuralları
+- Log ve güvenlik davranışı (belge metni ve anahtar loglanmaz)
 
-DOCX için OCR · RAG · vector database · agent sistemleri / LangGraph · fine-tuning · microservice mimarisi · admin paneli · authentication / authorization
+### Gerçek / Uçtan Uca Doğrulamalar
+
+- Gerçek PostgreSQL üzerinde çalışma
+- Gerçek Gemini API ile sınıflandırma
+- Boş veritabanında sıfırdan Alembic migration
+- Clean-clone smoke test (GitHub'dan sıfır klon → kurulum → çalıştırma)
+- PDF, DOC, DOCX ve JPG ile uçtan uca smoke test
+- Hybrid PDF senaryoları
+- DOC ↔ DOCX format eşdeğerliği
+- OCR çözünürlük ve bozulma benchmarkları
+
+Ayrıntılı test geçmişi ve ölçüm sonuçları için: [`CURRENT_STATE.md`](CURRENT_STATE.md)
+
+## Bilinen Sınırlar
+
+- Gerçek insan el yazısı henüz güvenilir biçimde desteklenmiyor; bu başlık V1.3 kapsamında geliştiriliyor.
+- Taranmış çizgili tablo ve formlarda OCR bazı satırları düşürebilir.
+- EXIF bilgisi olmayan 90°/180° döndürülmüş görüntülerde OCR anlamsız metin üretebilir; otomatik döndürme/OSD yoktur.
+- Gemini yalnızca metnin ilk 50.000 karakterini değerlendirir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
+- DOC ve DOCX belgelerde header/footer metni çıkarılmaz.
+- DOC ve DOCX içindeki gömülü görüntüler OCR edilmez.
+- Authentication ve authorization yoktur.
+- İşlem senkrondur; Gemini aşaması en kötü durumda retry'larla birlikte yaklaşık 93 saniye sürebilir.
+- Kurum yönlendirmesi mevcut katalogla sınırlıdır; katalogda olmayan birimlere ait belgeler `needs_review` olur.
+- OCR için Tesseract ve `tur` dil paketi gerekir; kurulu değilse taranmış PDF'ler ve görüntü belgeleri `failed` olur.
+- Frontend'in classify isteği için zaman aşımı 120 saniyedir; süre dolsa da backend işlemeyi tamamlamış olabilir.
+- Aynı makinede aynı projeden ikinci bir Docker Compose stack'i başlatmak container adı, port ve volume çakışmasına yol açar; temiz bir makinede tek klon sorunsuz çalışır.
+
+Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.md`](CURRENT_STATE.md)
+
+## Yol Haritası
+
+### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
+
+**Geliştiriliyor.** Planlanan kapsam:
+
+- Gerçek insan el yazısı benchmarkı
+- El yazısı OCR kalitesinin iyileştirilmesi
+- OCR çıktısı için kalite kapısı
+- Taranmış tablo ve form belgelerinde OCR dayanıklılığı
+- Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
+- OCR kaynaklı özet ve gönderen bilgisi güvenilirliği
+
+### Daha Sonra Değerlendirilebilecekler
+
+Aşağıdakiler taahhüt değildir; ihtiyaç doğarsa `DECISIONS.md` üzerinden karara bağlanır:
+
+- Authentication / authorization
+- Production deployment kararları
+- Kurum kataloğunun genişletilmesi ve açıklamalarının iyileştirilmesi
+- Otomatik döndürme / orientation iyileştirmeleri
+- 50.000 karakteri aşan belgeler için gelişmiş metin seçimi stratejisi
