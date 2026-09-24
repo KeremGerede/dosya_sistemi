@@ -1,12 +1,24 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-21
+> **Son güncelleme:** 2026-09-24
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
 ## Mevcut aşama
 
-**V1.2 üzerinde çalışılıyor — kayıt görünürlüğü.** V1.1 kapandı: taranmış PDF'ler için lokal Tesseract OCR fallback'i (D-003, D-042) eklendi ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15).
+**V1.0–V1.2 tamamlandı. İki bağımsız iş hattı açık:**
+
+- **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow): **aktif geliştirme**.
+  - Adım 0–9 tamamlandı: kararlar (D-045, D-046), backend (prepare, classify-by-id, discard, liste filtresi, TTL yedek temizliği) ve frontend (en fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı analiz, 409 kurtarma).
+  - `pytest` 275 passed, frontend `npm test` 33 passed.
+  - Adım 10 (gerçek PostgreSQL + gerçek Gemini + gerçek Tesseract OCR ile uçtan uca doğrulama) tamamlandı.
+  - PDF'in "Orijinal Belgeyi Gör" penceresinde gerçek masaüstü tarayıcıda görüntülenmesi kullanıcı tarafından elle doğrulandı.
+  - Değişiklikler `feat: add multi-document preview and upload workflow` commit'iyle `main`'e alındı.
+- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**, henüz adım başlamadı.
+
+Sürüm numaraları kapsam başlığıdır, teslim sırası değildir; iki iş hattı birbirinden bağımsız ilerler.
+
+V1.1: taranmış PDF'ler için lokal Tesseract OCR fallback'i (D-003, D-042) eklendi ve 15 senaryoluk manuel test matrisiyle doğrulandı (15/15).
 
 Legacy DOC desteği `5695572` (`feat: add legacy DOC document support`) olarak commit'lenip `origin/main`'e push'landı; `main` ile `origin/main` eşit ve working tree temiz. Sürüm sonrası clean-clone doğrulaması yapıldı (2026-09-21): GitHub'dan sıfır klon → yeni venv → `pip install -r requirements.txt` → `pip check` temiz → `pytest` 231 passed → boş veritabanında `alembic upgrade head` (`cedf33674167`, `alembic check` temiz) → backend `/health` 200 → frontend `npm run build` / `npm run lint` temiz → PDF, DOC, DOCX ve JPG ile gerçek uçtan uca smoke testi 4/4 başarılı (4 Gemini çağrısı, 0 retry); liste, detay ve indirme endpoint'leri doğrulandı.
 
@@ -483,9 +495,197 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - [x] Bilinen sınır: bir koşuda model `sender_institution` değerini `Yeşkent Sitesi Yönetimi` olarak döndürdü (doğrusu `YEŞİLKENT SİTESİ YÖNETİMİ`). Çıkarılan metinde ad doğru yazıyordu ve aynı metinle 3/3 tekrarda doğru sonuç geldi; DOC çıkarımıyla ilgisi olmayan, modele ait tek seferlik yazım sapması.
 - [x] Temizlik: bu adımda oluşturulan 20 kayıt id listesiyle silindi, storage dosyaları kaldırıldı; kullanıcının önceden var olan 3 kaydına dokunulmadı.
 
+**V1.4 · Adım 0 — Kararlar ve dokümantasyon (2026-09-23)**
+
+- [x] Plan onaylandı: hazırla → önizle → sınıflandır akışı. Mevcut `documents` tablosuna yeni bir `prepared` durumu eklenir; migration, yeni tablo, yeni şema, scheduler ve worker yok.
+- [x] `DECISIONS.md`:
+  - **D-045 (yeni):** Akış; aynı dosyada extraction/OCR yalnız bir kez; V1.4 frontend'inde Gemini yalnız kullanıcı önizlemesi ve onayından sonra çağrılır; legacy `POST /api/documents/classify` tek-adımlı davranışıyla geriye dönük uyumluluk için korunur ve yeni frontend onu kullanmaz; tarayıcıdaki dosyadan belge görünümü; DOC/DOCX'te yalnız metin; en fazla 5 dosya; sıralı işleme.
+  - **D-046 (yeni):** `prepared` yaşam döngüsü:
+    - Classify yalnız `prepared` kayıtta ve orijinal dosya storage'da mevcutken çalışır; aksi halde `409`, Gemini çağrılmaz.
+    - `409` sonrası istemci, sonucu mevcut detay endpoint'inden okuyarak kurtarır.
+    - "Kaldır" için `DELETE /api/documents/{id}/prepared` kullanılır: önce dosya, sonra kayıt silinir; kalıcı kayıtlarda `409`.
+    - TTL yedek temizliği: 24 saatten eski sahipsiz `prepared` kayıtlar sonraki prepare çağrısında temizlenir; zamanlayıcı yok.
+  - **Güncellenen:**
+    - D-016: `prepared` durumu eklendi.
+    - D-019: yazma endpoint'leri; kalıcı kayıtlar için güncelleme ve silme hâlâ yok.
+    - D-020: istek başına senkron işleme; istemcide sıralı.
+    - D-034: kod kapsamı.
+    - D-039: istek başına 120 sn.
+    - D-040: çoklu seçim, sürükle-bırak, 5 dosya.
+    - D-043: liste `prepared` kayıtları içermez.
+- [x] `PROJECT_BRAIN.md`:
+  - §2 iki adımlı akış anlatıldı.
+  - §4 endpoint ve frontend açıklamaları güncellendi.
+  - §8 `prepared` durumu eklendi.
+  - §9'da legacy / tek-adımlı `POST /classify` ile V1.4 endpoint tablosu ayrıldı.
+  - §11 kapsama çoklu yükleme ve önizleme eklendi.
+  - §12'de kalıcı kayıtlar için güncelleme/silme hâlâ kapsam dışı; klasör/ZIP yükleme, 5'ten fazla dosya, worker/WebSocket, Word render'ı, annotation, sıralama ve bulut depolama kapsam dışı listesine eklendi.
+- [x] `README.md`:
+  - Durum satırı iki bağımsız iş hattını gösteriyor.
+  - Sürüm geçmişi ve yol haritasında V1.3 "açık", V1.4 "aktif geliştirme" olarak yer alıyor.
+  - API tablosunda `/classify` legacy / tek-adımlı sınıflandırma olarak işaretlendi.
+  - V1.4 endpoint'leri uygulandıkça API tablosuna eklenecek.
+- [x] Kod, test, migration ve frontend değişmedi.
+
+**V1.4 · Adım 1–6 — Backend (2026-09-23)**
+
+- [x] **Refactor** (`app/api/documents.py`, davranış değişmedi): `_process_document` → `_extract_into` + `_classify_into`. Legacy `/classify` ile `/prepare` ortak `_create_document` yolunu kullanır. Refactor sonrasında mevcut 231 test değişmeden geçti.
+- [x] **Endpoint'ler** (D-045, D-046):
+  - `POST /api/documents/prepare` — kabul, storage, metin çıkarımı; kayıt `prepared` olur, yanıt `DocumentDetail` (yeni şema yok). Gemini çağrılmaz.
+  - `POST /api/documents/{id}/classify` — kayıttaki metinle tek Gemini çağrısı yapar, dosyayı yeniden okumaz.
+    - `prepared` değilse `409`.
+    - Orijinal dosya storage'da yoksa ya da yol storage dışına çıkıyorsa `409`; Gemini ve extraction çağrılmaz.
+    - Commit hatasında kayıt `prepared` kalır, dosya silinmez.
+  - `DELETE /api/documents/{id}/prepared` — önce dosya, sonra kayıt silinir (`204`). Kalıcı kayıtlarda `409`. Dosya zaten yoksa da güvenli. Yol storage dışına çıkıyorsa dışarıdaki dosyaya dokunulmaz, yalnız kayıt silinir.
+- [x] **Liste ve yardımcılar:**
+  - `GET /api/documents` artık `prepared` kayıtları döndürmüyor.
+  - Download'daki yol kontrolü `_stored_file_path` yardımcısına çıkarıldı; download ve classify birlikte kullanıyor.
+- [x] **TTL yedek temizliği** (`_delete_expired_prepared`): Her prepare isteğinin başında 24 saatten eski `prepared` kayıtları dosyalarıyla siler.
+  - Dosyası silinemeyen kayıt atlanır.
+  - Temizlik hatası prepare'i düşürmez.
+  - Başka hiçbir çağrı temizlik tetiklemez.
+- [x] Migration, model, servis, şema ve bağımlılık değişmedi.
+- [x] **Testler** (`tests/test_documents_api.py`, 44 yeni; her grup önce kırmızı, sonra yeşil):
+  - Prepare: 14.
+  - Classify-by-id: 11. Kaynak dosya kuralı ve "extraction tekrar çalışmadı" spy'ı dahil.
+  - Discard: 13. OpenAPI kontrolü dahil.
+  - Liste/TTL: 6. "Zamanlayıcı yok" testi dahil.
+- [x] **Doğrulama:** `pytest` **275 passed**; `pip check` temiz. `/openapi.json` üç yeni endpoint'i beklenen kodlarla gösteriyor; prepare'de 502 yok.
+- [x] **Çalıştırılamayanlar:** `alembic check` bu oturumda çalıştırılamadı (Docker Desktop kapalı, `backend/.env` yok). `models/` ve `alembic/` dosyaları değişmedi.
+
+**V1.4 · Adım 7–9 — Frontend (2026-09-23)**
+
+- [x] **Tipler** (`src/App.tsx`): `DocumentStatus` değişmedi. Yeni tipler: `PreparedDocument` (`status: 'prepared'`), yalnız arayüzde kullanılan `BatchState` / `BatchItem`, `isPreparedBody` guard'ı.
+- [x] **Liste ve ekleme:**
+  - Çoklu seçim (`multiple`) ve sürükle-bırak alanı.
+  - Pencere düzeyinde `drop` engeli: alan dışına bırakılan dosya sayfayı terk ettirmez.
+  - En fazla 5 dosya; uzantı/boyut ön kontrolü; tekrar eden dosya reddi (ad + boyut + `lastModified`).
+- [x] **Sıralı çalıştırıcı:** Tek ref kilidiyle çalışır, aynı anda backend'e yalnız bir prepare veya classify isteği gider. Her istek kendi 120 sn zaman aşımını uygular.
+- [x] **Önizleme:**
+  - PDF/JPG/JPEG/PNG'de "Belge Görünümü" (tarayıcıdaki dosyadan object URL; MIME türü sunucunun doğruladığı `file_type`'tan) ve "Çıkarılan Metin".
+  - DOC/DOCX'te yalnız metin.
+  - PDF görüntüleyicisi olmayan tarayıcıda (`navigator.pdfViewerEnabled === false`) kısa bir yedek mesaj gösterilir.
+  - Object URL panel kapanınca veya satır kaldırılınca serbest bırakılır.
+- [x] **Kaldır:** `ready`/`waiting` satırda `DELETE …/prepared` çağrılır. `204`/`404` → satır çıkar ve slot hemen boşalır. `409` → satır çıkar ve bilgi notu gösterilir. Hata → satır kalır, genel mesaj gösterilir. Sıradaki ve terminal satırlar yalnız arayüzden çıkar. `preparing`/`analyzing` satırda Kaldır pasif. "Tamamlananları Temizle" yalnız terminal satırları arayüzden çıkarır.
+- [x] **Analiz:** Seçili satırlar sırayla sınıflandırılır; sonuç satır panelinde `ResultCard` ile gösterilir.
+  - `409` → `GET /api/documents/{id}` ile kurtarma yapılır. Gerçek sonuç gösterilir; `prepared` dönerse satır tekrar denenebilir kalır.
+  - `404`/`502` terminaldir.
+  - `500`/ağ hatası/zaman aşımında satır tekrar denenebilir kalır.
+- [x] **CSS** (`src/App.css`): Eski form kuralları `.uploader` / `button.primary` olarak taşındı. Toplu tablo, satır rozetleri, önizleme ve mobil düzen eklendi.
+- [x] `npm run build` ve `npm run lint` temiz.
+- [x] **Tarayıcı doğrulaması** (gstack headless Chromium; SQLite + scratchpad storage + sahte sınıflandırıcı; repoya dosya yazılmadı, gerçek Gemini çağrısı yok):
+  - Sıralı prepare: 5 dosyada 200/422/200/200/415 döndü, prepare aşamasında Gemini çağrısı olmadı.
+  - Önizleme: PDF metni, DOC yalnız metin, PNG görüntüsü; PDF yedek mesajı çalıştı.
+  - Kaldır ve 5 dosya sınırı: terminal satırda DELETE gitmedi; hazır satırda `204` döndü, storage dosyası silindi ve slot yeniden kullanılabildi. 6. dosya, `.txt` ve tekrar eden dosya uyarıyla reddedildi.
+  - Analiz turu: 3 seçili dosyada tam 3 sınıflandırma çağrısı yapıldı (200 / 200 needs_review / 502). Seçimden çıkarılan dosya analiz edilmedi. Analiz sırasında sekme değiştirmek listeyi korudu.
+  - Kayıtlar: liste yalnız kalıcı kayıtları gösterdi.
+  - 409 kurtarma: aynı belge curl ile sınıflandırıldıktan sonra arayüzde 409 → GET → "Tamamlandı" oldu; toplam 1 sınıflandırma çağrısı yapıldı.
+  - Kaynak dosya silindiğinde: 409 → çakışma mesajı, Gemini çağrısı yok → Kaldır `204` döndü.
+  - `fetch` taklidiyle doğrulanan dallar: 409 + failed/404/ağ hatası, classify ağ hatası, discard 500/409.
+  - TTL: liste, detay ve download 25 saatlik kayıtları silmedi; prepare sildi. DB ↔ storage birebir eşleşti.
+  - 375 px'te yatay kaydırma yok. Konsolda yalnız beklenen 422 yanıtlarının tarayıcı ağ logu var.
+- [x] **Doğrulamada bulunup düzeltilen iki görünüm hatası:**
+  - Toplu tabloda dosya adları gereksiz kısalıyordu. Sütun genişlikleri daraltıldı, ad artık alt satıra geçiyor.
+  - Mobilde dosya adı ile hata mesajı yan yana dizilip ad harf harf kırılıyordu. İkisi tek bir sarmalayıcıya alındı.
+
+**V1.4 · İçerik merkezli önizleme (2026-09-23)**
+
+- [x] Ürün kararı: Önizleme içerik merkezlidir; varsayılan görünüm yapılandırılmış "Belge Önizlemesi" formudur. Orijinal belge ve çıkarılan metin yardımcı görünümlerdir. Önizleme aşamasında Gemini kullanılmaz. D-045'teki önizleme maddesi yerinde güncellendi; yeni karar açılmadı.
+- [x] Backend, endpoint sözleşmeleri, DB, migration, prompt ve bağımlılıklar değişmedi.
+- [x] **Yeni saf yardımcı** `frontend/src/documentPreview.ts` — `buildDocumentPreview(extractedText, fileName)`. Deterministik çalışır. Açıkça bulunamayan alan `null` kalır (arayüzde `—`); tahmin yapılmaz.
+  - **Neden etiket temelli:** Backend metni tek satıra normalize ettiği için (satır sonu yok) değerler etiketten sonra okunur. Değer sonraki etikette, cümle sonunda veya satır sonu izinde (küçük harfle biten kelimeden sonra büyük harfle başlayan kelime) kesilir.
+  - **Etiket eşleşmesi:** Türkçe küçük harfe çevrilip aksanları sadeleştirilmiş metinde yapılır. Böylece OCR'ın `TARIH`, `KONU`, `MUDURLUGUNE` gibi yazımları da eşleşir.
+  - **Hitap / Başlık:** Metnin ilk 300 karakterinde, büyük harfli ve yönelme ekiyle biten (`…NA`/`…NE`/`…YA`/`…YE`) 2–8 kelimelik ifade. Örnek: "ÇANKAYA BELEDİYE BAŞKANLIĞINA".
+  - **Konu:** `Talep Konusu:`, `Başvuru Konusu:`, `Konusu:` veya `Konu:`; iki nokta zorunlu. Açık etiketin değeri mümkün olduğunca tam alınır; "hakkında"/"hk." bitiş sayılmaz.
+    - Değer sonraki gerçek etikette (`Tarih:` gibi), "Sayın" hitabında, `!`/`?` ile biten kelimede veya satır sonu izinde (küçük harfle ya da noktayla biten kelimeden sonra büyük harfle başlayan kelime) biter.
+    - En fazla 30 kelime.
+  - **Tarih:** Önce `Tarih` etiketinin hemen ardındaki GG.AA.YYYY / GG/AA/YYYY / GG-AA-YYYY. Etiket yoksa metinde yalnız tek bir farklı tarih geçiyorsa o kullanılır. Birden fazla farklı tarih varsa boş kalır.
+  - **Evrak No:** `Evrak No`, `Evrak Numarası`, `Belge No`, `Sayı` etiketinin ardındaki, rakam içeren tek değer. İki nokta yoksa etiketin büyük harfle başlaması gerekir. Etiket yoksa tahmin yapılmaz.
+  - **Gönderen:** Yalnız açık `Ad Soyad`, `Adı Soyadı`, `Gönderen`, `Başvuran` etiketinden sonraki 2–3 kelimelik ad. Adres, telefon ve etiket kelimelerinde durur. Etiket yoksa `null` kalır; imza satırındaki etiketsiz ad tahmin edilmez (kişi adı nihai Gemini sonucundaki `sender_name` ile gelir).
+  - **Gönderen Kurum:** Yalnız `Gönderen Kurum:`, `Kurum Adı:`, `Kurum:`, `Kuruluş:`, `Firma:` etiketleriyle. "Muhatap/Alıcı Kurum" etiketleri ve hitap gibi biten (`…Başkanlığına`) ya da hitapla aynı olan değerler reddedilir.
+  - **Belge İçeriği:** Hitaptan sonraki metnin ilk ~900 karakteri, kelime sınırında kesilir.
+- [x] **Arayüz** (`src/App.tsx`, `src/App.css`):
+  - "Önizle" artık satırın altında "Belge Önizlemesi" kartını açar: Dosya, Hitap / Başlık, Konu, Tarih + Evrak No, Gönderen + Gönderen Kurum, Belge İçeriği. Masaüstünde iki kolon, dar ekranda tek kolon.
+  - "Orijinal Belgeyi Gör" (PDF/JPG/JPEG/PNG), yerel `<dialog>` penceresi açar: odak pencerede kalır, Esc/Kapat/arka plan tıklamasıyla kapanır, en fazla 85vh. Object URL yalnız pencere açıkken yaşar. PDF görüntüleyicisi yoksa yedek mesaj gösterilir.
+  - "Çıkarılan Metni Gör" ham metni aç/kapa bölümde gösterir.
+  - Kartta satır checkbox'ına bağlı "Analize dahil et" seçeneği var.
+  - Tamamlanan satırda form ve altında mevcut sonuç kartı görünür; formda sınıflandırma bilgisi yoktur.
+  - Büyük inline PDF/görüntü görünümü kaldırıldı.
+- [x] **Doğrulama:** `npm run build` ve `npm run lint` temiz. Yardımcı 10 örnek metinle (Node, scratchpad) sınandı: gerçek DOC fixture'ları, sentetik dilekçeler, muhatap kurum, iki tarihli ve boş metin; uydurma değer yok.
+- [x] **Kalıcı birim testleri:** `frontend/tests/documentPreview.test.ts` eklendi (9 grup, 33 test; Adım 10 konu regresyonunun 3 testi dahil). Node'un yerleşik `node:test` çalıştırıcısı kullanılır, yeni bağımlılık yoktur; komut `npm test`.
+  - Kapsam: açık `Konu:`, `Talep/Başvuru Konusu:`; OCR yazımları (`KONU`, `TARİH`/`TARIH`, `EVRAK NO`, `MUDURLUGUNE`); `Tarih:` önceliği, etiketsiz tek tarih, birden fazla tarihte `null`; açık Evrak No / Sayı; açık Ad Soyad / Adı Soyadı / Gönderen / Başvuran; imza satırındaki etiketsiz adın tahmin edilmemesi; Gönderen Kurum / Firma; muhatap belediyenin gönderen kurum sayılmaması; eksik alanların `null` olması; düzyazıdan alan uydurulmaması; satır sonlu ve tek satır metnin aynı sonucu vermesi; gerçek DOC fixture metni.
+  - Test-first: önce yazılan testlerde, imza yedeği nedeniyle 2 test kırmızıydı. Yedek kaldırıldı ve 30/30 yeşil.
+- [x] **Gönderen imza yedeği kaldırıldı:** Önizleme aşamasında kişi adı tahmini yapılmaz. Örneğin DOC fixture'ında imza satırındaki ad artık `—` gösterilir.
+- [x] **Tarayıcı doğrulaması** (gstack headless Chromium; SQLite + sahte sınıflandırıcı; bu makinede Tesseract olmadığı için JPG OCR'ı sahte metinle taklit edildi):
+  - PDF, JPG, DOC, eksik alanlı PDF ve metni çıkarılamayan PDF senaryoları.
+  - Orijinal belge penceresi; satırlar arası geçişte veri karışmaması.
+  - 5 dosya sınırı ve Kaldır (`DELETE …/prepared` `204`).
+  - Önizleme sırasında Gemini çağrısı yok; yalnız seçili 3 dosya sırayla sınıflandırıldı.
+  - 375 px'te yatay taşma yok; pencere ekrana sığıyor.
+
+**V1.4 · Adım 10 — Gerçek ortam uçtan uca doğrulaması (2026-09-23)**
+
+- [x] **Ortam:**
+  - Docker PostgreSQL 18 healthy; `pip check` temiz; `alembic current` = `cedf33674167 (head)`; `alembic check` temiz; `GET /health` → 200.
+  - `backend/.env` içinde `GEMINI_API_KEY`, `GEMINI_MODEL`, `DATABASE_URL` ve `TESSDATA_PREFIX` dolu (değerler yazdırılmadı); `tur.traineddata` erişilebilir.
+- [x] **Yöntem:**
+  - Gerçek backend, yalnız sayım için `extract_text`, sayfa OCR'ı ve Gemini isteğini log satırıyla saran bir scratchpad başlatıcısıyla çalıştırıldı; davranış ve repo değişmedi.
+  - Arayüz gstack headless Chromium ile, Vite proxy üzerinden sürüldü.
+  - Kullanıcının mevcut 4 kaydı (3 `prepared`, 1 `failed`) ve 4 storage dosyası baseline olarak kaydedildi ve dokunulmadı.
+- [x] **5 gerçek dosya:**
+  - Belgeler: metin PDF, metin katmanı olmayan taranmış PDF (200 dpi görüntü), DOCX, gerçek Word 97–2003 DOC fixture'ı ve JPG.
+  - Prepare: 5/5 `200`, istekler sırayla gitti. Çıkarılan metin uzunlukları 468 / 314 / 345 / 540 / 293.
+  - OCR yalnız taranmış PDF'te ve JPG'de, birer kez çalıştı; Türkçe karakterler kayıpsız okundu.
+  - Prepare aşamasında Gemini isteği **0**. `prepared` kayıtlar Kayıtlar listesinde görünmedi.
+- [x] **Önizleme** (gerçek OCR metniyle):
+  - Hitap, konu, tarih ve gönderen alanları 5 belgede de belgede yazanla aynı. Evrak No yalnız DOCX'te (`2026/4410`). Gönderen Kurum her belgede `—`.
+  - DOC'ta etiketsiz imza adı `—` gösterildi.
+  - DOC/DOCX'te "Orijinal Belgeyi Gör" yok.
+  - JPG'de orijinal görüntü penceresi açıldı; PDF'te headless tarayıcı nedeniyle yedek mesaj çıktı. "Çıkarılan Metni Gör" çalıştı.
+- [x] **Sınıflandırma** (gerçek Gemini):
+  - Seçimden çıkarılan belge analiz edilmedi. Seçili 4 belge sırayla işlendi; her Gemini isteği bir önceki belge kaydedildikten sonra başladı.
+  - Belge başına 1 istek; toplam **5 Gemini isteği, 0 retry**. Classify sırasında extract/OCR **0**.
+  - Sonuçlar:
+    - metin PDF → Şikayet / Temizlik İşleri
+    - taranmış PDF → Talep Dilekçesi / Park ve Bahçeler
+    - DOCX → Bilgi Edinme / Mali Hizmetler
+    - JPG → Şikayet / Zabıta
+    - DOC → Şikayet / Temizlik İşleri
+  - Hepsi `classified` oldu ve DB'ye yazıldı; indirmelerin tamamı bayt bayt orijinalle aynı ve media type doğru.
+- [x] **Yaşam döngüsü:**
+  - 6. dosya reddedildi.
+  - Kaldır → `204`; kayıt `404` veriyor, storage dosyası silinmiş; slot hemen yeniden kullanıldı.
+  - 409 kurtarma: curl ile sınıflandırılan belge arayüzde `409` → `GET` detay → sonuç gösterildi; ek Gemini isteği yok.
+  - Kaynak dosya eksik: `409`, Gemini/extract/OCR 0, kayıt `prepared` kaldı, logda storage yolu yok; Kaldır → `204`.
+  - TTL: yalnız test kaydı 25 saat geri alındı. Liste, detay, download ve terminal kayda classify/discard (`409`) çağrıları kaydı silmedi; bir sonraki prepare sildi. Terminal kayıtlar ve kullanıcı kayıtları korundu.
+- [x] **Log güvenliği:** Belge metni, API anahtarı ve storage yolu logda yok; hata satırı yok.
+- [x] **Temizlik:**
+  - Yalnız testte oluşturulan kayıtlar açık ID listesiyle silindi: 5 `classified` ve 1 `prepared` (discard endpoint'iyle). Diğer 3 test kaydı test sırasında discard ve TTL ile zaten silinmişti.
+  - `TRUNCATE` veya toplu silme kullanılmadı.
+  - Sonuç: kullanıcı kayıtları 4/4 ve dosyaları 4/4 yerinde; test kaydı ve kaydı olmayan test dosyası yok.
+- [x] **Bulgu → düzeltildi:** DOCX'te konu "Emlak vergisi borcu hakkında bilgi talebi" iken önizlemede "Emlak vergisi borcu hakkında" olarak kısalıyordu. Neden: konu okuması "hakkında" kelimesinde duruyordu.
+  - Test-first düzeltme: 3 regresyon testi önce kırmızıydı. "hakkında" ve "hk." bitiş sinyali olmaktan çıkarıldı; değer sonraki gerçek etikette ya da satır sonu izinde kesiliyor.
+  - Sonuç: 33/33 yeşil. Adım 10'un gerçek metinleriyle konular tam okunuyor (DOCX: "Emlak vergisi borcu hakkında bilgi talebi"; taranmış PDF ve JPG değişmedi).
+  - Sınıflandırma bu hatadan etkilenmemişti.
+- [x] **PDF görüntüleyici:** Headless Chromium'da `pdfViewerEnabled = false` olduğu ve gstack'in görünür (headed) modu bu Windows ortamında başlatılamadığı için otomatik doğrulanamadı.
+  - Kullanıcı gerçek masaüstü tarayıcısında elle doğruladı (2026-09-24): Belge Önizlemesi formu açılıyor; "Orijinal Belgeyi Gör" gerçek PDF'i düzgün boyutlu ve kaydırılabilir bir pencerede gösteriyor; pencere Kapat, Esc ve dışarı tıklamayla kapanıyor; "Çıkarılan Metni Gör" çalışıyor.
+- [x] **Son kontroller:** `npm test` 33 passed (konu düzeltmesi sonrası); `npm run build` ve `npm run lint` temiz; `pytest` 275 passed; `pip check` temiz; `alembic current` head; `alembic check` temiz; `git diff --check` temiz.
+
 ## Üzerinde çalışılan işler
 
-- V1.2 · Adım 1-9 tamamlandı; Adım 9'daki legacy DOC desteği `5695572` olarak commit'lenip push'landı ve clean-clone smoke testiyle doğrulandı. Şu anda üzerinde çalışılan açık bir iş yok. Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı. V1.2 kapsamına yeni iş açılmadan önce `PROJECT_BRAIN.md` ve `DECISIONS.md` ile birlikte değerlendirilir.
+**V1.4 — Çoklu Belge Yükleme ve Önizleme**
+
+- Adım 0–10 tamamlandı: dokümantasyon, backend, frontend ve gerçek ortamda uçtan uca doğrulama. Gerçek tarayıcıda PDF kontrolü elle yapıldı.
+- Değişiklikler tek commit olarak `main`'e alındı. Açık V1.4 işi yok.
+
+**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (açık, başlamadı)**
+
+- Planlanan kapsam `README.md`'deki başlıklardır: el yazısı benchmarkı, OCR quality gate, taranmış tablo ve form dayanıklılığı, düşük kaliteli çıkarımda `needs_review`, OCR kaynaklı özet ve gönderen güvenilirliği.
+- Henüz iş olarak açılmadı. V1.4 bu başlıklara dokunmaz.
+
+**Diğer**
+
+- Benchmarkta açık kalan P3 başlıkları (döndürülmüş sayfalar, ilk 50.000 karakter stratejisi, bozulmuş taramada tür kayması) henüz iş olarak açılmadı.
 
 ## Bilinen problemler ve riskler
 
@@ -537,10 +737,26 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Vite proxy yalnızca geliştirme ortamı içindir (D-038). Frontend ve backend ayrı origin'lerde dağıtılacaksa CORS veya reverse proxy kararı ayrıca verilmelidir.
 - Vite dev sunucusu varsayılan ayarla yalnızca IPv6 `::1` (yani `localhost`) üzerinde dinliyor; `http://127.0.0.1:5173` bağlantı kuramıyor. Tarayıcı ve komut satırı testlerinde `http://localhost:5173` kullanılmalı. Gerekirse `vite.config.ts` içinde `server.host` sabitlenebilir (şimdilik yapılmadı).
 - Frontend'de şablondan gelen `oxlint` dev bağımlılığı ve `.oxlintrc.json` duruyor (`npm run lint`). Backend tarafında karşılık gelen bir linter yok; istenirse kaldırılabilir.
-- Frontend'de test altyapısı yok; doğrulama build ve tarayıcıda gerçek akışla yapılıyor.
+- Frontend'de bileşen/tarayıcı testi yok. Yalnız saf yardımcılar (`src/documentPreview.ts`) `npm test` (Node `node:test`) ile birim test ediliyor. Arayüz akışı build ve tarayıcıda doğrulanıyor.
+- `npm test`, TypeScript dosyalarını Node'un yerleşik tip ayıklamasıyla çalıştırır: Node 22.18+ (veya 23.6+) gerekir. Bu makinede Node 24.20 ile doğrulandı. Test dosyası `tsc -b` kapsamında değildir; tipleri derleme sırasında denetlenmez.
 - PostgreSQL kapalıyken bağlantı denemesi `connect_timeout=10` (D-041) ile yaklaşık 10 sn'de `ConnectionTimeout` veriyor; classify isteği bu durumda kaydı yazamadığı için genel `500` döner ve yetim storage dosyası silinir (düz TCP bağlantısı daha erken reddedilebilse de — bu makinedeki ölçümde ~2 sn — psycopg bu durumda kendi `connect_timeout` süresi dolana kadar bekleyebiliyor; ölçülen hata süresi bu yüzden ~10 sn oldu). Metin çıkarımı ve Gemini aşaması veritabanından önce çalıştığı için toplam süre bunlara ek olarak uzar. `GET /health` veritabanına bakmadığı için bu durumda da `200` döner.
 - `connect_timeout` yalnızca `DATABASE_URL` içinde tanımlı. Parametresi olmayan eski bir yerel `.env`, psycopg'un varsayılan ~130 sn beklemesine döner; `.env` şablonla uyumlu tutulmalıdır.
 - Geliştirmede backend kapalıyken Vite proxy'si boş gövdeli `502` döndürüyor; kullanıcı "Sunucuya ulaşılamadı" yerine "Belge şu anda sınıflandırılamadı…" mesajını görüyor. Yalnızca geliştirme ortamını etkiler.
+- **V1.4 (D-045, D-046) bilinen sınırlar:**
+  - **TTL temizliği tembeldir:** Zamanlayıcı yok. Sahipsiz `prepared` kayıt 24 saat dolunca kendiliğinden silinmez, sonraki prepare çağrısında temizlenir. Yeni prepare gelmezse kayıt kalır ama Kayıtlar'da görünmez.
+  - **Çift classify:** İki sekmeden ya da API'den aynı `prepared` kayıt için eşzamanlı classify gelirse iki Gemini çağrısı yapılabilir ve son yazan kazanır. Arayüz sıralı çalıştığı için bunu engeller; kilit eklenmedi.
+  - **Discard / TTL ile classify yarışı:** Classify sürerken aynı kayıt discard edilir ya da TTL ile silinirse classify'ın commit'i `500` alır. Arayüzde `analyzing` satırda Kaldır pasif.
+  - **Kaynak dosya kontrolünün zaman penceresi:** Kontrol Gemini çağrısından önce yapılır. Dosya Gemini çağrısı sürerken elle silinirse orijinali olmayan bir sonuç kaydı oluşabilir.
+  - **5 dosya sınırı yalnız arayüzde:** Backend'de toplu işlem kavramı yok; API istemcileri sınırsız prepare yapabilir.
+  - **Sıralama:** Kayıtlar'daki `created_at`, sınıflandırma değil hazırlık anıdır.
+  - **Sayfa yenileme:** Liste kaybolur, hazırlanmış kayıtlar sunucuda sahipsiz kalır ve TTL ile temizlenir. Sekme kapanırken otomatik discard (`pagehide`/`keepalive`) bilinçli olarak eklenmedi.
+  - **Mobil PDF:** PDF görüntüleyicisi olmayan tarayıcılarda (çoğu mobil) "Orijinal Belgeyi Gör" penceresinde yedek mesaj çıkar. Yapılandırılmış önizleme ve çıkarılan metin her zaman çalışır.
+  - **Word önizlemesi:** DOC/DOCX'te orijinal belge görünümü yok; yapılandırılmış önizleme ve çıkarılan metin var.
+  - **Önizleme alanları sezgiseldir:** Metin tek satıra normalize edildiği için özel ad içeren bir konu (ör. "… Park ve Bahçeler …") satır sonu izinde erken kesilebilir.
+  - **İki noktasız etiketler:** Tablo biçimli belgelerde konu etiketi iki noktasız yazıldıysa konu boş kalır. Tarih, evrak no ve gönderen etiketleri iki noktasız da okunur.
+  - **Tarih yedeği:** Etiketsiz ve birden fazla farklı tarih içeren belgede tarih boş kalır.
+  - **Kapsam:** Önizleme alanları yalnız görüntülemeye yöneliktir; saklanmaz ve sınıflandırmayı etkilemez.
+  - **Kalite uyarısı yok:** Düşük kaliteli OCR metni de `prepared` olur ve V1.4 bunun için uyarı vermez; bu V1.3'ün konusu.
 
 ## Açık sorular
 
@@ -550,9 +766,11 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 ## Sıradaki geliştirme adımları
 
-V1.2'nin mevcut planlanan adımları (Adım 1-9) tamamlandı; şu anda açılmış bir sonraki geliştirme işi yok.
+**V1.4** — Adım 0–10 tamamlandı ve commit'lendi. Adım 10 konu kısalması düzeltildi (bkz. Adım 10 bulgusu). Yeni V1.4 işi açılmadı.
 
-Aşağıdakiler **V1 kapsamı dışındadır ve yeni iş olarak açılmamıştır**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
+**V1.3 (açık)** — Henüz adım açılmadı; başlatılırken kapsam bu dosyada ayrı başlık altında izlenir.
+
+Aşağıdakiler **açılmış iş değildir**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
 - Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi (manuel testte 05 senaryosunda görülen park/bahçeler ↔ zabıta ikilemi gibi durumlar).
 - Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication.

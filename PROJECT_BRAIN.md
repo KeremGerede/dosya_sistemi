@@ -14,7 +14,7 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 
 ## 2. Temel akış
 
-1. İstemci `POST /api/documents/classify` ile dosya yükler (`multipart/form-data`).
+1. İstemci dosyayı yükler (`multipart/form-data`). Legacy / tek-adımlı `POST /api/documents/classify` aşağıdaki adımların tamamını tek istekte yapar; V1.4 arayüzünün kullandığı iki adımlı akış bu listenin altında anlatılır.
 2. Kabul kontrolü: dosya PDF, DOC, DOCX, JPG/JPEG veya PNG değilse ya da 50 MB'ı aşıyorsa **kayıt oluşturmadan** 4xx ile reddedilir.
 3. Belge için `document_id` (UUID) üretilir; orijinal dosya `backend/storage/<document_id>.<uzanti>` olarak kaydedilir.
 4. Metin çıkarılır: PDF → PyMuPDF, DOC → legacy-doc, DOCX → python-docx, JPG/JPEG/PNG → doğrudan OCR (D-001).
@@ -24,7 +24,14 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 8. Dosya referansı, çıkarılan metin ve sınıflandırma sonucu `documents` tablosuna yazılır.
 9. API sonucu döndürür (`failed` durumunda `422` veya `502`). Teknik hata detayları istemciye gönderilmez, loglanır.
 
-İşlem senkrondur: tek istek → tek yanıt. Kuyruk veya arka plan işi yoktur.
+**İki adımlı akış (V1.4; D-045, D-046):**
+
+- `POST /api/documents/prepare`, yukarıdaki 2–5. adımları yapar ve kaydı `status = prepared` olarak yazar; Gemini çağrılmaz. Yanıt, çıkarılan metni de içerir. Kullanıcı bu aşamada belgeyi önizler.
+- Kullanıcı onaylarsa `POST /api/documents/{document_id}/classify`, kayıttaki metinle 6–9. adımları yapar. Dosya yeniden okunmaz, OCR tekrar çalışmaz. Orijinal dosya storage'da yoksa sınıflandırma yapılmaz.
+- Kullanıcı vazgeçerse `DELETE /api/documents/{document_id}/prepared` kaydı ve dosyasını siler. Sahipsiz kalan `prepared` kayıtlar 24 saatten eskiyse sonraki prepare çağrısında temizlenir.
+- Arayüz en fazla 5 dosyayı listeler ve sırayla işler.
+
+İşlem senkrondur: her istek kendi işini tamamlayıp yanıt döner. Kuyruk veya arka plan işi yoktur.
 
 ## 3. Teknoloji yığını
 
@@ -65,7 +72,7 @@ backend/
     main.py                             # FastAPI uygulaması, router kaydı
     settings.py                         # ortam değişkenleri (backend/.env), require_env(); DATABASE_URL zorunlu
     database.py                         # engine, session
-    api/documents.py                    # POST /api/documents/classify — akışı sırayla çağırır, status belirler
+    api/documents.py                    # classify (legacy), prepare, {id}/classify, {id}/prepared + salt okunur endpoint'ler; status belirler
     services/file_service.py            # kabul kontrolü, storage'a kaydetme, PDF/DOC/DOCX/görüntü metin çıkarımı
     services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, retry politikası (D-033)
     llm/gemini_client.py                # google-genai ince sarmalayıcısı: tek istek, 30 sn timeout, SDK retry kapalı
@@ -74,7 +81,7 @@ backend/
     config/document_types.json          # belge türü kataloğu
     config/institutions.json            # kurum kataloğu
   storage/                              # orijinal dosyalar: <document_id>.<uzanti> (git'e girmez)
-frontend/                               # React + Vite: dosya seç → yükle → sonucu göster (tek sayfa)
+frontend/                               # React + Vite: en fazla 5 dosya → önizle → seçilenleri sınıflandır; kayıtlar (tek sayfa)
 ```
 
 Bu yapı yön gösterir, zorunlu değildir. Kurallar:
@@ -218,7 +225,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 | `summary` | text, null | Belge özeti (D-044); `failed` ise `null` |
 | `sender_name` | text, null | Gönderen kişi (D-044); belirtilmemişse veya `failed` ise `null` |
 | `sender_institution` | text, null | Gönderen kurum (D-044); belirtilmemişse veya `failed` ise `null` |
-| `status` | string, not null | `classified` \| `needs_review` \| `failed` |
+| `status` | string, not null | `classified` \| `needs_review` \| `failed` (kalıcı) · `prepared` (V1.4 ara durumu) |
 | `created_at` | timestamp (tz), not null | |
 
 `status` belirleme:
@@ -226,19 +233,31 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 - `classified` — sınıflandırma başarılı, `needs_review = false`
 - `needs_review` — sınıflandırma başarılı, `needs_review = true`
 - `failed` — kabul edilen belgede metin çıkarımı başarısız, normalize edilmiş metin 10 karakterden kısa, Gemini ile sınıflandırma tamamlanamadı (geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen kalıcı hata). Bu kayıtlarda `document_type`, `institution_id`, `review_reason`, `summary`, `sender_name` ve `sender_institution` `null`, `needs_review = false`.
+- `prepared` (V1.4; D-046) — metin çıkarıldı ve yeterli, ama belge henüz sınıflandırılmadı. Sınıflandırma alanları `null`, `needs_review = false`, `created_at` hazırlık anıdır.
+  - Kayıt listesinde görünmez.
+  - Yalnızca `/{document_id}/classify` ile sonuca geçer ya da `DELETE /{document_id}/prepared` ile silinir.
+  - Sahipsiz kalırsa 24 saat sonra, sonraki prepare çağrısında temizlenir.
 
 Kabul edilmeyen dosyalar (desteklenmeyen tür, 50 MB üstü) için satır oluşturulmaz.
 
 ## 9. API
 
-**`POST /api/documents/classify`** — girdi: `multipart/form-data` içinde en fazla 50 MB boyutunda tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası.
+**`POST /api/documents/classify`** — legacy / tek-adımlı sınıflandırma. Girdi: `multipart/form-data` içinde en fazla 50 MB boyutunda tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası. Geriye dönük uyumluluk için korunur; V1.4 arayüzü bu endpoint'i kullanmaz. Aşağıdaki yanıt ve hata sözleşmesi bu endpoint içindir.
+
+V1.4 iki adımlı akış (D-045, D-046):
+
+| Endpoint | Yanıt |
+|---|---|
+| **`POST /api/documents/prepare`** | Girdi legacy endpoint'le aynı. Başarıda `200` ve detay yanıtıyla aynı şekil (`status = "prepared"`, `extracted_text` dahil). `413` / `415` / doğrulama `422` / `failed` + `422` / `500` legacy endpoint'le aynıdır. Gemini çağrılmaz, `502` yoktur |
+| **`POST /api/documents/{document_id}/classify`** | Kayıttaki metinle sınıflandırır. `200` (`classified` / `needs_review`) · `502` (`failed`) · `404` (kayıt yok) · `409` (kayıt `prepared` değil ya da orijinal dosya storage'da yok; Gemini çağrılmaz, kayıt değişmez) · `500` (kayıt `prepared` kalır) |
+| **`DELETE /api/documents/{document_id}/prepared`** | Yalnızca `prepared` kaydı ve dosyasını siler. `204` · `404` · `409` (kalıcı kayıt; dokunulmaz) · `500` (kayıt `prepared` kalır) |
 
 Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
 
 | Endpoint | Yanıt |
 |---|---|
-| **`GET /api/documents`** | Kayıtlar `created_at` azalan sırada; aşağıdaki alanlar + `created_at`. `extracted_text` ve `file_reference` dönmez |
-| **`GET /api/documents/{document_id}`** | Aynı alanlar + `extracted_text`; kayıt yoksa `404` |
+| **`GET /api/documents`** | Kalıcı kayıtlar `created_at` azalan sırada; aşağıdaki alanlar + `created_at`. `prepared` kayıtlar listelenmez; `extracted_text` ve `file_reference` dönmez |
+| **`GET /api/documents/{document_id}`** | Aynı alanlar + `extracted_text`; `prepared` dahil her durum. Kayıt yoksa `404` |
 | **`GET /api/documents/{document_id}/download`** | Orijinal dosya, kullanıcının yüklediği adla ve `file_type`'a uygun media type ile; kayıt ya da dosya yoksa ayrıntısız `404` |
 
 Ayrıca iş mantığı içermeyen operasyonel **`GET /health`** → `{"status": "ok"}`.
@@ -327,12 +346,14 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Aynı çağrıda belge özeti ve (varsa) gönderen kişi/kurum bilgisi (D-044)
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
-- Tek yazma endpoint'i: `POST /api/documents/classify`; kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043) ve operasyonel `GET /health`
-- Basit React + Vite + TypeScript arayüz (Vite proxy ile `/api`, 120 sn istek zaman aşımı): yükleme/sonuç ekranı ve kayıtları listeleyip orijinal belgeyi indirebilen kayıtlar görünümü
+- Yazma endpoint'leri: legacy / tek-adımlı `POST /api/documents/classify` ve V1.4 iki adımlı akış (`prepare`, `/{document_id}/classify`, `DELETE /{document_id}/prepared` — D-019, D-045, D-046). Kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043) ve operasyonel `GET /health`
+- Basit React + Vite + TypeScript arayüz (Vite proxy ile `/api`, istek başına 120 sn zaman aşımı):
+  - Sınıflandırma ekranı: en fazla 5 dosyayı çoklu seçim veya sürükle-bırakla ekleme, analizden önce içerik merkezli önizleme (varsayılan: çıkarılan metinden oluşturulan yapılandırılmış belge formu; yardımcı: orijinal belge ve çıkarılan metin; Gemini kullanılmaz), seçilen dosyaları sırayla sınıflandırma ve dosya başına durum/sonuç.
+  - Kayıtlar görünümü: kayıtları listeler ve orijinal belgeyi indirir.
 
 ## 12. Açıkça kapsam dışı
 
-DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kayıt güncelleme/silme endpoint'leri · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri
+DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtlar için güncelleme/silme endpoint'leri (yalnızca `prepared` kayda özgü geçişler vardır — D-046) · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 

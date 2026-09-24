@@ -61,9 +61,9 @@ h1 {
   font-weight: 600;
 }
 
-/* Yükleme formu */
+/* Yükleme alanı: dosya seçici + sürükle-bırak */
 
-form {
+.uploader {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -71,9 +71,15 @@ form {
   margin: 0 0 1.5rem;
   padding: 1.5rem;
   background-color: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.uploader.drag-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 label {
@@ -122,25 +128,6 @@ input[type='file']:disabled {
   cursor: not-allowed;
 }
 
-.file-info {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4rem;
-  max-width: 100%;
-  margin: 0;
-  padding: 0.55rem 0.75rem;
-  background-color: var(--surface-muted);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  overflow-wrap: anywhere;
-}
-
-.file-info strong {
-  color: var(--text);
-  font-weight: 600;
-}
-
 /* Taban: yalnızca sıfırlama. Dolgulu görünüm açıkça hedeflenen butonlara verilir;
    sekmeler ve kayıt satırları da <button> olduğu için genel bir dolgu kuralı onlara sızardı. */
 button {
@@ -149,9 +136,8 @@ button {
   cursor: pointer;
 }
 
-/* Birincil aksiyon */
-form button[type='submit'] {
-  align-self: flex-start;
+/* Birincil aksiyon (Seçilen Dosyaları Analiz Et) */
+button.primary {
   min-width: 10rem;
   padding: 0.6rem 1.35rem;
   font-weight: 600;
@@ -161,16 +147,16 @@ form button[type='submit'] {
   transition: background-color 0.12s ease;
 }
 
-form button[type='submit']:hover:not(:disabled) {
+button.primary:hover:not(:disabled) {
   background-color: var(--accent-hover);
 }
 
-form button[type='submit']:disabled {
+button.primary:disabled {
   background-color: var(--accent-disabled);
   cursor: not-allowed;
 }
 
-/* İkincil aksiyon (Yenile) */
+/* İkincil aksiyon (Yenile, Önizle, Kaldır, Tamamlananları Temizle) */
 button.secondary {
   padding: 0.4rem 0.85rem;
   background-color: var(--surface);
@@ -183,6 +169,16 @@ button.secondary {
 
 button.secondary:hover:not(:disabled) {
   background-color: var(--surface-muted);
+}
+
+button.secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.small {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
 }
 
 /* Durum satırı ve bildirim kutuları */
@@ -570,6 +566,274 @@ tr.open .chevron {
   overflow-wrap: anywhere;
 }
 
+/* Toplu yükleme listesi (V1.4): Kayıtlar tablosunun görünümünü paylaşır */
+
+.batch {
+  margin-top: 1.25rem;
+}
+
+/* Genişlikler padding hariçtir (table-layout: fixed); ad sütunu kalan alanı alır. */
+.batch-table th:nth-child(1) {
+  width: 1.25rem;
+}
+
+.batch-table th:nth-child(2) {
+  width: auto;
+}
+
+.batch-table th:nth-child(3) {
+  width: 14%;
+}
+
+.batch-table th:nth-child(4) {
+  width: 17%;
+}
+
+.batch-table th:nth-child(5) {
+  width: 9rem;
+}
+
+/* Önizleme öncesi doğru dosyayı tanımak için ad kısaltılmaz, gerekirse alt satıra geçer. */
+.batch-table .record-name {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.name-cell {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.row-error {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--err-text);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.col-meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.col-meta .file-icon {
+  font-weight: 600;
+}
+
+.file-size {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.col-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.col-actions button + button {
+  margin-left: 0.35rem;
+}
+
+.badge.batch-queued,
+.badge.batch-preparing,
+.badge.batch-waiting {
+  background-color: var(--surface-muted);
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
+.badge.batch-ready,
+.badge.batch-analyzing {
+  background-color: #eef4fe;
+  border-color: var(--accent-disabled);
+  color: var(--accent-hover);
+}
+
+.badge.batch-done {
+  background-color: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok-text);
+}
+
+.badge.batch-review {
+  background-color: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-text);
+}
+
+.badge.batch-failed {
+  background-color: var(--err-bg);
+  border-color: var(--err-border);
+  color: var(--err-text);
+}
+
+.batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+/* Belge Önizlemesi: çıkarılan metinden oluşturulan yapılandırılmış form (varsayılan görünüm) */
+
+.doc-preview {
+  padding: 1.1rem 1.25rem 1.2rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.record-detail .doc-preview h3 {
+  margin: 0 0 0.9rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+
+/* Genel dl ızgarasını ezer: alanlar iki kolon, geniş alanlar tam satır */
+dl.preview-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1.5rem;
+}
+
+.preview-fields .field {
+  min-width: 0;
+}
+
+.preview-fields .field.wide {
+  grid-column: 1 / -1;
+}
+
+.preview-fields dt {
+  margin-bottom: 0.15rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.preview-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.preview-fields dd.missing {
+  color: var(--text-subtle);
+  font-weight: 400;
+}
+
+.preview-fields dd.content {
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.doc-preview > .hint {
+  margin-top: 0.9rem;
+}
+
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.doc-preview .extracted-text {
+  margin-top: 0.85rem;
+}
+
+.include-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.include-toggle input {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Orijinal belge penceresi (ikincil görünüm) */
+
+.viewer-dialog {
+  width: min(56rem, calc(100vw - 2rem));
+  max-height: 85vh;
+  padding: 0;
+  background-color: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
+}
+
+.viewer-dialog::backdrop {
+  background-color: rgba(16, 24, 40, 0.45);
+}
+
+.viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-title {
+  min-width: 0;
+}
+
+.viewer-title h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.viewer-title p {
+  margin: 0.1rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.viewer-body {
+  padding: 1rem 1.1rem 1.1rem;
+  max-height: calc(85vh - 4.5rem);
+  overflow: auto;
+}
+
+.preview-frame {
+  display: block;
+  width: 100%;
+  height: min(72vh, 44rem);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 72vh;
+  margin: 0 auto;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 /* Boş liste */
 
 .empty {
@@ -601,8 +865,17 @@ tr.open .chevron {
     padding: 1.75rem 1rem 3rem;
   }
 
-  form button[type='submit'] {
-    align-self: stretch;
+  button.primary {
+    flex: 1 1 100%;
+  }
+
+  .col-actions {
+    text-align: left;
+  }
+
+  .file-size {
+    display: inline;
+    margin: 0 0 0 0.4rem;
   }
 
   /* Tablo dar ekranda satır-kart düzenine geçer; başlıklar hücre etiketi olur. */
@@ -668,5 +941,22 @@ tr.open .chevron {
 
   dd {
     margin-bottom: 0.6rem;
+  }
+
+  dl.preview-fields {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .preview-fields dd {
+    margin-bottom: 0;
+  }
+
+  .doc-preview {
+    padding: 0.9rem;
+  }
+
+  .viewer-dialog {
+    width: calc(100vw - 1rem);
   }
 }

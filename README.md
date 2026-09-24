@@ -4,7 +4,7 @@ Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki be
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-**Durum: V1.3 geliştiriliyor** — V1.0, V1.1 ve V1.2 tamamlandı.
+**Durum:** V1.0–V1.2 tamamlandı. Açık iş hatları: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction, açık) · **V1.4** — Çoklu Belge Yükleme ve Önizleme (UX/workflow, aktif geliştirme).
 
 ## İçindekiler
 
@@ -69,9 +69,11 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 - Kişi adı veya unvanından kurum adı türetilmesine karşı koruma (sender hallucination guard)
 - Clean-clone doğrulaması (sıfırdan kurulum, migration ve uçtan uca smoke test)
 
+> Sürüm numaraları kapsam başlığıdır, teslim sırası değildir; V1.3 ve V1.4 birbirinden bağımsız ilerler.
+
 ### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
 
-**Geliştiriliyor.** Aşağıdaki başlıklar henüz tamamlanmadı; planlanan kapsamdır:
+**Açık — henüz tamamlanmadı.** OCR/extraction iş hattı. Planlanan kapsam:
 
 - Gerçek insan el yazısı benchmarkı
 - El yazısı OCR kalitesinin iyileştirilmesi
@@ -79,6 +81,17 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 - Taranmış tablo ve form belgelerinde OCR dayanıklılığı
 - Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
 - OCR kaynaklı özet ve gönderen bilgisi güvenilirliğinin artırılması
+
+### V1.4 — Çoklu Belge Yükleme ve Önizleme
+
+**Aktif geliştirme.** UX/workflow iş hattı. Planlanan kapsam:
+
+- Aynı anda en fazla 5 dosya; çoklu seçim ve sürükle-bırak
+- Analizden önce içerik merkezli önizleme. Varsayılan görünüm, çıkarılan metinden oluşturulan yapılandırılmış belge formudur: hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Belgede açıkça bulunmayan alan boş kalır. Orijinal belge (PDF/JPG/JPEG/PNG) ve çıkarılan metin yardımcı görünümlerdir. Önizleme aşamasında Gemini kullanılmaz.
+- Dosya başına seçim ve kaldırma; yalnız seçilen dosyalar sınıflandırılır
+- Aynı dosyada metin çıkarımı/OCR yalnız bir kez (hazırla → önizle → sınıflandır)
+- Dosyaların sırayla işlenmesi; bir dosyanın hatası diğerlerini durdurmaz
+- Dosya başına durum ve sonuç gösterimi
 
 ## Projenin Amacı
 
@@ -213,7 +226,7 @@ PDF'te bir sayfa iki durumda OCR'lanır: kendi gömülü metni 10 karakterin alt
 Mimari bilinçli olarak sade tutulur:
 
 - Tek bir monolit uygulama; microservice yoktur.
-- İşleme senkrondur: tek istek → tek yanıt; kuyruk veya arka plan işi yoktur.
+- İşleme senkrondur: her istek kendi işini tamamlayıp yanıt döner; kuyruk veya arka plan işi yoktur.
 - Belge başına **tek** sınıflandırma işlemi yapılır; retry yalnızca aynı çağrının tekrarıdır.
 - Agent sistemi, RAG ve vector database kullanılmaz.
 - Repository/factory gibi ek soyutlama katmanları eklenmez; yeni katman ancak somut gerekçe ve `DECISIONS.md` kaydıyla gelir.
@@ -244,12 +257,15 @@ Sürümler `backend/requirements.txt` ve `frontend/package.json` dosyalarında p
 | Method | Endpoint | Açıklama |
 |---|---|---|
 | GET | `/health` | Uygulama sağlık kontrolü → `{"status": "ok"}` |
-| POST | `/api/documents/classify` | Belge yükleme ve sınıflandırma |
+| POST | `/api/documents/classify` | Legacy / tek-adımlı sınıflandırma: belge yükleme ve sınıflandırma tek istekte. Geriye dönük uyumluluk için korunur; V1.4 arayüzü bunu kullanmaz |
+| POST | `/api/documents/prepare` | V1.4: belgeyi doğrular, saklar ve metnini çıkarır (`status = prepared`); Gemini çağırmaz. Yanıt, önizleme için çıkarılan metni içerir |
+| POST | `/api/documents/{document_id}/classify` | V1.4: hazırlanmış belgeyi kayıttaki metinle sınıflandırır; dosya yeniden okunmaz. Belge hazırlık durumunda değilse ya da orijinal dosya yoksa `409` |
+| DELETE | `/api/documents/{document_id}/prepared` | V1.4: henüz sınıflandırılmamış belgeyi ve dosyasını siler (`204`); kalıcı kayıtlarda `409` |
 | GET | `/api/documents` | Kayıtları en yeniden eskiye listeler |
 | GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metnin tamamını içerir |
 | GET | `/api/documents/{document_id}/download` | Orijinal belgeyi yüklendiği adla indirir |
 
-Kayıt endpoint'leri salt okunurdur: güncelleme, silme, arama, filtre, sayfalama ve authentication yoktur. Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
+Kayıt endpoint'leri salt okunurdur: kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme, ayrıca arama, filtre, sayfalama ve authentication yoktur. Henüz sınıflandırılmamış `prepared` kayıtlar listede görünmez. Sahipsiz kalanlar 24 saatten eskiyse bir sonraki prepare çağrısında temizlenir (zamanlayıcı yok). Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
 
 **Classify yanıtının alanları:** `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
 
@@ -436,6 +452,7 @@ Değerler `backend/.env` dosyasında tutulur. `.env` Git'e girmez; `.env.example
 | `npm run dev` | Vite dev sunucusunu başlatır |
 | `npm run build` | TypeScript derlemesi ve production build (`dist/`) |
 | `npm run lint` | oxlint ile statik analiz |
+| `npm test` | Önizleme alanı çıkarımının birim testleri (Node'un yerleşik test çalıştırıcısı; Node 22.18+ gerekir) |
 
 ### Docker
 
@@ -493,7 +510,7 @@ Ayrıntılı test geçmişi ve ölçüm sonuçları için: [`CURRENT_STATE.md`](
 
 ## Bilinen Sınırlar
 
-- Gerçek insan el yazısı henüz güvenilir biçimde desteklenmiyor; bu başlık V1.3 kapsamında geliştiriliyor.
+- Gerçek insan el yazısı henüz güvenilir biçimde desteklenmiyor; bu başlık açık olan V1.3 iş hattının konusu.
 - Taranmış çizgili tablo ve formlarda OCR bazı satırları düşürebilir.
 - EXIF bilgisi olmayan 90°/180° döndürülmüş görüntülerde OCR anlamsız metin üretebilir; otomatik döndürme/OSD yoktur.
 - Gemini yalnızca metnin ilk 50.000 karakterini değerlendirir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
@@ -512,7 +529,7 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 
 ### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
 
-**Geliştiriliyor.** Planlanan kapsam:
+**Açık.** OCR/extraction iş hattı; V1.4'ten bağımsız ilerler. Planlanan kapsam:
 
 - Gerçek insan el yazısı benchmarkı
 - El yazısı OCR kalitesinin iyileştirilmesi
@@ -520,6 +537,10 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 - Taranmış tablo ve form belgelerinde OCR dayanıklılığı
 - Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
 - OCR kaynaklı özet ve gönderen bilgisi güvenilirliği
+
+### V1.4 — Çoklu Belge Yükleme ve Önizleme
+
+**Aktif geliştirme.** UX/workflow iş hattı (D-045, D-046). İki adımlı API (prepare → classify, kaldırma için discard) ve arayüz uygulandı. Gerçek PostgreSQL, Gemini ve Tesseract OCR ile metin PDF, taranmış PDF, DOCX, DOC ve JPG üzerinde uçtan uca doğrulandı. Legacy `POST /api/documents/classify` değişmeden kalır.
 
 ### Daha Sonra Değerlendirilebilecekler
 

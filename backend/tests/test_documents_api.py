@@ -936,3 +936,584 @@ def test_list_and_detail_return_doc_records_without_file_reference(client, fake_
     assert detail["file_type"] == "doc"
     assert DOC_TEXT_PARCASI in detail["extracted_text"]
     assert "file_reference" not in detail
+
+
+# --- V1.4: hazırla → önizle → sınıflandır (D-045, D-046) ---
+
+PREPARE_URL = "/api/documents/prepare"
+DETAIL_FIELDS = RESPONSE_FIELDS | {"created_at", "extracted_text"}
+ALREADY_PROCESSED_MESSAGE = "Belge zaten işlenmiş."
+SOURCE_FILE_MISSING_MESSAGE = "Belgenin orijinal dosyasına ulaşılamadı; belgeyi kaldırıp yeniden yükleyin."
+
+
+def prepare(client: TestClient, file_name: str, content: bytes):
+    return client.post(PREPARE_URL, files={"file": (file_name, content, "application/octet-stream")})
+
+
+def stored_document(session_factory, document_id) -> Document | None:
+    with session_factory() as session:
+        return session.get(Document, uuid.UUID(str(document_id)))
+
+
+@pytest.fixture
+def failing_commit(session_factory):
+    """Kurulunca veritabanı commit'lerini düşürür; rollback çağrılarını kaydeden listeyi döndürür."""
+    rollbacks = []
+
+    def failing_get_db():
+        with session_factory() as session:
+            original_rollback = session.rollback
+
+            def fail_commit():
+                raise OperationalError("COMMIT", None, Exception("veritabanı erişilemiyor"))
+
+            def tracking_rollback():
+                rollbacks.append(True)
+                original_rollback()
+
+            session.commit = fail_commit
+            session.rollback = tracking_rollback
+            yield session
+
+    def install():
+        app.dependency_overrides[get_db] = failing_get_db
+        return rollbacks
+
+    return install
+
+
+@pytest.mark.parametrize(
+    "file_name, content, file_type",
+    [
+        ("dilekce.pdf", make_pdf(PDF_TEXT), "pdf"),
+        ("dilekce.docx", make_docx(DOCX_TEXT), "docx"),
+        ("dilekçe raporu.doc", DOC_FIXTURE.read_bytes(), "doc"),
+        ("foto.png", make_image(image_format="png"), "png"),
+    ],
+    ids=["pdf", "docx", "doc", "png"],
+)
+def test_prepare_stores_file_and_text_without_calling_gemini(
+    client, session_factory, storage_dir, fake_image_ocr, caplog, file_name, content, file_type
+):
+    # Gemini çağrılırsa autouse gemini_must_not_be_called_unexpectedly fixture'ı testi düşürür.
+    fake_image_ocr()
+
+    with caplog.at_level(logging.DEBUG):
+        response = prepare(client, file_name, content)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == DETAIL_FIELDS  # file_reference yanıtta yok
+    assert (body["status"], body["file_name"], body["file_type"]) == ("prepared", file_name, file_type)
+    assert (
+        body["document_type"], body["document_type_name"], body["institution_id"], body["institution_name"],
+        body["needs_review"], body["review_reason"], body["summary"], body["sender_name"], body["sender_institution"],
+    ) == (None, None, None, None, False, None, None, None, None)
+    [document] = all_documents(session_factory)
+    assert str(document.id) == body["document_id"]
+    assert document.status == "prepared"
+    assert document.extracted_text == body["extracted_text"]
+    assert len(document.extracted_text) >= file_service.MIN_TEXT_LENGTH
+    assert (document.document_type, document.institution_id, document.review_reason, document.summary) == (None,) * 4
+    assert document.file_reference == f"{document.id}.{file_type}"
+    assert (storage_dir / document.file_reference).read_bytes() == content
+    assert document.file_reference not in response.text
+    assert SECRET_MARKER not in caplog.text
+
+
+def test_prepare_rejects_oversized_file_without_record_or_file(client, session_factory, storage_dir, monkeypatch):
+    content = make_pdf(PDF_TEXT)
+    monkeypatch.setattr(file_service, "MAX_FILE_SIZE", len(content) - 1)
+
+    response = prepare(client, "buyuk.pdf", content)
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Dosya boyutu 50 MB sınırını aşıyor."}
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+@pytest.mark.parametrize(
+    "file_name, content",
+    [("dilekce.txt", b"duz metin dosyasi"), ("dilekce.pdf", b"PDF olmayan icerik"), ("sahte.png", b"duz metin")],
+    ids=["txt", "fake-pdf", "fake-png"],
+)
+def test_prepare_rejects_unsupported_file_without_record_or_file(client, session_factory, storage_dir, file_name, content):
+    response = prepare(client, file_name, content)
+
+    assert response.status_code == 415
+    assert response.json() == {"detail": "Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."}
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_prepare_without_file_returns_validation_error(client, session_factory, storage_dir):
+    response = client.post(PREPARE_URL)
+
+    assert response.status_code == 422
+    assert "document_id" not in response.json()
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+@pytest.mark.parametrize(
+    "file_name, content, expected_text",
+    [
+        ("kisa.docx", make_docx("Kısa"), "Kısa"),
+        ("metinsiz.pdf", make_pdf(""), None),
+        ("bozuk.pdf", b"%PDF-1.7\nbozuk icerik", None),
+    ],
+    ids=["short-text", "no-text", "corrupt"],
+)
+def test_prepare_text_failure_returns_422_with_failed_record(client, session_factory, storage_dir, file_name, content, expected_text):
+    response = prepare(client, file_name, content)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS | {"message"}
+    assert (body["status"], body["message"]) == ("failed", TEXT_FAILED_MESSAGE)
+    [document] = all_documents(session_factory)
+    assert str(document.id) == body["document_id"]
+    assert (document.status, document.document_type, document.needs_review) == ("failed", None, False)
+    assert document.extracted_text == expected_text
+    assert (storage_dir / document.file_reference).read_bytes() == content  # D-004: failed kaydının dosyası kalır
+
+
+def test_prepare_storage_write_failure_returns_500_without_partial_file_or_record(
+    client, session_factory, storage_dir, failing_storage_write
+):
+    response = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_prepare_commit_failure_rolls_back_and_removes_file(client, session_factory, storage_dir, failing_commit, caplog):
+    rollbacks = failing_commit()
+
+    with caplog.at_level(logging.DEBUG):
+        response = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert rollbacks == [True]
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+    assert SECRET_MARKER not in caplog.text
+
+
+def classify_url(document_id) -> str:
+    return f"{LIST_URL}/{document_id}/classify"
+
+
+def insert_with_file(session_factory, storage_dir, **overrides) -> Document:
+    """Kayıt + storage dosyası (yerinde duran orijinal belge)."""
+    document = insert_document(session_factory, **overrides)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    (storage_dir / document.file_reference).write_bytes(make_pdf(PDF_TEXT))
+    return document
+
+
+def insert_prepared(session_factory, storage_dir, **overrides) -> Document:
+    """Hazırlanmış kayıt (D-046): metin var, sınıflandırma alanları boş; storage dosyası yerinde."""
+    fields = {"status": "prepared", "document_type": None, "institution_id": None, "extracted_text": PDF_TEXT}
+    return insert_with_file(session_factory, storage_dir, **(fields | overrides))
+
+
+@pytest.fixture
+def forbid_text_extraction(monkeypatch):
+    """Kurulunca file_service.extract_text'i çağrıları kaydeden ve testi düşüren bir spy ile değiştirir."""
+    def install():
+        calls = []
+
+        def extract_text(content, file_type):
+            calls.append(file_type)
+            raise AssertionError("metin çıkarımı/OCR sınıflandırma adımında tekrar çalıştı")
+
+        monkeypatch.setattr(file_service, "extract_text", extract_text)
+        return calls
+
+    return install
+
+
+@pytest.mark.parametrize("needs_review", [False, True], ids=["classified", "needs_review"])
+def test_classify_prepared_document_uses_stored_text_without_reextracting(
+    client, session_factory, storage_dir, fake_classify, forbid_text_extraction, caplog, needs_review
+):
+    content = make_pdf(PDF_TEXT)
+    document_id = prepare(client, "dilekce.pdf", content).json()["document_id"]
+    extraction_calls = forbid_text_extraction()  # storage dosyası yerinde; yalnız yeniden çıkarım yasak
+    classify_calls = fake_classify(classification(needs_review=needs_review))
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(classify_url(document_id))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS
+    expected_status = "needs_review" if needs_review else "classified"
+    assert (body["document_id"], body["status"], body["summary"]) == (document_id, expected_status, SUMMARY)
+    assert classify_calls == [PDF_TEXT]  # DB'deki metinle tek Gemini çağrısı
+    assert extraction_calls == []  # OCR/extraction tekrar çalışmadı
+    document = stored_document(session_factory, document_id)
+    assert (document.status, document.summary, document.extracted_text) == (expected_status, SUMMARY, PDF_TEXT)
+    assert (storage_dir / document.file_reference).read_bytes() == content
+    assert SECRET_MARKER not in caplog.text
+
+
+def test_classify_prepared_document_gemini_error_returns_502_and_failed_record(
+    client, session_factory, storage_dir, fake_classify, caplog
+):
+    document_id = prepare(client, "dilekce.docx", make_docx(DOCX_TEXT)).json()["document_id"]
+    fake_classify(classification_error())
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(classify_url(document_id))
+
+    assert response.status_code == 502
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS | {"message"}
+    assert (body["status"], body["message"]) == ("failed", CLASSIFICATION_FAILED_MESSAGE)
+    assert "ham Gemini" not in response.text and "API_KEY_INVALID" not in response.text
+    document = stored_document(session_factory, document_id)
+    assert (document.status, document.document_type, document.institution_id, document.needs_review, document.summary) == (
+        "failed", None, None, False, None,
+    )
+    assert document.extracted_text == DOCX_TEXT  # D-018: metin korunur
+    assert (storage_dir / document.file_reference).exists()
+    assert SECRET_MARKER not in caplog.text
+
+
+def test_classify_unknown_document_returns_404(client, fake_classify):
+    calls = fake_classify(classification())
+
+    response = client.post(classify_url(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+    assert calls == []
+
+
+def test_classify_with_invalid_id_returns_validation_error(client, fake_classify):
+    calls = fake_classify(classification())
+
+    assert client.post(classify_url("belge-degil")).status_code == 422
+    assert calls == []
+
+
+@pytest.mark.parametrize("status", ["classified", "needs_review", "failed"])
+def test_classify_rejects_non_prepared_document_with_409(client, session_factory, storage_dir, fake_classify, status):
+    document = insert_with_file(session_factory, storage_dir, status=status)
+    calls = fake_classify(classification())
+
+    response = client.post(classify_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": ALREADY_PROCESSED_MESSAGE}
+    assert calls == []
+    assert stored_document(session_factory, document.id).status == status
+
+
+def test_classify_commit_failure_keeps_prepared_record_and_file(client, session_factory, storage_dir, fake_classify, failing_commit):
+    document = insert_prepared(session_factory, storage_dir)
+    fake_classify(classification())
+    rollbacks = failing_commit()
+
+    response = client.post(classify_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert rollbacks == [True]
+    stored = stored_document(session_factory, document.id)
+    assert (stored.status, stored.document_type, stored.summary) == ("prepared", None, None)
+    assert (storage_dir / document.file_reference).exists()  # dosya silinmez; kayıt tekrar denenebilir
+
+
+def test_classify_without_source_file_returns_409_and_keeps_prepared_record(
+    client, session_factory, storage_dir, fake_classify, forbid_text_extraction, caplog
+):
+    document_id = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+    document = stored_document(session_factory, document_id)
+    (storage_dir / document.file_reference).unlink()  # discard yarım kaldı veya dosya kayboldu
+    classify_calls = fake_classify(classification())
+    extraction_calls = forbid_text_extraction()
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(classify_url(document_id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": SOURCE_FILE_MISSING_MESSAGE}
+    assert classify_calls == []  # Gemini 0 çağrı
+    assert extraction_calls == []  # extraction 0 çağrı
+    after = stored_document(session_factory, document_id)
+    assert (after.status, after.extracted_text, after.document_type, after.summary) == ("prepared", PDF_TEXT, None, None)
+    # Storage yolu ve belge metni ne yanıtta ne logda.
+    assert document.file_reference not in response.text and str(storage_dir) not in response.text
+    assert document.file_reference not in caplog.text and str(storage_dir) not in caplog.text
+    assert SECRET_MARKER not in caplog.text
+
+
+def test_classify_rejects_file_reference_outside_storage(
+    client, session_factory, storage_dir, tmp_path, fake_classify, forbid_text_extraction, caplog
+):
+    outside = tmp_path / "disarida.pdf"
+    outside.write_bytes(make_pdf(PDF_TEXT))
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    document = insert_document(
+        session_factory, status="prepared", document_type=None, institution_id=None, file_reference="../disarida.pdf",
+    )
+    classify_calls = fake_classify(classification())
+    extraction_calls = forbid_text_extraction()
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(classify_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": SOURCE_FILE_MISSING_MESSAGE}
+    assert classify_calls == [] and extraction_calls == []
+    assert "disarida" not in response.text and "disarida" not in caplog.text
+    assert stored_document(session_factory, document.id).status == "prepared"
+    assert outside.exists()
+
+
+def discard_url(document_id) -> str:
+    return f"{LIST_URL}/{document_id}/prepared"
+
+
+def test_discard_prepared_document_deletes_record_and_file(client, session_factory, storage_dir, caplog):
+    document_id = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+    assert len(stored_files(storage_dir)) == 1
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.delete(discard_url(document_id))
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+    assert SECRET_MARKER not in caplog.text
+
+
+@pytest.mark.parametrize("status", ["classified", "needs_review", "failed"])
+def test_discard_rejects_permanent_records_with_409(client, session_factory, storage_dir, fake_classify, status):
+    document = insert_with_file(session_factory, storage_dir, status=status)
+    calls = fake_classify(classification())
+
+    response = client.delete(discard_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": ALREADY_PROCESSED_MESSAGE}
+    assert stored_document(session_factory, document.id).status == status
+    assert (storage_dir / document.file_reference).exists()
+    assert calls == []
+
+
+def test_discard_unknown_document_returns_404(client):
+    response = client.delete(discard_url(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+
+
+def test_discard_with_invalid_id_returns_validation_error(client):
+    assert client.delete(discard_url("belge-degil")).status_code == 422
+
+
+def test_discard_works_when_storage_file_is_already_missing(client, session_factory, storage_dir):
+    document = insert_prepared(session_factory, storage_dir)
+    (storage_dir / document.file_reference).unlink()
+
+    response = client.delete(discard_url(document.id))
+
+    assert response.status_code == 204
+    assert all_documents(session_factory) == []
+
+
+def test_second_discard_of_same_document_returns_404(client, session_factory, storage_dir):
+    document = insert_prepared(session_factory, storage_dir)
+
+    assert client.delete(discard_url(document.id)).status_code == 204
+    assert client.delete(discard_url(document.id)).status_code == 404
+
+
+def test_discard_file_delete_error_keeps_prepared_record_for_retry(client, session_factory, storage_dir, monkeypatch):
+    document = insert_prepared(session_factory, storage_dir)
+    original_unlink = pathlib.Path.unlink
+
+    def locked_unlink(self, *args, **kwargs):
+        raise PermissionError("dosya kilitli")
+
+    monkeypatch.setattr(pathlib.Path, "unlink", locked_unlink)
+    response = client.delete(discard_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert stored_document(session_factory, document.id).status == "prepared"
+    assert (storage_dir / document.file_reference).exists()
+
+    monkeypatch.setattr(pathlib.Path, "unlink", original_unlink)
+    assert client.delete(discard_url(document.id)).status_code == 204
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_discard_commit_failure_keeps_prepared_record_for_retry(client, session_factory, storage_dir, failing_commit):
+    document = insert_prepared(session_factory, storage_dir)
+    rollbacks = failing_commit()
+
+    response = client.delete(discard_url(document.id))
+
+    assert response.status_code == 500
+    assert rollbacks == [True]
+    assert stored_document(session_factory, document.id).status == "prepared"  # TTL ve tekrar Kaldır bulabilir
+
+    def working_get_db():
+        with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = working_get_db
+    assert client.delete(discard_url(document.id)).status_code == 204  # dosya zaten silinmiş olsa da güvenli
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_discard_never_deletes_files_outside_storage(client, session_factory, storage_dir, tmp_path):
+    outside = tmp_path / "disarida.pdf"
+    outside.write_bytes(make_pdf(PDF_TEXT))
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    document = insert_document(
+        session_factory, status="prepared", document_type=None, institution_id=None, file_reference="../disarida.pdf",
+    )
+
+    response = client.delete(discard_url(document.id))
+
+    assert response.status_code == 204
+    assert all_documents(session_factory) == []
+    assert outside.exists()
+
+
+def test_discarded_document_is_gone_from_detail_download_and_classify(client, storage_dir, fake_classify):
+    document_id = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+    calls = fake_classify(classification())
+
+    assert client.delete(discard_url(document_id)).status_code == 204
+
+    assert client.get(f"{LIST_URL}/{document_id}").status_code == 404
+    assert client.get(f"{LIST_URL}/{document_id}/download").status_code == 404
+    assert client.post(classify_url(document_id)).status_code == 404
+    assert calls == []
+
+
+def test_openapi_documents_v14_endpoints():
+    paths = app.openapi()["paths"]
+
+    prepare_responses = paths[PREPARE_URL]["post"]["responses"]
+    assert {"200", "413", "415", "422"} <= set(prepare_responses) and "502" not in prepare_responses
+    classify_responses = paths[f"{LIST_URL}/{{document_id}}/classify"]["post"]["responses"]
+    assert {"200", "404", "409", "502"} <= set(classify_responses)
+    discard_responses = paths[f"{LIST_URL}/{{document_id}}/prepared"]["delete"]["responses"]
+    assert {"204", "404", "409"} <= set(discard_responses)
+
+
+def test_list_hides_prepared_documents_but_detail_and_download_work(client, session_factory):
+    content = make_pdf(PDF_TEXT)
+    prepared_id = prepare(client, "hazir.pdf", content).json()["document_id"]
+    insert_document(session_factory, file_name="kalici.pdf")
+
+    assert [item["file_name"] for item in client.get(LIST_URL).json()] == ["kalici.pdf"]
+    detail = client.get(f"{LIST_URL}/{prepared_id}")
+    assert detail.status_code == 200
+    assert (detail.json()["status"], detail.json()["extracted_text"]) == ("prepared", PDF_TEXT)
+    download = client.get(f"{LIST_URL}/{prepared_id}/download")
+    assert download.status_code == 200
+    assert download.content == content
+
+
+# Yedek temizlik (TTL): 24 saatten eski sahipsiz prepared kayıtlar sonraki prepare çağrısında silinir (D-046).
+
+def hours_ago(hours: int) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(hours=hours)
+
+
+def test_prepare_cleans_up_expired_orphan_prepared_documents(client, session_factory, storage_dir):
+    expired = insert_prepared(session_factory, storage_dir, created_at=hours_ago(25))
+
+    new_id = prepare(client, "yeni.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+
+    assert [str(document.id) for document in all_documents(session_factory)] == [new_id]
+    assert not (storage_dir / expired.file_reference).exists()
+
+
+def test_cleanup_keeps_fresh_prepared_and_all_permanent_records(client, session_factory, storage_dir):
+    fresh = insert_prepared(session_factory, storage_dir, created_at=hours_ago(1))
+    permanent = [
+        insert_with_file(session_factory, storage_dir, status=status, created_at=hours_ago(25))
+        for status in ("classified", "needs_review", "failed")
+    ]
+
+    new_id = prepare(client, "yeni.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+
+    kept = [fresh, *permanent]
+    assert {str(document.id) for document in all_documents(session_factory)} == {new_id, *(str(d.id) for d in kept)}
+    assert all((storage_dir / document.file_reference).exists() for document in kept)
+
+
+def test_cleanup_skips_record_whose_file_cannot_be_deleted(client, session_factory, storage_dir, monkeypatch, caplog):
+    stuck = insert_prepared(session_factory, storage_dir, created_at=hours_ago(25))
+    other = insert_prepared(session_factory, storage_dir, created_at=hours_ago(25))
+    stuck_path = (storage_dir / stuck.file_reference).resolve()
+    original_unlink = pathlib.Path.unlink
+
+    def unlink(self, *args, **kwargs):
+        if self == stuck_path:
+            raise PermissionError("dosya kilitli")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", unlink)
+    with caplog.at_level(logging.DEBUG):
+        response = prepare(client, "yeni.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 200
+    remaining = {document.id for document in all_documents(session_factory)}
+    assert stuck.id in remaining and other.id not in remaining  # dosyası silinemeyen kayıt sonraki temizliğe kalır
+    assert stuck_path.exists()
+    assert not (storage_dir / other.file_reference).exists()
+    assert stuck.file_reference not in caplog.text
+
+
+def test_cleanup_failure_does_not_break_prepare(client, session_factory, storage_dir, monkeypatch):
+    from app.api import documents as documents_api
+
+    expired = insert_prepared(session_factory, storage_dir, created_at=hours_ago(25))
+
+    def broken_discard(document, db):
+        raise RuntimeError("beklenmeyen temizlik hatası")
+
+    monkeypatch.setattr(documents_api, "_discard_prepared", broken_discard)
+    response = prepare(client, "yeni.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "prepared"
+    assert stored_document(session_factory, expired.id).status == "prepared"
+
+
+def test_expired_prepared_document_is_only_cleaned_by_prepare(client, session_factory, storage_dir, fake_classify):
+    """Zamanlayıcı yok: liste, detay, indirme, classify ve discard temizlik tetiklemez."""
+    expired = insert_prepared(session_factory, storage_dir, created_at=hours_ago(25))
+    to_classify = insert_prepared(session_factory, storage_dir)
+    to_discard = insert_prepared(session_factory, storage_dir)
+    fake_classify(classification())
+
+    client.get(LIST_URL)
+    client.get(f"{LIST_URL}/{expired.id}")
+    client.get(f"{LIST_URL}/{expired.id}/download")
+    assert client.post(classify_url(to_classify.id)).status_code == 200
+    assert client.delete(discard_url(to_discard.id)).status_code == 204
+
+    assert stored_document(session_factory, expired.id).status == "prepared"
+    assert (storage_dir / expired.file_reference).exists()
+
+    prepare(client, "yeni.pdf", make_pdf(PDF_TEXT))
+    assert stored_document(session_factory, expired.id) is None

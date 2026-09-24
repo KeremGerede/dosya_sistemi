@@ -172,8 +172,8 @@
 - **Gerekçe:** İnceleyen kişi belgenin neden işaretlendiğini görür; prompt ve katalog iyileştirmesi için geri bildirim sağlar.
 
 ### D-016 — `status` veritabanında tutulur
-- **Karar:** `documents.status` saklanır; başlangıç değerleri `classified`, `needs_review`, `failed`.
-- **Gerekçe:** İşlem sonucu tek alanda sorgulanır; hatalı işlemler incelemeye düşenlerden ayrılır; yeni durumlarla genişletilebilir.
+- **Karar:** `documents.status` saklanır. Kalıcı sonuç değerleri `classified`, `needs_review`, `failed`'dır. V1.4 ile ara durum `prepared` eklenir: metni çıkarılmış ama henüz sınıflandırılmamış belge (D-045, D-046). Değerler veritabanında CHECK/ENUM ile kısıtlanmaz; yalnızca uygulama kodu atar.
+- **Gerekçe:** İşlem sonucu tek alanda sorgulanır; hatalı işlemler incelemeye düşenlerden ayrılır; yeni durumlarla genişletilebilir. Alan düz metin olduğu için yeni bir durum migration gerektirmez.
 
 ### D-017 — Orijinal belge `backend/storage/` altında saklanır
 - **Karar:** Yüklenen orijinal belge `backend/storage/` altında düz bir klasörde `<document_id>.<uzanti>` adıyla saklanır (uzantı `pdf` veya `docx`). PostgreSQL'e binary olarak yazılmaz; veritabanında dosyanın referansı `file_reference` alanında tutulur. Kullanıcının orijinal dosya adı yalnızca `file_name` alanında saklanır, disk yolu olarak kullanılmaz.
@@ -185,14 +185,20 @@
 
 ## API ve mimari
 
-### D-019 — Tek yazma endpoint'i: `POST /api/documents/classify`, ayrıca operasyonel `GET /health`
-- **Karar:** Kayıt **oluşturan** tek endpoint `POST /api/documents/classify`'dır; girdi `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası (D-001). Kayıtları görüntülemeye yönelik salt okunur endpoint'ler ayrıca tanımlıdır (D-043). Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. Güncelleme ve silme endpoint'i yoktur. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
-- **Gerekçe:** Sınıflandırma akışının tamamı tek çağrıda karşılanır; yazma yüzeyi tek noktada kalır. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
+### D-019 — Yazma endpoint'leri ve operasyonel `GET /health`
+- **Karar:**
+  - Kayıt **oluşturan** iki endpoint vardır. İkisi de `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası alır (D-001):
+    - `POST /api/documents/classify` — legacy / tek-adımlı sınıflandırma: kabul, metin çıkarımı, Gemini ve kayıt tek istekte yapılır. Geriye dönük uyumluluk için korunur.
+    - `POST /api/documents/prepare` — V1.4 iki adımlı akışın ilk adımı; kaydı `prepared` olarak oluşturur, Gemini çağırmaz (D-045).
+  - Yalnızca `prepared` kayda uygulanabilen iki geçiş vardır (D-046): `POST /api/documents/{document_id}/classify` (sınıflandırma sonucunu yazar) ve `DELETE /api/documents/{document_id}/prepared` (kaydı ve dosyasını siler).
+  - Kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme endpoint'i yoktur.
+  - Kayıtları görüntülemeye yönelik salt okunur endpoint'ler D-043'te tanımlıdır. Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
+- **Gerekçe:** Tek-adımlı endpoint mevcut entegrasyon sözleşmesi olarak kalır. İki adımlı akış, kullanıcının belgeyi analizden önce görebilmesini sağlar. Yazma yüzeyi yalnızca `prepared` durumuyla sınırlı dar geçişlerle genişler; kalıcı sonuçlar değiştirilemez ve silinemez. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
 
 ### D-043 — Salt okunur kayıt endpoint'leri (V1.2)
 - **Karar:** Kayıtların görüntülenebilmesi için üç salt okunur endpoint eklenir:
-  - `GET /api/documents` — kayıtlar `created_at` azalan sırada; alanlar D-032'deki classify alanları + `created_at`.
-  - `GET /api/documents/{document_id}` — aynı alanlar + `extracted_text`; kayıt yoksa `404`.
+  - `GET /api/documents` — kalıcı kayıtlar `created_at` azalan sırada; alanlar D-032'deki classify alanları + `created_at`. Henüz sınıflandırılmamış `prepared` kayıtlar listede yer almaz (V1.4, D-046).
+  - `GET /api/documents/{document_id}` — aynı alanlar + `extracted_text`; `prepared` dahil her durumdaki kayıt ID ile okunabilir. Kayıt yoksa `404`.
   - `GET /api/documents/{document_id}/download` — orijinal dosya, kullanıcının yüklediği `file_name` ile ve `file_type`'a karşılık gelen media type ile döner; kayıt ya da fiziksel dosya yoksa ayrıntısız `404`.
   - `file_reference` ve storage yolu hiçbir yanıtta dönmez; indirilecek yol yalnızca veritabanındaki kayıttan türetilir ve storage klasörü dışına çıkan bir yol kabul edilmez.
   - Bu aşamada arama, filtre, sayfalama, silme, düzenleme ve authentication yoktur.
@@ -212,6 +218,7 @@
     - `502` → Gemini ile sınıflandırma tamamlanamadı: geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen bir hata (ör. `400`/`401`/`403` ya da Gemini aşamasında beklenmeyen bir hata) oluştu.
   - Kabul sonrası dosya storage'a ya da kayıt veritabanına yazılamazsa (ör. disk hatası, veritabanı bağlantı/commit hatası) `failed` kaydı da oluşmaz: veritabanı işlemi geri alınır, bu isteğin storage dosyası (yarım yazılmışsa da) silinir ve ayrıntısız `500` (`Internal Server Error`) döner.
   - Diğer yanıtlar: başarılı sınıflandırma `200` (D-032; `status` `classified` veya `needs_review`). Kabul öncesi redlerde kayıt ve dosya oluşmaz (D-004): `413` (D-028) ve `415` (D-001) genel mesajlı `{"detail": "..."}` gövdesiyle, istek doğrulanamazsa (ör. `file` alanı yok) FastAPI'nin standart `422` gövdesiyle (`{"detail": [...]}`) döner. İki `422`, gövdedeki `status` alanıyla ayırt edilir.
+  - Bu kodlar legacy `POST /api/documents/classify` içindir. V1.4 `POST /api/documents/prepare` aynı kabul redlerini (`413`, `415`, doğrulama `422`), metin yetersizliğinde `failed` + `422` davranışını ve `500` davranışını kullanır; Gemini çağırmadığı için `502` üretmez. `POST /api/documents/{document_id}/classify` ve `DELETE /api/documents/{document_id}/prepared` kodları D-046'dadır.
   - Endpoint bunların dışında HTTP kodu üretmez; çerçevenin standart yanıtları (ör. çok parçalı gövde ayrıştırılamazsa `400`, yanlış HTTP metodu için `405`) endpoint çalışmadan döner. Hatanın ayrıntılı nedeni yalnızca loglanır; iç hata ayrıntısı (exception, stack trace, Gemini/kütüphane mesajı) yanıta girmez.
 - **Gerekçe:** Dışarıdan hata ayrımı basit kalır: sorun belgede mi yoksa sınıflandırma servisinde mi, HTTP kodundan anlaşılır. İstemci `failed` kaydının kimliğini alır; teknik hata detayları yanıta girmez. `500` bilinçli bir hata sınıfı değildir; kaydın yazılamadığı beklenmeyen durumda yarım kayıt veya yetim dosya bırakılmaz.
 
@@ -225,9 +232,50 @@
   - Alanlar classify yanıtına ve D-043'teki liste/detay yanıtlarına eklenir.
 - **Gerekçe:** Kayıt listesinde belgenin ne hakkında olduğunu ve kimden geldiğini görmek, sınıflandırma sonucunun tek başına vermediği ilk pratik ihtiyaç. Aynı çağrıda üretildikleri için ek gecikme ve maliyet doğmaz. Uydurma isim/kurum yanlış yönlendirir; bu yüzden belirsizlikte boş bırakmak zorunludur.
 
+### D-045 — Hazırla → önizle → sınıflandır akışı (V1.4)
+- **Karar:**
+  - V1.4 arayüzü bir belgeyi iki adımda işler:
+    1. `POST /api/documents/prepare` dosyayı kabul eder (D-001, D-028), storage'a yazar ve metni çıkarır/OCR'lar; kayıt `status = prepared` olur.
+    2. Kullanıcı önizleyip onaylarsa `POST /api/documents/{document_id}/classify`, kayıttaki `extracted_text` ile tek bir Gemini çağrısı yapar (D-008, D-033).
+  - Aynı dosya için metin çıkarımı/OCR yalnızca bir kez yapılır; sınıflandırma adımı dosyayı yeniden okumaz.
+  - V1.4 frontend prepare → preview → classify akışında Gemini yalnız kullanıcı önizlemesi ve onayından sonra çağrılır. Mevcut `POST /api/documents/classify` geriye dönük uyumluluk için korunur ve tek-adımlı doğrudan sınıflandırma davranışını sürdürür. Yeni frontend bu legacy akışı kullanmaz.
+  - Prepare'de kabul redleri ve metin yetersizliği bugünkü sözleşmeyle aynıdır: `413`/`415`'te kayıt ve dosya oluşmaz; metin yetersizse `failed` kaydı + `422` döner (D-004, D-034). Başarılı prepare yanıtı, `GET /api/documents/{document_id}` detay yanıtıyla aynı şekildedir (`status = prepared`, `extracted_text` dahil, `file_reference` yok); yeni yanıt şeması eklenmez.
+  - Arayüz:
+    - Çoklu seçim ve sürükle-bırak; listede en fazla 5 dosya (D-040).
+    - Her dosyada ad, format, boyut, önizleme, kaldırma ve analiz seçimi.
+    - Önizleme içerik merkezlidir. Varsayılan görünüm, çıkarılan metinden tarayıcıda deterministik olarak oluşturulan yapılandırılmış "Belge Önizlemesi" formudur: dosya adı, hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Açıkça bulunamayan alan boş (`—`) kalır; tahmin edilmez. Önizleme alanları saklanmaz; yeni endpoint veya DB alanı eklenmez.
+    - Orijinal belge (PDF ve JPG/JPEG/PNG) ile ham çıkarılan metin yardımcı görünümlerdir. Orijinal belge kullanıcının tarayıcısındaki dosyadan ayrı bir pencerede gösterilir ve yalnızca backend imza doğrulamasından geçmiş dosyalarda açılır; sunucuda ayrı bir önizleme endpoint'i yoktur.
+    - DOC/DOCX'te yapılandırılmış önizleme ve çıkarılan metin gösterilir; Word render'ı, dönüştürücü veya yeni bağımlılık eklenmez.
+  - İşleme sıralıdır: istemci aynı anda tek bir prepare veya classify isteği gönderir. Worker, kuyruk veya paralel işleme yoktur (D-020). Bir dosyanın hatası diğerlerinin işlenmesini durdurmaz.
+- **Gerekçe:** Kullanıcı analize gönderdiği belgenin doğru belge olduğunu Gemini çalışmadan önce görebilmelidir. Önizleme için ayrı bir yükleme veya ikinci bir OCR, süreyi uzatır ve önizlenen metinle sınıflandırılan metnin ayrışmasına yol açabilir. Mevcut `documents` tablosu ve düz metin `status` alanı ara durumu migration gerektirmeden taşıyabilir. Tek-adımlı endpoint, mevcut entegrasyonları bozmamak için korunur. Büyük bir PDF/görüntü görüntüleyicisi yerine okunur bir form, belgenin doğru olup olmadığını daha hızlı gösterir ve DOC/DOCX'te de aynı biçimde çalışır. Tarayıcı dosyanın baytlarına zaten sahip olduğundan orijinal belge için sunucuda yeni bir dosya sunma yüzeyi açılmaz.
+
+### D-046 — `prepared` kayıt yaşam döngüsü (V1.4)
+- **Karar:**
+  - **Tutulduğu yer:** `prepared` kayıt `documents` tablosunda tutulur; ayrı tablo, staging alanı veya migration yoktur. Sınıflandırma alanları `null`, `needs_review = false`, `created_at` hazırlık anıdır. Kayıt `GET /api/documents` listesinde görünmez (D-043); detay ve indirme ID ile çalışır.
+  - **Sınıflandırma (`POST /api/documents/{document_id}/classify`):** Yalnızca `prepared` durumdaki ve orijinal dosyası storage'da mevcut olan kayıtta çalışır.
+    - Kayıt yoksa `404`.
+    - Kayıt `prepared` değilse ya da orijinal dosya storage'da yoksa `409` döner; Gemini ve metin çıkarımı çağrılmaz, kayıt değişmez. Böylece orijinali indirilemeyen bir sonuç kaydı oluşmaz. Storage yolu yanıtta ve logda yer almaz.
+    - Gemini hatasında kayıt `failed` olur ve `502` döner (D-034).
+    - Kayıt yazılamazsa `500` döner; kayıt `prepared` kalır ve dosya silinmez.
+  - **409 sonrası kurtarma:** İstemci sınıflandırma isteğine `409` alırsa (ör. istemci zaman aşımına uğradı ama backend işlemi tamamladı) mevcut `GET /api/documents/{document_id}` ile kaydın gerçek durumunu okur. İkinci bir Gemini çağrısı yapılmaz.
+  - **Kaldırma (`DELETE /api/documents/{document_id}/prepared`):** Kullanıcının "Kaldır" işlemidir ve yalnızca `prepared` kaydı siler.
+    - Önce storage dosyası silinir (dosya zaten yoksa da güvenlidir), sonra kayıt; başarıda `204`.
+    - Kayıt yoksa `404`. Kayıt `classified`, `needs_review` veya `failed` ise `409` döner ve hiçbir şeye dokunulmaz.
+    - Silme yarıda kalırsa `500` döner; kayıt `prepared` kalır ve işlem tekrar denenebilir.
+  - **Yedek temizlik (TTL):** `created_at` değeri 24 saatten eski `prepared` kayıtlar, bir sonraki `POST /api/documents/prepare` çağrısının başında dosyalarıyla birlikte silinir.
+    - Zamanlayıcı, cron, worker veya arka plan işi yoktur; yeni bir prepare çağrısı gelmezse kayıt yerinde kalır.
+    - Dosyası silinemeyen kayıt atlanır ve bir sonraki temizlikte yeniden denenir.
+    - Temizlik hatası prepare isteğini düşürmez.
+  - **Kapsam dışı:** Terminal kayıtlar (`classified`, `needs_review`, `failed`) ne bu temizliğin ne de `DELETE` endpoint'inin kapsamındadır.
+- **Gerekçe:** Yanlışlıkla yüklenen dosya, kullanıcı kaldırdığında hemen ve tamamen silinmelidir; tekrarlanan "hazırla + kaldır" döngüleri sunucuda birikmemelidir. Sekme kapanması, ağ kopması veya tarayıcı çökmesi gibi anormal çıkışlarda kalan kayıtları zamanlayıcı kurmadan sınırlamanın en basit yolu, temizliği hazırlık isteğinde yapmaktır. Dosyanın kayıttan önce silinmesi, yarım kalan her işlemde geride TTL'in bulabileceği bir kayıt bırakır; ters sırada kaydı olmayan ve hiçbir temizliğin göremeyeceği bir dosya kalabilirdi. Silme endpoint'i dar tutulur: kalıcı kayıtları silmek kapsam dışıdır. Orijinal dosya kontrolü, indirilemeyen bir belgenin sınıflandırılmış kayıt olarak kalıcılaşmasını önler.
+
 ### D-020 — Senkron işleme
-- **Karar:** Endpoint dosyayı kaydetme, metin çıkarımı, Gemini çağrısı (retry dahil) ve veritabanı kaydını aynı istek içinde yapıp sonucu döndürür; kuyruk veya arka plan işi yok.
-- **Gerekçe:** "API sınıflandırma sonucunu döndürür" akışının en basit karşılığı.
+- **Karar:**
+  - Her istek kendi işini aynı istek içinde tamamlayıp sonucu döndürür; kuyruk veya arka plan işi yoktur.
+  - Legacy `POST /api/documents/classify` dosyayı kaydetme, metin çıkarımı, Gemini çağrısı (retry dahil) ve veritabanı kaydını tek istekte yapar.
+  - V1.4 akışında aynı iş iki senkron isteğe bölünür: `prepare` (kaydetme + metin çıkarımı) ve `/{document_id}/classify` (Gemini + sonucun yazılması) (D-045).
+  - Birden fazla belge istemcide sırayla işlenir; worker, kuyruk veya paralel işleme eklenmez.
+- **Gerekçe:** "API sonucu döndürür" akışının en basit karşılığı. Paralellik ölçüm ve somut ihtiyaç olmadan eklenmez; sıralı işleme OCR'ın CPU yükünü ve Gemini çağrılarını öngörülebilir tutar.
 
 ### D-021 — Agent sistemi kullanılmayacak
 - **Karar:** LangGraph dahil agent veya çok adımlı LLM orkestrasyonu yok.
@@ -252,7 +300,7 @@
 ## Frontend
 
 ### D-037 — Frontend yığını: React + Vite + TypeScript, npm, düz CSS
-- **Karar:** Frontend React + Vite ile **TypeScript** kullanılarak yazılır. Paket yöneticisi **npm**. Stil için **düz CSS** kullanılır. Tailwind, UI bileşen kütüphanesi, Redux veya ek state management kütüphanesi eklenmez; gereken durum React'in kendi state'iyle tutulur.
+- **Karar:** Frontend React + Vite ile **TypeScript** kullanılarak yazılır. Paket yöneticisi **npm**. Stil için **düz CSS** kullanılır. Tailwind, UI bileşen kütüphanesi, Redux veya ek state management kütüphanesi eklenmez; gereken durum React'in kendi state'iyle tutulur. Saf yardımcılar (ör. önizleme alanı çıkarımı) Node'un yerleşik test çalıştırıcısıyla (`node:test`, `npm test`) test edilir; test kütüphanesi eklenmez.
 - **Gerekçe:** Tek sayfalık yükleme ve sonuç ekranı için ek kütüphane gereksiz katman olur (D-024). TypeScript, API yanıt alanlarındaki uyuşmazlığı çalışma zamanı yerine derleme zamanında yakalar.
 
 ### D-038 — Geliştirmede frontend–backend iletişimi Vite proxy ile, CORS middleware yok
@@ -260,9 +308,13 @@
 - **Gerekçe:** Tarayıcı için istekler aynı origin'den gider, bu yüzden CORS gerekmez ve backend değişmeden kalır. Dağıtımda frontend ile backend ayrı origin'lerde sunulacaksa bu karar güncellenerek CORS ele alınır.
 
 ### D-039 — Frontend istek zaman aşımı: 120 saniye
-- **Karar:** Frontend, classify isteği için 120 saniye zaman aşımı uygular. Süre dolarsa istek iptal edilir ve kullanıcıya genel bir hata mesajı gösterilir.
-- **Gerekçe:** Senkron akışın en kötü durumu yaklaşık 93 saniyedir (D-033); 120 saniye bunun üzerine pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir.
+- **Karar:** Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma) için ayrı ayrı 120 saniye zaman aşımı uygular. Süre dolarsa istek iptal edilir ve kullanıcıya genel bir hata mesajı gösterilir.
+- **Gerekçe:** Senkron akışın en kötü durumu yaklaşık 93 saniyedir (D-033); 120 saniye bunun üzerine pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir. Sınıflandırmada bu durum, D-046'daki `409` → detay okuma akışıyla kurtarılır.
 
-### D-040 — Frontend'de dosya ön kontrolü; otorite backend'de
-- **Karar:** Dosya seçildiğinde frontend uzantının `.pdf`, `.doc`, `.docx`, `.jpg`, `.jpeg` veya `.png` olduğunu ve boyutun 50 MB'ı aşmadığını kontrol eder; uymayan dosya gönderilmeden kullanıcıya uyarı gösterilir. Bu kontrol yalnızca kullanıcı deneyimi içindir: kabul kararı backend'e aittir (D-001, D-028), backend doğrulamaları kaldırılmaz ve `413` / `415` yanıtları frontend'de ayrıca işlenir.
-- **Gerekçe:** Kullanıcı yanlış veya büyük dosyada anında geri bildirim alır; gereksiz yükleme ve sunucu işi önlenir. İstemci kontrolü atlatılabileceği için güvenlik sınırı sayılmaz. 50 MB sınırı bu nedenle frontend'de de yazılır; sınır değişirse iki yer birlikte güncellenmelidir.
+### D-040 — Frontend'de dosya ön kontrolü ve en fazla 5 dosya; otorite backend'de
+- **Karar:**
+  - Kullanıcı birden fazla dosyayı seçerek veya sürükle-bırakla ekleyebilir; listede aynı anda en fazla **5** dosya bulunur (V1.4, D-045).
+  - Frontend her dosyada uzantının `.pdf`, `.doc`, `.docx`, `.jpg`, `.jpeg` veya `.png` olduğunu ve boyutun 50 MB'ı aşmadığını kontrol eder. Uymayan dosyalar ve 5 dosya sınırını aşanlar listeye eklenmez; kullanıcıya uyarı gösterilir.
+  - 5 dosya sınırı yalnızca arayüz sınırıdır: backend'de toplu işlem kavramı ve toplam boyut sınırı yoktur, dosya başına 50 MB sınırı korunur.
+  - Bu kontroller yalnızca kullanıcı deneyimi içindir: kabul kararı backend'e aittir (D-001, D-028), backend doğrulamaları kaldırılmaz ve `413` / `415` yanıtları frontend'de ayrıca işlenir.
+- **Gerekçe:** Kullanıcı yanlış veya büyük dosyada anında geri bildirim alır; gereksiz yükleme ve sunucu işi önlenir. İstemci kontrolü atlatılabileceği için güvenlik sınırı sayılmaz. 5 dosya, sıralı işlemede bekleme süresini ve tek ekranda gözden geçirmeyi yönetilebilir tutar. 50 MB sınırı bu nedenle frontend'de de yazılır; sınır değişirse iki yer birlikte güncellenmelidir.
