@@ -38,7 +38,7 @@
 - **Karar:**
   - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle **sayfa başına** yapılır: PDF'te gereken sayfalarda fallback olarak (D-003), JPG/JPEG/PNG'de ise tek sayfalık görüntünün tamamında doğrudan (D-001). `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
   - Sayfanın "yapısal olarak görüntüye dayandığı", PyMuPDF'in `get_image_info` bilgisiyle ölçülür: sayfa dikdörtgeniyle kesişen görüntü alanlarının toplamı / sayfa alanı. Yeni kütüphane, sayfa render'ı veya ön işleme eklenmez; bu ölçüm yalnızca gömülü metni 10–200 karakter arasında olan sayfalarda yapılır.
-  - Dil `tur`, çözünürlük 400 dpi. İkisi de `file_service` içinde tek yerde sabittir. Belgeler Türkçe olduğu için İngilizce model eklenmez: gerçekçi bozulma testlerinde `tur+eng` Türkçe karakterleri daha çok kaybediyordu (özellikle `Ç→C`) ve hiçbir senaryoda öne geçmedi. Çözünürlük 300'den 400'e ölçümle çıkarıldı: el yazısı ve bozulmuş tarama korpusunda ortalama CER 0,292 → 0,237, tamamen düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru okunan rakam 14/22 → 16/22; basılı/dijital belgelerde çıkarılan metin değişmedi. 600 dpi ölçüldü ve **geri adım** attığı için (CER 0,315; form senaryosunda rakamların tamamı bozuldu) kullanılmaz. PSM/OEM ayarlanmaz: PyMuPDF'in `get_textpage_ocr` API'si bu parametreleri kabul etmez ve ayrı bir Tesseract süreci bu kararın kapsamı dışındadır.
+  - Dil `tur`, çözünürlük 400 dpi. İkisi de `file_service` içinde tek yerde sabittir. Belgeler Türkçe olduğu için İngilizce model eklenmez: gerçekçi bozulma testlerinde `tur+eng` Türkçe karakterleri daha çok kaybediyordu (özellikle `Ç→C`) ve hiçbir senaryoda öne geçmedi. Çözünürlük 300'den 400'e ölçümle çıkarıldı: font tabanlı sentetik el yazısı proxy'si, bozulmuş tarama ve basılı belgelerden oluşan 12 senaryoluk korpusta ortalama CER 0,292 → 0,237, tamamen düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru okunan rakam 14/22 → 16/22; basılı/dijital belgelerde çıkarılan metin değişmedi. Korpus gerçek insan el yazısı içermediği için bu ölçüm gerçek el yazısı performansını göstermez; gerçek el yazısı benchmarkı V1.3 kapsamındadır. 600 dpi ölçüldü ve **geri adım** attığı için (CER 0,315; form senaryosunda rakamların tamamı bozuldu) kullanılmaz. PSM/OEM ayarlanmaz: PyMuPDF'in `get_textpage_ocr` API'si bu parametreleri kabul etmez ve ayrı bir Tesseract süreci bu kararın kapsamı dışındadır.
   - Tesseract dil dosyalarının klasörü `TESSDATA_PREFIX` ortam değişkeninden okunur ve OCR çağrısına doğrudan geçilir. Değişken **opsiyoneldir**: tanımlı değilse OCR atlanır. Kodda platforma özel kurulum yolu yazılmaz.
   - OCR hatası yükseltilmez: loglanır ve **o sayfa** gömülü metniyle değerlendirilir; diğer sayfalar etkilenmez ve mevcut `failed` + `422` davranışı korunur.
 - **Gerekçe:** PyMuPDF zaten bir bağımlılık ve Tesseract'ı derlenmiş olarak içeriyor; yeni Python paketi veya PATH'te `tesseract` binary'si gerekmiyor. OCR bir iyileştirme olduğu için başarısızlığı yeni bir hata sınıfı doğurmamalı. Ortam değişkeni, kurulum yolunun makineden makineye değişmesine izin verir.
@@ -56,7 +56,7 @@
 - **Gerekçe:** Boş veya neredeyse boş belgeler için anlamsız Gemini çağrısı ve maliyet önlenir; düşük eşik kısa ama geçerli metinleri dışarıda bırakmaz.
 
 ### D-028 — Maksimum dosya boyutu: 50 MB
-- **Karar:** PDF ve DOCX yüklemeleri için sınır 50 MB'dır. Aşan dosya storage'a yazılmadan ve `documents` kaydı oluşturulmadan `413` ile reddedilir.
+- **Karar:** Desteklenen tüm dosya türleri (D-001) için sınır dosya başına 50 MB'dır. Aşan dosya storage'a yazılmadan ve `documents` kaydı oluşturulmadan `413` ile reddedilir.
 - **Gerekçe:** Sunucu kaynaklarını ve senkron istek süresini korur; metin tabanlı belgeler için yeterli pay bırakır.
 
 ## Teknoloji
@@ -113,7 +113,7 @@
 - **Gerekçe:** Düşük gecikme ve maliyet; çok adımlı akışın getireceği karmaşıklıktan kaçınma.
 
 ### D-009 — Pydantic ile structured output
-- **Karar:** Model `document_type`, `institution_id`, `needs_review`, `review_reason` alanlarını Pydantic şemasına uygun döndürür.
+- **Karar:** Model `document_type`, `institution_id`, `needs_review`, `review_reason` alanlarını ve D-044'teki `summary`, `sender_name`, `sender_institution` alanlarını Pydantic şemasına uygun döndürür.
   - Temel şema `app/schemas/classification.py` içindedir ve `needs_review` tutarlılık kurallarını doğrular.
   - İzinli `document_type` / `institution_id` değerleri çalışma zamanında katalog JSON'larından (`Literal`) üretilir; katalog ID'leri kodda ayrıca yazılmaz.
   - Aynı model hem Gemini'ye `response_schema` olarak verilir hem de backend'de yanıtı doğrular.
@@ -156,7 +156,7 @@
 ## Veri ve depolama
 
 ### D-013 — Tek `documents` tablosu
-- **Karar:** Başlangıçta yalnızca `documents` tablosu kullanılır. Alanlar: `id`, `file_name`, `file_type`, `file_reference`, `extracted_text`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `status`, `created_at`.
+- **Karar:** Başlangıçta yalnızca `documents` tablosu kullanılır. Alanlar: `id`, `file_name`, `file_type`, `file_reference`, `extracted_text`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution` (son üçü D-044), `status`, `created_at`.
 - **Gerekçe:** MVP akışı için yeterli; kataloglar dosyada olduğundan ek tabloya gerek yok.
 
 ### D-029 — `documents.id` UUID
@@ -176,7 +176,7 @@
 - **Gerekçe:** İşlem sonucu tek alanda sorgulanır; hatalı işlemler incelemeye düşenlerden ayrılır; yeni durumlarla genişletilebilir. Alan düz metin olduğu için yeni bir durum migration gerektirmez.
 
 ### D-017 — Orijinal belge `backend/storage/` altında saklanır
-- **Karar:** Yüklenen orijinal belge `backend/storage/` altında düz bir klasörde `<document_id>.<uzanti>` adıyla saklanır (uzantı `pdf` veya `docx`). PostgreSQL'e binary olarak yazılmaz; veritabanında dosyanın referansı `file_reference` alanında tutulur. Kullanıcının orijinal dosya adı yalnızca `file_name` alanında saklanır, disk yolu olarak kullanılmaz.
+- **Karar:** Yüklenen orijinal belge `backend/storage/` altında düz bir klasörde `<document_id>.<uzanti>` adıyla saklanır (uzantı `file_type` değeridir: `pdf`, `doc`, `docx`, `jpg`, `jpeg` veya `png`). PostgreSQL'e binary olarak yazılmaz; veritabanında dosyanın referansı `file_reference` alanında tutulur. Kullanıcının orijinal dosya adı yalnızca `file_name` alanında saklanır, disk yolu olarak kullanılmaz.
 - **Gerekçe:** Belge sonradan incelenebilir ve yeniden işlenebilir (ör. OCR geldiğinde). Binary veriyi veritabanı dışında tutmak tabloyu küçük, yedeklemeyi ve sorguları hafif tutar. Kullanıcı girdisinin dosya yoluna girmemesi ad çakışmalarını ve path traversal riskini önler; kayıt ile dosya ID üzerinden birebir eşleşir.
 
 ### D-018 — Çıkarılan metin veritabanında saklanır

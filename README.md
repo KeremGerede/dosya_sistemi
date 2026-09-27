@@ -4,7 +4,7 @@ Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki be
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-**Durum:** V1.0–V1.2 tamamlandı. Açık iş hatları: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction, açık) · **V1.4** — Çoklu Belge Yükleme ve Önizleme (UX/workflow, aktif geliştirme).
+**Durum:** V1.0–V1.2 ve **V1.4** — Çoklu Belge Yükleme ve Önizleme (UX/workflow) tamamlandı. Açık iş hattı: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction).
 
 ## İçindekiler
 
@@ -84,7 +84,7 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 
 ### V1.4 — Çoklu Belge Yükleme ve Önizleme
 
-**Aktif geliştirme.** UX/workflow iş hattı. Planlanan kapsam:
+**Tamamlandı.** UX/workflow iş hattı (D-045, D-046). Teslim edilenler:
 
 - Aynı anda en fazla 5 dosya; çoklu seçim ve sürükle-bırak
 - Analizden önce içerik merkezli önizleme. Varsayılan görünüm, çıkarılan metinden oluşturulan yapılandırılmış belge formudur: hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Belgede açıkça bulunmayan alan boş kalır. Orijinal belge (PDF/JPG/JPEG/PNG) ve çıkarılan metin yardımcı görünümlerdir. Önizleme aşamasında Gemini kullanılmaz.
@@ -92,6 +92,8 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 - Aynı dosyada metin çıkarımı/OCR yalnız bir kez (hazırla → önizle → sınıflandır)
 - Dosyaların sırayla işlenmesi; bir dosyanın hatası diğerlerini durdurmaz
 - Dosya başına durum ve sonuç gösterimi
+- İki adımlı API (`prepare`, `/{document_id}/classify`, `DELETE /{document_id}/prepared`), `409` kurtarma ve sahipsiz hazırlıklar için 24 saatlik yedek temizlik
+- Gerçek PostgreSQL, Gemini ve Tesseract OCR ile metin PDF, taranmış PDF, DOCX, DOC ve JPG üzerinde uçtan uca doğrulama
 
 ## Projenin Amacı
 
@@ -479,7 +481,7 @@ Repo kökünde:
 
 ### Otomatik Testler
 
-Doğrulanmış baseline: **231 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır.
+Doğrulanmış baseline: backend `pytest` **275 passed**, frontend `npm test` **33 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) birim testleridir.
 
 Kapsanan alanlar:
 
@@ -494,6 +496,8 @@ Kapsanan alanlar:
 - Structured output doğrulaması ve katalog kısıtları
 - Özet ve gönderen metadata kuralları
 - Log ve güvenlik davranışı (belge metni ve anahtar loglanmaz)
+- İki adımlı akış: prepare, hazırlanmış belgeyi sınıflandırma (dosya yeniden okunmadan), kaldırma, `409` durumları ve 24 saatlik yedek temizlik
+- Önizleme alanlarının deterministik çıkarımı (konu, tarih, evrak no, gönderen; açıkça yazmayan alan boş kalır)
 
 ### Gerçek / Uçtan Uca Doğrulamalar
 
@@ -504,7 +508,8 @@ Kapsanan alanlar:
 - PDF, DOC, DOCX ve JPG ile uçtan uca smoke test
 - Hybrid PDF senaryoları
 - DOC ↔ DOCX format eşdeğerliği
-- OCR çözünürlük ve bozulma benchmarkları
+- OCR çözünürlük ve bozulma benchmarkları (font tabanlı sentetik el yazısı proxy'siyle; gerçek insan el yazısı benchmarkı V1.3 kapsamında)
+- V1.4 çoklu yükleme ve önizleme akışının gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması
 
 Ayrıntılı test geçmişi ve ölçüm sonuçları için: [`CURRENT_STATE.md`](CURRENT_STATE.md)
 
@@ -529,7 +534,7 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 
 ### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
 
-**Açık.** OCR/extraction iş hattı; V1.4'ten bağımsız ilerler. Planlanan kapsam:
+**Açık.** OCR/extraction iş hattı. İlk adım, mevcut OCR hattının gerçek insan el yazısıyla ölçüleceği bir pilot benchmark; çözümler bu ölçümden sonra seçilir. Planlanan kapsam:
 
 - Gerçek insan el yazısı benchmarkı
 - El yazısı OCR kalitesinin iyileştirilmesi
@@ -538,9 +543,7 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 - Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
 - OCR kaynaklı özet ve gönderen bilgisi güvenilirliği
 
-### V1.4 — Çoklu Belge Yükleme ve Önizleme
-
-**Aktif geliştirme.** UX/workflow iş hattı (D-045, D-046). İki adımlı API (prepare → classify, kaldırma için discard) ve arayüz uygulandı. Gerçek PostgreSQL, Gemini ve Tesseract OCR ile metin PDF, taranmış PDF, DOCX, DOC ve JPG üzerinde uçtan uca doğrulandı. Legacy `POST /api/documents/classify` değişmeden kalır.
+V1.4 tamamlandı; teslim edilenler [Sürüm Geçmişi](#v14--çoklu-belge-yükleme-ve-önizleme) bölümündedir.
 
 ### Daha Sonra Değerlendirilebilecekler
 

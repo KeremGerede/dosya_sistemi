@@ -57,7 +57,7 @@ class FileTooLargeError(Exception):
 
 
 class UnsupportedFileTypeError(Exception):
-    """Dosya geçerli bir PDF, DOCX, JPG/JPEG veya PNG değil."""
+    """Dosya geçerli bir PDF, DOC, DOCX, JPG/JPEG veya PNG değil."""
 
 
 class TextExtractionError(Exception):
@@ -139,7 +139,8 @@ def extract_text(content: bytes, file_type: str) -> str:
     """Normalize edilmiş TAM metni döndürür (50.000 karakter kesmesi yapılmaz).
 
     PDF'te OCR kararı sayfa sayfa verilir (D-003, D-042): kendi metni MIN_TEXT_LENGTH'in altında kalan
-    sayfalar OCR'lanır, diğerleri gömülü metniyle kalır. OCR yapılandırılmamışsa veya hata verirse o
+    sayfalar OCR'lanır; yapısal olarak görüntüye dayanan ve gömülü metni kısa kalan sayfalarda OCR metni
+    gömülü metinle birleştirilir; diğerleri gömülü metniyle kalır. OCR yapılandırılmamışsa veya hata verirse o
     sayfanın gömülü metni kullanılır; yetersizliğe check_text_length karar verir, yani mevcut failed
     davranışı değişmez. JPG/JPEG/PNG doğrudan OCR'lanır; DOC ve DOCX'te OCR yapılmaz.
     """

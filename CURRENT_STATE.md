@@ -1,20 +1,19 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-24
+> **Son güncelleme:** 2026-09-27
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
 ## Mevcut aşama
 
-**V1.0–V1.2 tamamlandı. İki bağımsız iş hattı açık:**
+**V1.0–V1.2 ve V1.4 tamamlandı. Açık iş hattı: V1.3.**
 
-- **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow): **aktif geliştirme**.
-  - Adım 0–9 tamamlandı: kararlar (D-045, D-046), backend (prepare, classify-by-id, discard, liste filtresi, TTL yedek temizliği) ve frontend (en fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı analiz, 409 kurtarma).
+- **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow): **tamamlandı**.
+  - Adım 0–9: kararlar (D-045, D-046), backend (prepare, classify-by-id, discard, liste filtresi, TTL yedek temizliği) ve frontend (en fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı analiz, 409 kurtarma).
+  - Adım 10: gerçek PostgreSQL + gerçek Gemini + gerçek Tesseract OCR ile uçtan uca doğrulama. PDF'in "Orijinal Belgeyi Gör" penceresinde görüntülenmesi kullanıcı tarafından gerçek masaüstü tarayıcıda elle doğrulandı.
   - `pytest` 275 passed, frontend `npm test` 33 passed.
-  - Adım 10 (gerçek PostgreSQL + gerçek Gemini + gerçek Tesseract OCR ile uçtan uca doğrulama) tamamlandı.
-  - PDF'in "Orijinal Belgeyi Gör" penceresinde gerçek masaüstü tarayıcıda görüntülenmesi kullanıcı tarafından elle doğrulandı.
-  - Değişiklikler `feat: add multi-document preview and upload workflow` commit'iyle `main`'e alındı.
-- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**, henüz adım başlamadı.
+  - `c412720` (`feat: add multi-document preview and upload workflow`) olarak `main`'e alındı.
+- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**. Geliştirme planı onaylandı (2026-09-27); ilk adım gerçek el yazısı pilot benchmarkı. Ayrıntı: "Üzerinde çalışılan işler".
 
 Sürüm numaraları kapsam başlığıdır, teslim sırası değildir; iki iş hattı birbirinden bağımsız ilerler.
 
@@ -45,18 +44,26 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Git reposu, `main` dalı (remote: `origin`).
 - Karar geçmişi `docs: define initial MVP architecture and decisions` commit'inden itibaren Git'te izlenir.
 - Dosyalar:
-  - `README.md` — proje dışından okuyanlar için özet: MVP kapsamı ve akışı, desteklenen dosya türleri, sınıflandırma, teknoloji yığını, temel kurallar, API, proje durumu, geliştirme ortamı, kapsam dışı. Backend ana MVP akışının ve frontend'in (yükleme, sonuç ve hata ekranı) çalıştığı, `GET /health` ve `POST /api/documents/classify`'ın çalışan endpoint'ler olduğu ve iki tür 422 dahil HTTP kodları anlatılır; sıfırdan kurulum ve çalıştırma rehberini (gereksinimler, backend/frontend kurulumu, `.env`, Docker PostgreSQL, migration, doğrulama ve durdurma komutları) içerir.
+  - `README.md` — proje dışından okuyanlar için özet: proje özeti, sürüm geçmişi (V1.0–V1.4), amaç, özellikler, kapsam, desteklenen belge türleri, pipeline, mimari, teknolojiler, API (legacy `/classify`, V1.4 iki adımlı akış ve salt okunur kayıt endpoint'leri), sıfırdan kurulum ve çalıştırma, ortam değişkenleri, geliştirme komutları, test ve kalite, bilinen sınırlar, yol haritası.
   - `CLAUDE.md`, `PROJECT_BRAIN.md`, `CURRENT_STATE.md`, `DECISIONS.md` — proje hafıza dosyaları.
   - `.gitignore` — Python önbellekleri (`.pytest_cache` dahil), sanal ortam, `.env`, `backend/storage/` içeriği (`.gitkeep` hariç), `graphify-out/`.
   - `docker-compose.yml` — yalnızca yerel geliştirme PostgreSQL 18 servisi (D-036).
-  - `backend/` — FastAPI iskeleti (Aşama 1), veritabanı altyapısı (Aşama 2), dosya işleme ve testleri (Aşama 3), Gemini sınıflandırma katmanı ve testleri (Aşama 4), classify endpoint'i ve testleri (Aşama 5), yanıttaki katalog adları (Aşama 6 · Adım 1).
-  - `frontend/` — Vite React + TypeScript uygulaması (Aşama 6 · Adım 2–4): `index.html`, `src/main.tsx`, `src/App.tsx` (yükleme, sonuç ve hata ekranının tamamı tek bileşende), `src/App.css`, `src/index.css`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, şablondan gelen `.gitignore` ve `.oxlintrc.json`. `node_modules/` ve `dist/` `frontend/.gitignore` ile Git dışında.
+  - `backend/` — FastAPI uygulaması:
+    - `app/api/documents.py`: legacy `/classify`, V1.4 `prepare` / `/{id}/classify` / `DELETE /{id}/prepared` ve salt okunur kayıt endpoint'leri.
+    - `app/services/file_service.py`: kabul kontrolü, storage, PDF/DOC/DOCX metin çıkarımı ve OCR.
+    - `app/services/classification_service.py` ve `app/llm/gemini_client.py`: Gemini sınıflandırması.
+    - `app/models`, `app/schemas`, `app/config` (kataloglar), `alembic/` (iki migration, head `cedf33674167`).
+    - `tests/`: `test_file_service.py`, `test_classification_service.py`, `test_documents_api.py`, `conftest.py` ve `fixtures/` (4 gerçek `.doc` fixture'ı).
+  - `frontend/` — Vite React + TypeScript uygulaması:
+    - `src/App.tsx`: sınıflandırma görünümü (en fazla 5 dosya, önizleme, sıralı analiz) ve kayıtlar görünümü; `src/App.css`, `src/index.css`, `src/main.tsx`.
+    - `src/documentPreview.ts`: önizleme alanlarının deterministik çıkarımı; birim testleri `tests/documentPreview.test.ts`.
+    - `index.html`, `vite.config.ts` (proxy), `package.json` + `package-lock.json`, `tsconfig*.json`, `.gitignore`, `.oxlintrc.json`. `node_modules/` ve `dist/` Git dışında.
 - Geliştirme akışı (D-036):
   - İlk kurulum, `backend/` içinde: `python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt` → `.env.example`'ı `.env` olarak kopyala.
   - Günlük: Docker Desktop'ı başlat → repo kökünde `docker compose up -d` → `backend/` içinde venv'i aktif et → `alembic upgrade head` → `uvicorn app.main:app --reload`.
   - Durdurma: `docker compose down` (veriler `dosya_sistemi_pgdata` volume'unda kalır).
   - Belge sınıflandırma: `curl -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify` veya `http://127.0.0.1:8000/docs`.
-  - Frontend: ilk kurulum `frontend/` içinde `npm install`; geliştirme `npm run dev` → `http://localhost:5173` (backend ayrı terminalde çalışır durumda olmalı); derleme `npm run build`; lint `npm run lint`.
+  - Frontend: ilk kurulum `frontend/` içinde `npm install`; geliştirme `npm run dev` → `http://localhost:5173` (backend ayrı terminalde çalışır durumda olmalı); derleme `npm run build`; lint `npm run lint`; birim testleri `npm test` (Node 22.18+).
   - Testler: `backend/` içinde venv aktifken `pytest` (`pytest.ini`: `pythonpath = .`, `testpaths = tests`). Testler Docker PostgreSQL veya gerçek Gemini API gerektirmez. `tests/conftest.py` sahte `GEMINI_API_KEY`/`GEMINI_MODEL` (ve yoksa sahte `DATABASE_URL`) ayarlar; `.env`'deki gerçek anahtar testlere girmez. Endpoint testleri geçici SQLite veritabanı (`get_db` override) ve sahte `classify_text` kullanır.
 
 ## Tamamlanan işler
@@ -678,10 +685,16 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Adım 0–10 tamamlandı: dokümantasyon, backend, frontend ve gerçek ortamda uçtan uca doğrulama. Gerçek tarayıcıda PDF kontrolü elle yapıldı.
 - Değişiklikler tek commit olarak `main`'e alındı. Açık V1.4 işi yok.
 
-**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (açık, başlamadı)**
+**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (açık; plan onaylandı 2026-09-27)**
 
 - Planlanan kapsam `README.md`'deki başlıklardır: el yazısı benchmarkı, OCR quality gate, taranmış tablo ve form dayanıklılığı, düşük kaliteli çıkarımda `needs_review`, OCR kaynaklı özet ve gönderen güvenilirliği.
-- Henüz iş olarak açılmadı. V1.4 bu başlıklara dokunmaz.
+- Onaylanan yaklaşım:
+  - **Önce ölçüm.** Mevcut hat (Tesseract, `tur`, 400 dpi) production kodu değişmeden gerçek insan el yazısıyla ölçülür. Eski synthetic proxy ölçümü (D-042) yalnız tarihsel bağlamdır.
+  - **Pilot corpus (~30 belge):** 4 yazar × 4 el yazısı belge, 8 farklı yeniden çekim koşulu, 6 basılı/dijital kontrol belgesi. İçerik sentetik, el yazısı gerçek; corpus repo dışında tutulur ve commit edilmez. Pilot yeterli veri sağlamazsa 60–80 belgeye genişletilir.
+  - **Benchmark'tan önce dondurulan güvenlik kriterleri:** OCR kaynaklı güvenli yanlış yönlendirme 0 (mümkün olduğunca), uydurma gönderen bilgisi 0, sessiz yanlış kritik rakam 0 (mümkün olduğunca), basılı/dijital kontrol belgelerinde quality gate işareti 0.
+  - **Sayısal hedefler** (CER, WER, gate recall vb.) şimdilik aday aralıktır; pilot baseline'dan sonra, herhangi bir çözüm ölçülmeden önce kesinleşir.
+  - **Quality gate:** Aday sinyallerin tamamı pilotta ölçülür; production'a yalnız ayırıcı olduğu gösterilen en küçük set girer. Mevcut `get_textpage_ocr` yolunda Tesseract confidence bilgisine erişilemiyor (PyMuPDF/MuPDF kaynağından doğrulandı).
+  - **OCR motoru** ilk iterasyonda değişmez. Alternatifler baseline'dan sonra, D-042 ile uyumlu ucuz adaylardan başlayarak değerlendirilir.
 
 **Diğer**
 
@@ -711,7 +724,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - EXIF `Orientation` etiketi taşıyan döndürülmüş fotoğraflar PyMuPDF tarafından doğru yönlendirilir. Etiketsiz döndürülmüş görüntülerde metin anlamsız çıkar (otomatik döndürme/OSD yok); bu, kayıtlı rotation sınırının devamıdır.
 - PDF'te OCR iki koşuldan birine bağlıdır: sayfanın kendi gömülü metni 10 karakterin altında olmalı, ya da sayfa alanının en az %50'si görüntüyken metni 200 karakteri geçmemeli. Normal metin PDF'lerinde ek maliyet yoktur — uzun metinli sayfa yapısal ölçüme hiç girmez. Tek sayfalık temiz bir taramada 400 dpi'de ~0,7 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
 - Tesseract büyük harf Türkçe metinde noktalı **İ**'yi noktasız I, **Ç**'yi C okuyabiliyor (smoke testinde "ŞİKAYET DİLEKÇESİ" → "ŞIKAYET DILEKCESI"). Gövde metni doğru çıktığı için sınıflandırma etkilenmedi; başlığa dayanan belgelerde dikkat edilmeli.
-- OCR kalitesi gerçek bir taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle gürültü, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) ile ölçüldü; ayrıca 15 senaryoluk manuel testte normal, temiz taranmış ve bozulmuş belgeler uçtan uca doğrulandı. Tablo ağırlıklı taranmış belgeler hâlâ denenmedi.
+- OCR kalitesi gerçek bir taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle gürültü, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) ile ölçüldü; ayrıca 15 senaryoluk manuel testte normal, temiz taranmış ve bozulmuş belgeler uçtan uca doğrulandı. Tablo ve form için yalnız sentetik örnekler denendi (V1.2 Adım 6'daki form senaryosu, Adım 7'deki tablo/form PNG'si); gerçek taranmış tablo ve form benchmarkı yok (V1.3 kapsamı).
 - Çok gürültülü taramalarda Tesseract kağıt dokusunu karakter sanıp beklenenden çok daha uzun metin üretebiliyor (ölçülen en kötü durumda 349 karakterlik belgeden 4282 karakter, süre ~5×). Üretilen fazlalık apaçık çöp parçalarıdır, akıcı ama yanlış metin değildir; ölçülen durumda sınıflandırma yine doğru sonuçlandı ve 50.000 karakter sınırının %8,6'sı kullanıldı. Çok sayfalı çok kötü taramalarda süre birikebilir.
 - `TESSDATA_PREFIX` yerel `backend/.env` dosyasındadır ve Git'e girmez; yeni bir makinede OCR istenirse Tesseract kurulup bu değişken ayarlanmalıdır (`README.md` 3. adım).
 - DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
@@ -768,7 +781,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 **V1.4** — Adım 0–10 tamamlandı ve commit'lendi. Adım 10 konu kısalması düzeltildi (bkz. Adım 10 bulgusu). Yeni V1.4 işi açılmadı.
 
-**V1.3 (açık)** — Henüz adım açılmadı; başlatılırken kapsam bu dosyada ayrı başlık altında izlenir.
+**V1.3 (açık)** — Plan onaylandı. Sıradaki adım: pilot benchmark protokolü (yazar talimatı, sentetik içerik şablonları, manifest şeması, kriter dosyası). Pilot kriterleri dondurulduğunda V1.3 adımları bu dosyada ayrı başlık altında izlenir.
 
 Aşağıdakiler **açılmış iş değildir**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
