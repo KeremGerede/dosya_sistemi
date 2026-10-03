@@ -1,10 +1,10 @@
 # dosya_sistemi
 
-Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki belgeleri işleyen; içerikten metin çıkaran veya gerektiğinde OCR uygulayan; belge türünü ve ilgili kurumu Google Gemini ile belirleyen; belge özeti ile gönderen bilgilerini üreten ve sonuçları PostgreSQL üzerinde saklayan yapay zekâ destekli belge sınıflandırma modülü.
+Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki belgeleri işleyen; içerikten metin çıkaran, taranmış, fotoğraflanmış ve el yazısı belgeleri Gemini ile okuyan; belge türünü ve ilgili kurumu Google Gemini ile belirleyen; belge özeti ile gönderen bilgilerini üreten ve sonuçları PostgreSQL üzerinde saklayan yapay zekâ destekli belge sınıflandırma modülü.
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-**Durum:** V1.0–V1.2 ve **V1.4** — Çoklu Belge Yükleme ve Önizleme (UX/workflow) tamamlandı. Açık iş hattı: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction).
+**Durum:** V1.0–V1.2 ve **V1.4** — Çoklu Belge Yükleme ve Önizleme (UX/workflow) tamamlandı. Açık iş hattı: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction; uygulandı ve gerçek ortamda doğrulandı).
 
 ## İçindekiler
 
@@ -28,7 +28,7 @@ Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
 ## Proje Özeti
 
-Kullanıcı bir belge yükler. Sistem önce dosyayı doğrular (uzantı, içerik imzası ve boyut), ardından türüne uygun yöntemle metnini çıkarır; taranmış sayfalarda ve görüntü belgelerinde OCR devreye girer. Elde edilen metin tek bir Gemini çağrısına gönderilir ve bu çağrıdan belge türü, ilgili kurum/birim, kısa bir özet ve (belgede açıkça yazıyorsa) gönderen kişi ile kurum bilgisi döner. Sonuç PostgreSQL'e kaydedilir, orijinal dosya ise uygulamanın storage klasöründe saklanır.
+Kullanıcı bir belge yükler. Sistem önce dosyayı doğrular (uzantı, içerik imzası ve boyut), ardından türüne uygun yöntemle metnini çıkarır. Güvenilir dijital metni olmayan belgelerde (taranmış PDF, fotoğraf, el yazısı) metin Gemini multimodal transkripsiyonuyla okunur. Gemini'ye ulaşılamazsa yerel Tesseract OCR yedek olarak çalışır ve sonuç insan incelemesine düşer. Elde edilen metin tek bir Gemini sınıflandırma çağrısına gönderilir ve bu çağrıdan belge türü, ilgili kurum/birim, kısa bir özet ve (belgede açıkça yazıyorsa) gönderen kişi ile kurum bilgisi döner. Sonuç PostgreSQL'e kaydedilir, orijinal dosya ise uygulamanın storage klasöründe saklanır.
 
 Sınıflandırma kapalı kataloglar üzerinden yapılır: model yeni belge türü veya kurum üretemez, backend çıktıyı ayrıca doğrular. Belge belirsizse zorla bir kuruma atanmaz; `needs_review` olarak işaretlenir ve gerekçesi kaydedilir. Böylece yanlış otomatik yönlendirme yerine kontrollü bir insan incelemesi tercih edilir.
 
@@ -73,21 +73,19 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 
 ### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
 
-**Açık — henüz tamamlanmadı.** OCR/extraction iş hattı. Planlanan kapsam:
+**Açık — uygulandı ve gerçek ortamda doğrulandı.** OCR/extraction iş hattı (D-047). Kapsam:
 
-- Gerçek insan el yazısı benchmarkı
-- El yazısı OCR kalitesinin iyileştirilmesi
-- OCR çıktısı için deterministik kalite kapısı (quality gate)
-- Taranmış tablo ve form belgelerinde OCR dayanıklılığı
-- Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
-- OCR kaynaklı özet ve gönderen bilgisi güvenilirliğinin artırılması
+- Gerçek Türkçe el yazısı benchmarkı (repo dışında). 9 örnekte Tesseract CER ~%37, Gemini CER ~%4; Gemini 9/9 örnekte daha iyi.
+- Basılı tarama gerileme kontrolü (repo dışında). 8 belgede Gemini 4'ünde daha iyi, 4'ünde eşit, hiçbirinde daha kötü değil.
+- OCR gereken belgelerde (görüntüler, taranmış/hybrid PDF'ler) Gemini multimodal transkripsiyonu birincil yol. 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunur.
+- Gemini başarısız olursa ya da yetersiz metin döndürürse Tesseract acil durum yedeği belgenin tamamında çalışır ve sonuç `needs_review` olarak işaretlenir.
 
 ### V1.4 — Çoklu Belge Yükleme ve Önizleme
 
 **Tamamlandı.** UX/workflow iş hattı (D-045, D-046). Teslim edilenler:
 
 - Aynı anda en fazla 5 dosya; çoklu seçim ve sürükle-bırak
-- Analizden önce içerik merkezli önizleme. Varsayılan görünüm, çıkarılan metinden oluşturulan yapılandırılmış belge formudur: hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Belgede açıkça bulunmayan alan boş kalır. Orijinal belge (PDF/JPG/JPEG/PNG) ve çıkarılan metin yardımcı görünümlerdir. Önizleme aşamasında Gemini kullanılmaz.
+- Analizden önce içerik merkezli önizleme. Varsayılan görünüm, çıkarılan metinden oluşturulan yapılandırılmış belge formudur: hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Belgede açıkça bulunmayan alan boş kalır. Orijinal belge (PDF/JPG/JPEG/PNG) ve çıkarılan metin yardımcı görünümlerdir. Önizleme aşamasında Gemini sınıflandırması çalışmaz.
 - Dosya başına seçim ve kaldırma; yalnız seçilen dosyalar sınıflandırılır
 - Aynı dosyada metin çıkarımı/OCR yalnız bir kez (hazırla → önizle → sınıflandır)
 - Dosyaların sırayla işlenmesi; bir dosyanın hatası diğerlerini durdurmaz
@@ -114,8 +112,8 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 - PyMuPDF ile PDF metin çıkarımı
 - Saf Python parser ile legacy DOC metin çıkarımı
 - python-docx ile DOCX metin çıkarımı (paragraflar ve tablo hücreleri)
-- JPG/JPEG/PNG belgelerde doğrudan OCR
-- Taranmış ve hybrid PDF'lerde sayfa bazlı OCR fallback
+- Görüntü belgelerde ve güvenilir dijital metni olmayan PDF'lerde (taranmış, hybrid) Gemini multimodal transkripsiyonu; el yazısı dahil
+- Gemini'ye ulaşılamazsa yerel Tesseract OCR yedeği; bu belgeler `needs_review` olarak işaretlenir
 - Belge türü sınıflandırması (kapalı katalog)
 - İlgili kurum/birim yönlendirmesi (kapalı katalog)
 - Belgenin amacını anlatan kısa Türkçe özet
@@ -131,8 +129,8 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 ### Kapsam Dahil
 
 - PDF, DOC, DOCX, JPG, JPEG ve PNG belgelerin yüklenmesi ve işlenmesi
-- Taranmış PDF, hybrid PDF ve görüntü belgeler için Tesseract OCR
-- Belge başına tek Gemini sınıflandırma işlemi
+- Taranmış PDF, hybrid PDF ve görüntü belgeler için Gemini transkripsiyonu, yedekte Tesseract OCR
+- Belge başına tek Gemini sınıflandırma çağrısı (OCR gereken belgede ayrıca bir transkripsiyon çağrısı)
 - Belge türü, kurum, özet ve gönderen bilgisinin üretilmesi
 - Belirsiz belgelerin `needs_review` olarak işaretlenmesi
 - Sonuçların ve çıkarılan metnin PostgreSQL'de, orijinal dosyanın dosya sisteminde saklanması
@@ -154,19 +152,19 @@ Aşağıdakiler bilinçli olarak kapsam dışındadır; gelecekte kesin yapılac
 
 ## Desteklenen Belge Türleri
 
-| Format | İşleme Yöntemi | OCR |
+| Format | Metin Çıkarımı | Yedek |
 |---|---|---|
-| PDF | PyMuPDF | Gerektiğinde, sayfa bazlı |
-| DOC | legacy-doc | Hayır |
-| DOCX | python-docx | Hayır |
-| JPG / JPEG | PyMuPDF + Tesseract | Evet |
-| PNG | PyMuPDF + Tesseract | Evet |
+| PDF (dijital) | PyMuPDF | — |
+| PDF (taranmış / hybrid) | Gemini transkripsiyonu (1–3 sayfa tek çağrı, 4+ sayfa 3 sayfalık gruplar) | Sayfa bazlı Tesseract OCR |
+| DOC | legacy-doc | — |
+| DOCX | python-docx | — |
+| JPG / JPEG / PNG | Gemini transkripsiyonu | Tesseract OCR |
 
 - **DOC**, Word 97–2003 binary (OLE) formatıdır. Saf Python bir parser ile doğrudan baytlardan okunur; Microsoft Word, LibreOffice veya antiword kurulu olmasına gerek yoktur.
 - **DOC ve DOCX** belgelerde OCR yapılmaz; gömülü görüntülerdeki metin, makrolar, header/footer ve biçimlendirme alınmaz.
-- **PDF**'lerde dijital ve taranmış sayfaların birlikte bulunduğu hybrid belgeler desteklenir; OCR kararı her sayfa için ayrı verilir.
+- **PDF**'te güvenilir dijital metin kararı sayfa sayfa verilir. Tek bir sayfa bile OCR gerektiriyorsa (taranmış, hybrid veya bozuk metin katmanlı belge) PDF'in tamamı Gemini'ye gönderilir; 4 sayfa ve üzeri PDF'ler en fazla 3 sayfalık gruplar hâlinde sırayla okunur.
 - **Desteklenmeyen formatlar:** GIF, TIFF, BMP, WebP, HEIC ve diğerleri `415` ile reddedilir.
-- Görüntü belgelerinde ve taranmış PDF sayfalarında OCR için Tesseract ve `tur` dil paketi gerekir; kurulu değilse bu belgeler `failed` olur.
+- Tesseract ve `tur` dil paketi yalnız yedek OCR için gerekir. Kurulu değilse ve Gemini transkripsiyonu da başarısız olursa bu belgeler `failed` olur.
 
 ## Nasıl Çalışır
 
@@ -176,9 +174,9 @@ Aşağıdakiler bilinçli olarak kapsam dışındadır; gelecekte kesin yapılac
 flowchart LR
     A[Belge Yükleme] --> B[Dosya Doğrulama]
     B --> C[Storage]
-    C --> D[Metin Çıkarma / OCR]
+    C --> D[Metin Çıkarma / Gemini Transkripsiyonu]
     D --> E[Metin Normalizasyonu]
-    E --> F[Gemini]
+    E --> F[Gemini Sınıflandırma]
     F --> G[Belge Türü]
     F --> H[Kurum]
     F --> I[Özet ve Gönderen]
@@ -188,7 +186,7 @@ flowchart LR
     J --> K[API / Frontend]
 ```
 
-Belge `multipart/form-data` ile yüklenir ve önce kabul kontrolünden geçer: boyut 50 MiB'ı aşmamalı, uzantı ile dosya imzası birbirini doğrulamalıdır. Kabul edilmeyen dosya saklanmaz ve kayıt oluşturulmaz. Kabul edilen belgeye bir UUID verilir, orijinal dosya bu UUID ile storage klasörüne yazılır ve türüne uygun yöntemle metni çıkarılır. Metin normalize edilir (ardışık boşluklar tek boşluğa indirilir) ve en az 10 karakter olmalıdır; aksi halde belge Gemini'ye hiç gönderilmeden `failed` kaydedilir. Yeterli metin varsa ilk 50.000 karakter, iki katalogla birlikte tek bir Gemini çağrısına gönderilir; yanıt structured output olarak alınır ve backend tarafından kataloglara karşı yeniden doğrulanır. Sonuç `documents` tablosuna yazılır ve aynı istekte istemciye döndürülür; işlem baştan sona senkrondur.
+Belge `multipart/form-data` ile yüklenir ve önce kabul kontrolünden geçer: boyut 50 MiB'ı aşmamalı, uzantı ile dosya imzası birbirini doğrulamalıdır. Kabul edilmeyen dosya saklanmaz ve kayıt oluşturulmaz. Kabul edilen belgeye bir UUID verilir, orijinal dosya bu UUID ile storage klasörüne yazılır ve türüne uygun yöntemle metni çıkarılır (güvenilir dijital metni yoksa Gemini transkripsiyonuyla). Metin normalize edilir (ardışık boşluklar tek boşluğa indirilir) ve en az 10 karakter olmalıdır; aksi halde belge Gemini sınıflandırmasına hiç gönderilmeden `failed` kaydedilir. Yeterli metin varsa ilk 50.000 karakter, iki katalogla birlikte tek bir Gemini sınıflandırma çağrısına gönderilir; yanıt structured output olarak alınır ve backend tarafından kataloglara karşı yeniden doğrulanır. Sonuç `documents` tablosuna yazılır ve aynı istekte istemciye döndürülür; işlem baştan sona senkrondur.
 
 ### Dosya İşleme Pipeline'ı
 
@@ -196,23 +194,26 @@ Belge `multipart/form-data` ile yüklenir ve önce kabul kontrolünden geçer: b
 flowchart TD
     A[Belge] --> B{Dosya Formatı}
 
-    B -->|PDF| C[PyMuPDF]
     B -->|DOC| D[legacy-doc]
     B -->|DOCX| E[python-docx]
-    B -->|JPG / JPEG / PNG| F[Doğrudan OCR]
+    B -->|PDF| C{Tüm sayfalarda güvenilir<br/>dijital metin var mı?}
+    B -->|JPG / JPEG / PNG| G[Gemini Transkripsiyonu<br/>4+ sayfa: 3 sayfalık gruplar]
 
-    C --> G{Sayfada yeterli gömülü metin var mı?}
-    G -->|Evet| H[Gömülü Metni Kullan]
-    G -->|Hayır / Yapısal OCR Gerekli| I[Tesseract OCR]
+    C -->|Evet| H[PyMuPDF Gömülü Metin]
+    C -->|Hayır| G
+    G --> K{Tüm gruplar başarılı ve<br/>en az 10 karakter mi?}
+    K -->|Evet| J[Normalize Edilmiş Metin]
+    K -->|Hayır| T[Tesseract OCR Yedeği<br/>→ needs_review]
 
-    H --> J[Normalize Edilmiş Metin]
-    I --> J
+    H --> J
     D --> J
     E --> J
-    F --> J
+    T --> J
 ```
 
-PDF'te bir sayfa iki durumda OCR'lanır: kendi gömülü metni 10 karakterin altındaysa (sayfa taranmış sayılır) ya da sayfa alanının en az %50'si görüntüyken gömülü metni 200 karakteri geçmiyorsa (metin katmanı bozuk olabilir). İkinci durumda gömülü metin ile OCR metni deterministik olarak karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Tamamen metin tabanlı PDF'lerde hiç OCR çağrısı yapılmaz. Görüntü belgelerinde gömülü metin aranmaz; dosya tek sayfalık belge olarak doğrudan OCR'lanır. OCR yapılandırılmamışsa veya hata verirse ilgili sayfa gömülü metniyle değerlendirilir: OCR bir iyileştirmedir, başarısızlığı yeni bir hata sınıfı doğurmaz.
+PDF'te bir sayfa iki durumda OCR gerektirir: kendi gömülü metni 10 karakterin altındaysa (sayfa taranmış sayılır) ya da sayfa alanının en az %50'si görüntüyken gömülü metni 200 karakteri geçmiyorsa (metin katmanı bozuk olabilir). Böyle bir sayfa yoksa PDF gömülü metniyle okunur ve hiç Gemini transkripsiyonu veya OCR yapılmaz; varsa PDF'in tamamı Gemini'ye gönderilir: 1–3 sayfa tek çağrıda, 4+ sayfa en fazla 3 sayfalık sıralı gruplar hâlinde (21 sayfa = 7 çağrı). Grup metinleri sayfa sırasıyla birleştirilir. Görüntü belgelerinde gömülü metin aranmaz; dosya her zaman Gemini'ye gider.
+
+Bir grup bile 3 denemede tamamlanamazsa ya da normalize metni 10 karakterden kısa kalırsa kısmi sonuç kullanılmaz; Tesseract yedeği belgenin tamamında çalışır. Görüntü tek sayfa olarak, PDF'te yalnız koşulu sağlayan sayfalar OCR'lanır. Aynı sayfadaki gömülü metin ile OCR metni deterministik olarak karşılaştırılır: aynı içerik iki kez yazılmaz, farklı bilgi taşıyorlarsa ikisi de korunur. Yedekle okunan belge işlenmeye devam eder ama sonucu `needs_review` olur. Yedeğin metni de yetersizse belge `failed` olur.
 
 ## Mimari
 
@@ -220,8 +221,8 @@ PDF'te bir sayfa iki durumda OCR'lanır: kendi gömülü metni 10 karakterin alt
 |---|---|
 | React + Vite frontend | Belge yükleme, sonuç gösterimi, kayıtlar görünümü |
 | FastAPI backend | HTTP sözleşmesi, akış sıralaması, durum belirleme |
-| Dosya işleme katmanı | Kabul kontrolü, storage, metin çıkarımı ve OCR |
-| Gemini sınıflandırma | Prompt, structured output, çıktı doğrulama, retry politikası |
+| Dosya işleme katmanı | Kabul kontrolü, storage, yerel metin çıkarımı, OCR gereksinimi kararı ve Tesseract yedeği |
+| Gemini katmanı | Transkripsiyon ve sınıflandırma çağrıları, structured output, çıktı doğrulama, retry politikası |
 | PostgreSQL | `documents` tablosu; sınıflandırma sonucu ve çıkarılan metin |
 | Dosya sistemi storage | Orijinal belgeler (`backend/storage/<uuid>.<uzantı>`) |
 
@@ -229,7 +230,7 @@ Mimari bilinçli olarak sade tutulur:
 
 - Tek bir monolit uygulama; microservice yoktur.
 - İşleme senkrondur: her istek kendi işini tamamlayıp yanıt döner; kuyruk veya arka plan işi yoktur.
-- Belge başına **tek** sınıflandırma işlemi yapılır; retry yalnızca aynı çağrının tekrarıdır.
+- Belge başına **tek** sınıflandırma çağrısı yapılır; OCR gereken belgede metni okuyan ayrı bir transkripsiyon çağrısı vardır, iki çağrı birleştirilmez. Retry yalnızca aynı çağrının tekrarıdır.
 - Agent sistemi, RAG ve vector database kullanılmaz.
 - Repository/factory gibi ek soyutlama katmanları eklenmez; yeni katman ancak somut gerekçe ve `DECISIONS.md` kaydıyla gelir.
 
@@ -242,7 +243,7 @@ Geliştirme ortamında PostgreSQL Docker Compose ile çalışır; backend ve fro
 | Backend | Python 3.13, FastAPI |
 | LLM | Google Gemini (`google-genai`) |
 | PDF | PyMuPDF |
-| OCR | Tesseract OCR (PyMuPDF'in yerleşik desteği) |
+| OCR | Gemini multimodal transkripsiyonu; yedek: Tesseract OCR (PyMuPDF'in yerleşik desteği) |
 | DOC | legacy-doc |
 | DOCX | python-docx |
 | Database | PostgreSQL 18 |
@@ -298,9 +299,9 @@ Komutlar Windows PowerShell içindir; macOS/Linux farkları bölümün sonundad�
 - **Python 3.13** — proje bu sürümle geliştirildi ve test edildi.
 - **Node.js ve npm** — Vite 8'in desteklediği bir sürüm (`^20.19.0 || >=22.12.0`). Node.js 26.7 ve npm 11.19 ile doğrulandı.
 - **Docker Desktop** — yalnızca yerel PostgreSQL 18 için.
-- **Gemini API anahtarı** — sınıflandırma gerçek API'yi çağırır; anahtar olmadan backend başlamaz. Otomatik testler anahtar gerektirmez.
+- **Gemini API anahtarı** — sınıflandırma ve transkripsiyon gerçek API'yi çağırır; anahtar olmadan backend başlamaz. Otomatik testler anahtar gerektirmez.
 - **`.doc` için ek kurulum gerekmez** — Word 97–2003 belgeleri `requirements.txt` içindeki saf Python `legacy-doc` paketiyle okunur; Microsoft Word, LibreOffice veya antiword gerekmez.
-- **Tesseract OCR (opsiyonel)** — taranmış PDF'ler ve görüntü belgeleri için, **`tur` dil paketiyle**. Kurulu değilse uygulama normal çalışır, yalnızca bu belgeler `failed` olur. Ayrı bir Python paketi veya PATH'te `tesseract` komutu gerekmez; yalnızca `tessdata` klasörü gerekir.
+- **Tesseract OCR (opsiyonel)** — yalnız Gemini transkripsiyonu başarısız olduğunda çalışan yedek OCR için, **`tur` dil paketiyle**. Kurulu değilse uygulama normal çalışır; Gemini transkripsiyonu da başarısız olan taranmış PDF'ler ve görüntü belgeleri `failed` olur. Ayrı bir Python paketi veya PATH'te `tesseract` komutu gerekmez; yalnızca `tessdata` klasörü gerekir.
   - Windows: `winget install --id tesseract-ocr.tesseract` (kurulum sihirbazında **Turkish** bileşenini seçin)
   - Debian/Ubuntu: `sudo apt install tesseract-ocr tesseract-ocr-tur`
   - macOS: `brew install tesseract tesseract-lang`
@@ -412,7 +413,7 @@ Belgeyi arayüzden yükleyebilir ya da API'yi doğrudan çağırabilirsiniz:
 curl.exe -F "file=@dilekce.pdf" http://127.0.0.1:8000/api/documents/classify
 ```
 
-Her sınıflandırma gerçek Gemini API'sine istek gönderir; yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
+Her sınıflandırma gerçek Gemini API'sine istek gönderir; OCR gereken belgelerde hazırlık aşamasında ayrıca bir transkripsiyon isteği gider; yüklenen dosya `backend/storage/` altına, sonuç ve çıkarılan metin veritabanına yazılır.
 
 ## Ortam Değişkenleri
 
@@ -421,12 +422,12 @@ Değerler `backend/.env` dosyasında tutulur. `.env` Git'e girmez; `.env.example
 | Değişken | Zorunlu | Açıklama |
 |---|---|---|
 | `GEMINI_API_KEY` | Evet | Google Gemini API anahtarı. Şablonda boştur; kendi anahtarınızı yazın |
-| `GEMINI_MODEL` | Evet | Sınıflandırma modeli. Şablondaki değer `gemini-3.5-flash-lite`; kodda varsayılan yoktur |
+| `GEMINI_MODEL` | Evet | Sınıflandırma ve transkripsiyon modeli. Şablondaki değer `gemini-3.5-flash-lite`; kodda varsayılan yoktur |
 | `DATABASE_URL` | Evet | PostgreSQL bağlantı adresi (psycopg 3). Şablondaki değer yerel Docker veritabanına aittir: `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/dosya_sistemi?connect_timeout=10` |
-| `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörünün yolu. Taranmış PDF'lerde OCR fallback'i ve JPG/JPEG/PNG belgelerinde doğrudan OCR için kullanılır |
+| `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörünün yolu. Gemini transkripsiyonu başarısız olduğunda çalışan yedek OCR için kullanılır |
 
 - İlk üç değişkenden biri eksikse backend (ve `/health`) başlamaz; eksik yapılandırma sessizce bir varsayılana düşmez.
-- `TESSDATA_PREFIX` tanımlı değilse uygulama normal başlar, yalnızca OCR atlanır ve OCR'a bağımlı belgeler `failed` olur. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` bulunmalıdır.
+- `TESSDATA_PREFIX` tanımlı değilse uygulama normal başlar, yalnızca yedek OCR atlanır; Gemini transkripsiyonu da başarısız olan belgeler `failed` olur. Windows'ta tipik değer: `C:\Program Files\Tesseract-OCR\tessdata`. Klasörde `tur.traineddata` bulunmalıdır.
 - `DATABASE_URL`'de `localhost` yerine `127.0.0.1` kullanın; port yalnızca IPv4 localhost'a açıktır.
 - `connect_timeout=10`, veritabanına ulaşılamadığında bağlantı denemesini 10 saniyede sonlandırır. Daha önce oluşturulmuş bir `.env`'de bu parametre yoksa adresin sonuna `?connect_timeout=10` ekleyin.
 - `postgres`/`postgres` kullanıcı bilgileri yalnızca yerel geliştirme içindir.
@@ -481,7 +482,7 @@ Repo kökünde:
 
 ### Otomatik Testler
 
-Doğrulanmış baseline: backend `pytest` **275 passed**, frontend `npm test` **33 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı ve sahte sınıflandırma kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) birim testleridir.
+Doğrulanmış baseline: backend `pytest` **368 passed**, frontend `npm test` **33 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı, sahte sınıflandırma ve sahte transkripsiyon kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) birim testleridir.
 
 Kapsanan alanlar:
 
@@ -497,6 +498,7 @@ Kapsanan alanlar:
 - Özet ve gönderen metadata kuralları
 - Log ve güvenlik davranışı (belge metni ve anahtar loglanmaz)
 - İki adımlı akış: prepare, hazırlanmış belgeyi sınıflandırma (dosya yeniden okunmadan), kaldırma, `409` durumları ve 24 saatlik yedek temizlik
+- Gemini transkripsiyonu: retry/timeout, boş ve kısa yanıt, 3 sayfalık gruplar, Tesseract yedeğine düşüş ve `needs_review` işaretinin korunması
 - Önizleme alanlarının deterministik çıkarımı (konu, tarih, evrak no, gönderen; açıkça yazmayan alan boş kalır)
 
 ### Gerçek / Uçtan Uca Doğrulamalar
@@ -508,23 +510,27 @@ Kapsanan alanlar:
 - PDF, DOC, DOCX ve JPG ile uçtan uca smoke test
 - Hybrid PDF senaryoları
 - DOC ↔ DOCX format eşdeğerliği
-- OCR çözünürlük ve bozulma benchmarkları (font tabanlı sentetik el yazısı proxy'siyle; gerçek insan el yazısı benchmarkı V1.3 kapsamında)
+- Tesseract OCR çözünürlük ve bozulma benchmarkları (font tabanlı sentetik el yazısı proxy'siyle)
+- Gerçek Türkçe el yazısı (9 örnek) ve basılı tarama (8 belge) üzerinde Tesseract ile Gemini transkripsiyonunun karşılaştırması (V1.3, repo dışında)
 - V1.4 çoklu yükleme ve önizleme akışının gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması
+- V1.3 Gemini transkripsiyonunun gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması. Kapsam: basılı kontrol seti, dijital belgeler, hybrid ve bozuk metin katmanlı PDF, zorlanmış 503 ile Tesseract yedeği, 3–21 sayfalık taranmış PDF'ler
 
 Ayrıntılı test geçmişi ve ölçüm sonuçları için: [`CURRENT_STATE.md`](CURRENT_STATE.md)
 
 ## Bilinen Sınırlar
 
-- Gerçek insan el yazısı henüz güvenilir biçimde desteklenmiyor; bu başlık açık olan V1.3 iş hattının konusu.
-- Taranmış çizgili tablo ve formlarda OCR bazı satırları düşürebilir.
-- EXIF bilgisi olmayan 90°/180° döndürülmüş görüntülerde OCR anlamsız metin üretebilir; otomatik döndürme/OSD yoktur.
+- El yazısı ve taranmış belgeler Gemini transkripsiyonuyla okunur, ancak ölçüm küçük ve temiz bir sette yapıldı (9 el yazısı + 8 basılı belge). Gerçek tarayıcı gürültüsü, telefon fotoğrafı ve uzun çok sayfalı tarama kapsamı sınırlı.
+- Gemini'nin akıcı ama yanlış okumalarını yakalayan ayrı bir kalite kapısı yoktur; yalnız Tesseract yedeğine düşen belgeler otomatik olarak `needs_review` olur.
+- OCR gereken belgelerde dosyanın kendisi (görüntü/PDF) Gemini'ye gönderilir. Belge başına en az iki Gemini çağrısı yapılır (transkripsiyon + sınıflandırma); 4+ sayfalık PDF'te 3 sayfalık grup başına bir transkripsiyon çağrısı eklenir.
+- Taranmış çizgili tablo ve formlar ölçülmedi; Tesseract yedeğinde bazı satırlar düşebilir.
+- Tesseract yedeğinde EXIF bilgisi olmayan 90°/180° döndürülmüş görüntüler anlamsız metin üretebilir; otomatik döndürme/OSD yoktur.
 - Gemini yalnızca metnin ilk 50.000 karakterini değerlendirir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
 - DOC ve DOCX belgelerde header/footer metni çıkarılmaz.
 - DOC ve DOCX içindeki gömülü görüntüler OCR edilmez.
 - Authentication ve authorization yoktur.
-- İşlem senkrondur; Gemini aşaması en kötü durumda retry'larla birlikte yaklaşık 93 saniye sürebilir.
+- İşlem senkrondur; her Gemini aşaması (transkripsiyon, sınıflandırma) en kötü durumda retry'larla birlikte yaklaşık 93 saniye sürebilir. Uzun taranmış PDF'lerde gruplar sırayla okunduğu için süre sayfa sayısıyla artar; bir grup zaman aşımına uğrarsa Tesseract yedeği belgenin tamamında çalışır.
 - Kurum yönlendirmesi mevcut katalogla sınırlıdır; katalogda olmayan birimlere ait belgeler `needs_review` olur.
-- OCR için Tesseract ve `tur` dil paketi gerekir; kurulu değilse taranmış PDF'ler ve görüntü belgeleri `failed` olur.
+- Tesseract yalnız yedektir; kurulu değilse ve Gemini transkripsiyonu da başarısız olursa taranmış PDF'ler ve görüntü belgeleri `failed` olur.
 - Frontend'in classify isteği için zaman aşımı 120 saniyedir; süre dolsa da backend işlemeyi tamamlamış olabilir.
 - Aynı makinede aynı projeden ikinci bir Docker Compose stack'i başlatmak container adı, port ve volume çakışmasına yol açar; temiz bir makinede tek klon sorunsuz çalışır.
 
@@ -534,14 +540,7 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 
 ### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
 
-**Açık.** OCR/extraction iş hattı. İlk adım, mevcut OCR hattının gerçek insan el yazısıyla ölçüleceği bir pilot benchmark; çözümler bu ölçümden sonra seçilir. Planlanan kapsam:
-
-- Gerçek insan el yazısı benchmarkı
-- El yazısı OCR kalitesinin iyileştirilmesi
-- OCR çıktısı için kalite kapısı
-- Taranmış tablo ve form belgelerinde OCR dayanıklılığı
-- Düşük kaliteli metin çıkarımında `needs_review` davranışının güçlendirilmesi
-- OCR kaynaklı özet ve gönderen bilgisi güvenilirliği
+**Açık — uygulandı ve gerçek ortamda doğrulandı.** OCR/extraction iş hattı. Teslim edilenler [Sürüm Geçmişi](#v13--el-yazısı-ve-gelişmiş-ocr-güvenilirliği) bölümündedir. Gerçek ortam doğrulamasında 3–21 sayfalık taranmış PDF'lerin tüm sayfaları okundu (21 sayfa = 7 transkripsiyon çağrısı, ~36 sn).
 
 V1.4 tamamlandı; teslim edilenler [Sürüm Geçmişi](#v14--çoklu-belge-yükleme-ve-önizleme) bölümündedir.
 
@@ -554,3 +553,5 @@ Aşağıdakiler taahhüt değildir; ihtiyaç doğarsa `DECISIONS.md` üzerinden 
 - Kurum kataloğunun genişletilmesi ve açıklamalarının iyileştirilmesi
 - Otomatik döndürme / orientation iyileştirmeleri
 - 50.000 karakteri aşan belgeler için gelişmiş metin seçimi stratejisi
+- Taranmış tablo ve form belgelerinde okuma dayanıklılığı
+- OCR kaynaklı özet ve gönderen bilgisi güvenilirliği

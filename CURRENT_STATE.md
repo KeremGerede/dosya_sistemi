@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-09-27
+> **Son güncelleme:** 2026-10-03
 > Projenin şu anki durumu. Her anlamlı geliştirme adımından sonra güncellenir.
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
@@ -13,7 +13,7 @@
   - Adım 10: gerçek PostgreSQL + gerçek Gemini + gerçek Tesseract OCR ile uçtan uca doğrulama. PDF'in "Orijinal Belgeyi Gör" penceresinde görüntülenmesi kullanıcı tarafından gerçek masaüstü tarayıcıda elle doğrulandı.
   - `pytest` 275 passed, frontend `npm test` 33 passed.
   - `c412720` (`feat: add multi-document preview and upload workflow`) olarak `main`'e alındı.
-- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**. Geliştirme planı onaylandı (2026-09-27); ilk adım gerçek el yazısı pilot benchmarkı. Ayrıntı: "Üzerinde çalışılan işler".
+- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**. Gerçek el yazısı ve basılı tarama benchmarkları repo dışında tamamlandı (2026-10-03). Mimari karar alındı: OCR gereken belgelerde Gemini multimodal transkripsiyon birincil, Tesseract acil durum yedeği (D-047). 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunuyor. Kod ve testler gerçek ortamda doğrulandı; iki commit olarak `main`'e alındı, henüz push edilmedi. Ayrıntı: "Üzerinde çalışılan işler".
 
 Sürüm numaraları kapsam başlığıdır, teslim sırası değildir; iki iş hattı birbirinden bağımsız ilerler.
 
@@ -678,6 +678,140 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
   - Kullanıcı gerçek masaüstü tarayıcısında elle doğruladı (2026-09-24): Belge Önizlemesi formu açılıyor; "Orijinal Belgeyi Gör" gerçek PDF'i düzgün boyutlu ve kaydırılabilir bir pencerede gösteriyor; pencere Kapat, Esc ve dışarı tıklamayla kapanıyor; "Çıkarılan Metni Gör" çalışıyor.
 - [x] **Son kontroller:** `npm test` 33 passed (konu düzeltmesi sonrası); `npm run build` ve `npm run lint` temiz; `pytest` 275 passed; `pip check` temiz; `alembic current` head; `alembic check` temiz; `git diff --check` temiz.
 
+**V1.3 · Adım 1 — Gerçek el yazısı ve basılı tarama benchmarkları (repo dışı, 2026-10-02/03)**
+
+- [x] Production kodu benchmark boyunca değişmedi (HEAD `19c9cba`). Benchmark verileri, script'ler ve sonuçlar repo dışında tutuldu (`C:\Users\Kerem\dosya_sistemi_v13_benchmark\`); repoya örnek metin veya görüntü girmedi.
+- [x] **El yazısı:**
+  - İnsanın rahat okuduğu gerçek Türkçe el yazılarından oluşan, kullanıcı onaylı temiz set kullanıldı. Manuel ground truth'u olan 9 örnekte production Tesseract ile Gemini karşılaştırıldı. Ground truth OCR/LLM ile üretilmedi.
+  - Tesseract: CER %36,99 / %33,75, WER %80,69 / %72,59 (macro / micro).
+  - Gemini: CER %3,89 / %4,97, WER %6,09 / %7,76.
+  - Gemini 9/9 örnekte hem CER hem WER'de daha iyiydi; kullanıcı çıktıları elle kontrol etti.
+- [x] **Gemini çağrısı:** Model `gemini-3.5-flash-lite`; temperature 0, SDK retry kapalı, en fazla 3 gerçek deneme, 30 sn timeout. Prompt yalnız transkripsiyon istedi. Modele Tesseract çıktısı veya ground truth verilmedi.
+- [x] **Basılı tarama kontrolü** (8 belge: 5 sentetik render, 3 rasterize edilmiş gerçek dizgi sayfası):
+  - Tesseract: CER %3,79 / %4,18, WER %4,53 / %5,73, toplam ~9,7 sn.
+  - Gemini: CER %0 / %0, WER %0,24 / %0,24, toplam ~24,0 sn.
+  - 4 belgede iki motor eşit, 4'ünde Gemini daha iyi, hiçbirinde daha kötü değil.
+- [x] **Ölçümün sınırları:** Küçük set (9 + 8 belge), çoğunlukla temiz tarama/render. Gerçek tarayıcı gürültüsü ve telefon fotoğrafı kapsamı sınırlı. En uzun PDF 2 sayfaydı; 20+ sayfalık taramalarda tek çağrının 30 sn timeout'a yaklaşma riski ölçülmedi.
+
+**V1.3 · Adım 2 — Karar ve dokümantasyon (2026-10-03)**
+
+- [x] `DECISIONS.md`:
+  - **Yeni D-047:** Güvenilir dijital metin varsa yerel çıkarım; yoksa (görüntüler ve D-003 koşulunu sağlayan PDF'ler) dosyanın tamamı tek bir Gemini transkripsiyon çağrısına gider.
+  - Transkripsiyon başarısız ya da normalize metni 10 karakterden kısaysa Tesseract acil durum yedeği çalışır. Yedeğin metni yeterliyse sonuç `needs_review`, yetersizse mevcut `failed` + `422`.
+  - Yapılmayacaklar: el yazısı dedektörü, Tesseract → Gemini düzeltmesi, ek OCR modeli, chunking. Transkripsiyon ve sınıflandırma ayrı çağrılar.
+  - **Güncellenen:**
+    - D-001, D-003: yeni rol.
+    - D-004, D-026: başarısızlık ve 10 karakter kuralı.
+    - D-007, D-031: Gemini transkripsiyonu da yapar, aynı model.
+    - D-008: "tek LLM çağrısı" → tek sınıflandırma çağrısı + ayrı transkripsiyon.
+    - D-019, D-020, D-021: ifadeler.
+    - D-033: retry politikası iki çağrıya da uygulanır; transkripsiyon hatası `502` üretmez.
+    - D-034: prepare'de `502` yok.
+    - D-039: en kötü süre.
+    - D-042: Tesseract yalnız acil durum yedeği.
+    - D-044: ifade.
+    - D-045: Gemini sınıflandırması onaydan sonra, transkripsiyon prepare'de.
+    - D-046: yedek OCR işareti `prepared` kayıtta taşınır.
+- [x] `PROJECT_BRAIN.md`: amaç, akış, teknoloji, mimari, dosya işleme, LLM sözleşmesi (+ transkripsiyon sözleşmesi), `status`, API, ilkeler (ilke 2: tek sınıflandırma çağrısı), MVP kapsamı, kapsam dışı ve gelecek yönü güncellendi.
+- [x] `README.md`: V1.3 kapsamı, pipeline, desteklenen türler, kurulum/ortam değişkeni notları ve bilinen sınırlar güncellendi. Taranmış tablo/form dayanıklılığı ile OCR kaynaklı özet/gönderen güvenilirliği "Daha Sonra Değerlendirilebilecekler" bölümüne taşındı.
+- [x] Eski V1.3 planı kaldırıldı: 4 yazar × 4 belgelik ~30 belgelik pilot, quality gate, "OCR motoru ilk iterasyonda değişmez". Yerine ölçülmüş karar geldi; geçmiş Git'te.
+- [x] Kod, test, migration ve frontend değişmedi.
+
+**V1.3 · Adım 3 — Minimum production implementasyonu (2026-10-03)**
+
+- [x] Kod:
+  - `gemini_client.transcribe`: tek multimodal istek.
+  - `classification_service.TRANSCRIPTION_PROMPT`: benchmark prompt'uyla bayt bayt aynı (626 bayt).
+  - `classification_service.transcribe_document`: D-033 retry politikası; boş yanıt retry edilir; başarısızlıkta `None`, yani 502 yok.
+  - `file_service.needs_ocr`: `_page_text` koşulu `_page_needs_ocr` yardımcısına alındı, davranış aynı.
+  - `documents._extract_into` / `_classify_into`: transkripsiyon → normalize → 10 karakter kontrolü → Tesseract yedeği. Yedek kullanılırsa belge `needs_review` olur ve yedek OCR gerekçesi alır. Bu işaret `prepared` kayıtta taşınır, sınıflandırmada korunur ve sınıflandırma 502 ile biterse temizlenir.
+  - `.env.example`: yorum satırları.
+  - Migration, şema, frontend ve kataloglar değişmedi.
+- [x] Testler önce kırmızı yazıldı (eksik fonksiyonlar), sonra yeşile getirildi:
+  - `pytest` 275 → **349 passed** (+74). Kapsam: transkripsiyon retry/timeout ve gerçek SDK + MockTransport testleri, `needs_ocr` matrisi ve Tesseract yoluyla tutarlılığı, API'de birincil yol / yedek / kısa transkript / iki tarafın da yetersizliği → 422 / gerekçe birleştirme / 502'de işaretin temizlenmesi / prepare → classify'da işaretin korunması.
+  - Mevcut 2 görüntü testi birincil yola göre güncellendi. Testler ağa çıkmıyor.
+  - `pip check` temiz; frontend `npm test` 33, `npm run build` ve `npm run lint` temiz.
+
+**V1.3 · Adım 4 — Gerçek ortamda uçtan uca doğrulama (2026-10-03)**
+
+- [x] **Ortam ve yöntem:**
+  - Docker PostgreSQL 18 (`cedf33674167 (head)`), gerçek Gemini (`gemini-3.5-flash-lite`) ve gerçek Tesseract kullanıldı.
+  - Uygulama, repo dışındaki bir başlatıcıyla 127.0.0.1:8765'te değiştirilmeden çalıştı. Başlatıcı yalnız ölçüm için gerçek Gemini isteklerini (SDK seviyesinde), Tesseract sayfalarını ve finish_reason/token sayılarını içeriksiz olarak kaydetti; bir bayrak dosyasıyla transkripsiyonda 503 zorlanabildi.
+  - Test belgeleri ve script'ler repo dışında (geçici scratchpad) tutuldu.
+  - USER-* el yazısı örneklerinin tamamı `internal_benchmark_only` olduğu için kullanıcı kararıyla gönderilmedi.
+- [x] **HEAD karşılaştırması (yerel, API yok):** 13 belgede (dijital PDF/DOCX/DOC, hybrid, bozuk katman, 8 basılı kontrol; gerçek Tesseract) güncel `extract_text`, HEAD ile bayt bayt aynı. Tesseract yedek yolu değişmedi.
+- [x] **Dijital belgeler** (PDF, DOCX, DOC):
+  - Transkripsiyon 0, Tesseract 0, sınıflandırma 1'er.
+  - `extracted_text` HEAD ile bayt bayt aynı.
+  - Hepsi `classified`; prepare 0,03–0,15 sn, classify 1,0–1,3 sn.
+- [x] **Basılı kontrol seti (8 belge):**
+  - Belge başına 1 transkripsiyon isteği (hepsi `STOP`), Tesseract 0.
+  - Production çıktısı normalize edilmiş haliyle benchmark çıktısıyla **8/8 aynı**; CER/WER değişmedi.
+  - Prepare 1,3–6,7 sn, classify 1,0–1,3 sn.
+  - 4 belge `classified`, 4 kapsam dışı belge (duyuru + 3 sınav sayfası) beklendiği gibi `needs_review`.
+- [x] **Hybrid PDF** (dijital kapak + taranmış sayfa): PDF'in tamamı için 1 transkripsiyon; kapak ve tarama işaretlerinin tamamı metinde, CER %0,38; `classified`.
+- [x] **Bozuk metin katmanlı tarama:** 1 transkripsiyon; işaret metinde, CER %0, bozuk katman sızmadı; `classified`.
+- [x] **Legacy `/classify`:** tek istekte 1 transkripsiyon + 1 sınıflandırma, 2,7 sn, `classified`.
+- [x] **Zorlanmış 503 → Tesseract yedeği:**
+  - İki adımlı akış: prepare 4,2 sn (3 zorlanmış 503 denemesi, 1 sn + 2 sn bekleme, 0 gerçek transkripsiyon isteği, Tesseract 1 sayfa / 1,2 sn). `prepared` kayıtta `needs_review = true` ve yedek OCR gerekçesi var. Sınıflandırma (1 gerçek istek) sonrasında sonuç `needs_review`, kurum önerisi korundu, gerekçe yedek OCR gerekçesi.
+  - Legacy akış (bozuk katmanlı PDF): 4,9 sn, aynı sonuç.
+- [x] **Uzun taranmış PDF — kritik bulgu (timeout değil, sessiz eksik okuma):**
+  - **12 sayfa:** 1 transkripsiyon (4,5 sn, `STOP`), yalnız 1. sayfa okundu (12 sayfa işaretinden 1'i; 25.100 karakterin 2.101'i).
+  - **21 sayfa:** 1 transkripsiyon (4,0 sn, `STOP`), yalnız 1. sayfa (21 işaretten 1'i; 43.786 karakterin 2.076'sı). Belge yalnız 1. sayfayla `classified` / `needs_review = false` oldu.
+  - Timeout yaşanmadı. Transkripsiyon "başarılı" göründüğü için yedeğe de düşülmedi.
+  - Doğrulama probu (aynı belgenin ilk N sayfası, doğrudan production fonksiyonu, DB kaydı yok): 2, 3 ve 4 sayfa eksiksiz; **5, 6 ve 21 sayfada yalnız 1. sayfa** döndü (21 sayfa ikinci kez denendi, sonuç aynı).
+  - Tek sentetik belge türüyle ölçüldü; eşik belge türüne göre değişebilir.
+- [x] **Gemini çağrıları:**
+  - Backend üzerinden 31 gerçek istek (13 transkripsiyon + 18 sınıflandırma); hepsi HTTP 200, retry 0.
+  - 6 zorlanmış 503 denemesi gerçek API'ye gitmedi.
+  - Prob için 6 doğrudan transkripsiyon isteği yapıldı. Toplam gerçek istek 37.
+- [x] **Log güvenliği:**
+  - 96 log satırında API anahtarı, 39 REF/sayfa işareti, 296 ground-truth satırı, 18 kaydın metin parçaları, storage yolu ve `file_reference` değerlerinin **hiçbiri** yok.
+  - Uyarılar yalnız deneme numarası, hata türü, `HTTP 503` ve belge kimliği içeriyor.
+- [x] **Temizlik:**
+  - 18 test kaydı açık ID listesiyle silindi, 18 storage dosyası kaldırıldı.
+  - Veritabanında yalnız 3 kullanıcı kaydı kaldı (durumları değişmedi); storage baseline'la aynı (4 dosya).
+  - `TRUNCATE` veya toplu silme kullanılmadı. Kullanıcının `prepared` kaydı olmadığı için TTL temizliği kullanıcı verisine dokunamazdı.
+- [x] **Gözlem (V1.3 dışı):** Aynı görüntünün iki kaydında transkriptler birebir aynıyken sınıflandırma bir kez `request`, bir kez `information_request` döndü (kurum aynı). temperature 0'da sınıflandırma tam deterministik değil; önceden de olası olan bir davranış.
+
+**V1.3 · Adım 5 — 4+ sayfalık PDF'lerde 3 sayfalık grup transkripsiyonu (2026-10-03)**
+
+- [x] **Karar** (kullanıcı, Adım 4 bulgusu üzerine): D-047'ye 3 sayfalık grup kuralı eklendi.
+  - 1–3 sayfalık PDF ve görüntüler tek çağrıyla okunmaya devam eder (dosya olduğu gibi).
+  - 4+ sayfa en fazla 3 sayfalık sıralı gruplara bölünür; her grup aynı prompt ve ayarlarla okunur, metinler sayfa sırasıyla birleştirilir.
+  - Bir grup bile başarısız ya da yetersizse kısmi sonuç kullanılmaz: kalan gruplar gönderilmez, Tesseract yedeği belgenin tamamında çalışır ve sonuç `needs_review` olur.
+  - Sınıflandırma birleşik metinle bir kez çalışır.
+  - D-003, D-008, D-033, D-039, `PROJECT_BRAIN.md` ve `README.md` buna göre güncellendi; "Açık sorular"daki madde kapandı.
+- [x] **Kod:**
+  - `file_service.TRANSCRIPTION_MAX_PAGES = 3`.
+  - `file_service.transcription_parts`: ≤ 3 sayfa ve görüntüde içeriği değiştirmeden tek parça; 4+ sayfada `insert_pdf` ile sıralı alt PDF'ler.
+  - `documents._transcribe`: grup döngüsü, ilk başarısız/yetersiz grupta durma, birleştirme. Gruplara bölünemeyen PDF de 500 yerine Tesseract yedeğine düşer.
+  - `transcribe_document` ve sınıflandırma değişmedi.
+- [x] **Testler** önce kırmızı yazıldı (18 yeni test başarısız), sonra yeşile getirildi. `pytest` 349 → **368 passed** (+19).
+  - `file_service`: ≤ 3 sayfa ve görüntü tek ve değişmemiş parça; 4/5/6/12/21 sayfada grup boyutları ve sayfa sırası; taranmış sayfa görüntülerinin parçalara taşınması.
+  - API: 7 sayfada 3 çağrı + sıralı birleşik metin + tek sınıflandırma; 3 sayfada orijinal baytlarla tek çağrı; başarısız/kısa grupta kalan grup gönderilmeden belgenin tamamının Tesseract'a düşmesi ve kısmi Gemini metninin atılması; prepare akışında işaretin korunması; bölünemeyen PDF'te 500 yerine yedek.
+  - `pip check` temiz.
+- [x] **Gerçek ortamda yeniden doğrulama** (aynı başlatıcı ve yöntem, gerçek PostgreSQL + Gemini + Tesseract; aynı sentetik tutanak belgesinin 3–21 sayfalık sürümleri):
+
+  | Sayfa | Transkripsiyon isteği | Tüm sayfalar metinde | Karakter (çıkan / GT) | WER | Prepare |
+  |---|---|---|---|---|---|
+  | 3 | 1 | 3/3 | 6.303 / 6.320 | %0,54 | 5,2 sn |
+  | 4 | 2 | 4/4 | 8.404 / 8.426 | %0,40 | 7,3 sn |
+  | 5 | 2 | 5/5 | 10.461 / 10.494 | %0,73 | 8,5 sn |
+  | 6 | 2 | 6/6 | 12.547 / 12.587 | %0,61 | 10,1 sn |
+  | 12 | 4 | 12/12 | 25.025 / 25.100 | %0,57 | 20,0 sn |
+  | 21 | **7** | **21/21** | 43.679 / 43.786 | %0,60 | 35,8 sn |
+
+  - Grup çağrıları 2,3–5,3 sn sürdü, hepsi `STOP`; Tesseract 0.
+  - Her belgede sınıflandırma 1 istek (1,1–1,4 sn) ve classify adımında transkripsiyon tekrar çalışmadı.
+- [x] **Gerçek ortamda kısmi hata:** 12 sayfalık PDF'te 1. grup gerçek Gemini ile okundu (5,2 sn), 2. grupta 503 zorlandı (3 deneme).
+  - Kalan 2 grup gönderilmedi; Tesseract 12 sayfanın tamamını okudu (24,6 sn). Prepare 32,9 sn sürdü; kayıt `prepared` + `needs_review = true` + yedek OCR gerekçesiyle kaydedildi.
+  - Sınıflandırma (1 istek) sonrasında sonuç `needs_review`.
+  - Kayıttaki metin, aynı dosyanın doğrudan tam-belge Tesseract çıktısıyla bayt bayt aynı: kısmi Gemini metni kullanılmadı.
+- [x] **Gemini çağrıları:** 26 gerçek istek (19 transkripsiyon + 7 sınıflandırma), hepsi HTTP 200, retry 0. 3 zorlanmış 503 gerçek API'ye gitmedi.
+- [x] **Log güvenliği:** 56 log satırında API anahtarı, 39 işaret, 179 ground-truth satırı, 7 kaydın metin parçaları, storage yolu ve `file_reference` değerlerinin hiçbiri yok. Yedeğe geçiş uyarısı yalnız belge kimliği ve grup numarasını içeriyor (`grup 2/4`).
+- [x] **Temizlik:** 7 test kaydı açık ID listesiyle silindi, 7 storage dosyası kaldırıldı. Veritabanı (3 kullanıcı kaydı, durumları değişmedi) ve storage (4 dosya) baseline'la aynı.
+
 ## Üzerinde çalışılan işler
 
 **V1.4 — Çoklu Belge Yükleme ve Önizleme**
@@ -685,16 +819,18 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Adım 0–10 tamamlandı: dokümantasyon, backend, frontend ve gerçek ortamda uçtan uca doğrulama. Gerçek tarayıcıda PDF kontrolü elle yapıldı.
 - Değişiklikler tek commit olarak `main`'e alındı. Açık V1.4 işi yok.
 
-**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (açık; plan onaylandı 2026-09-27)**
+**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (açık; karar D-047, 2026-10-03)**
 
-- Planlanan kapsam `README.md`'deki başlıklardır: el yazısı benchmarkı, OCR quality gate, taranmış tablo ve form dayanıklılığı, düşük kaliteli çıkarımda `needs_review`, OCR kaynaklı özet ve gönderen güvenilirliği.
-- Onaylanan yaklaşım:
-  - **Önce ölçüm.** Mevcut hat (Tesseract, `tur`, 400 dpi) production kodu değişmeden gerçek insan el yazısıyla ölçülür. Eski synthetic proxy ölçümü (D-042) yalnız tarihsel bağlamdır.
-  - **Pilot corpus (~30 belge):** 4 yazar × 4 el yazısı belge, 8 farklı yeniden çekim koşulu, 6 basılı/dijital kontrol belgesi. İçerik sentetik, el yazısı gerçek; corpus repo dışında tutulur ve commit edilmez. Pilot yeterli veri sağlamazsa 60–80 belgeye genişletilir.
-  - **Benchmark'tan önce dondurulan güvenlik kriterleri:** OCR kaynaklı güvenli yanlış yönlendirme 0 (mümkün olduğunca), uydurma gönderen bilgisi 0, sessiz yanlış kritik rakam 0 (mümkün olduğunca), basılı/dijital kontrol belgelerinde quality gate işareti 0.
-  - **Sayısal hedefler** (CER, WER, gate recall vb.) şimdilik aday aralıktır; pilot baseline'dan sonra, herhangi bir çözüm ölçülmeden önce kesinleşir.
-  - **Quality gate:** Aday sinyallerin tamamı pilotta ölçülür; production'a yalnız ayırıcı olduğu gösterilen en küçük set girer. Mevcut `get_textpage_ocr` yolunda Tesseract confidence bilgisine erişilemiyor (PyMuPDF/MuPDF kaynağından doğrulandı).
-  - **OCR motoru** ilk iterasyonda değişmez. Alternatifler baseline'dan sonra, D-042 ile uyumlu ucuz adaylardan başlayarak değerlendirilir.
+- Adım 1–5 tamamlandı:
+  - Adım 1: benchmarklar. Adım 2: karar ve dokümantasyon. Adım 3: kod ve testler.
+  - Adım 4: gerçek ortam doğrulaması; 5+ sayfa blocker'ı bulundu.
+  - Adım 5: 3 sayfalık grup transkripsiyonu; blocker kapandı, gerçek ortamda yeniden doğrulandı.
+- Değişiklikler iki commit olarak `main`'e alındı: `docs: record V1.3 Gemini transcription architecture` ve `feat: use Gemini transcription with grouped PDF fallback`. Henüz push edilmedi.
+- Final kontroller (commit öncesi):
+  - `pytest` 368 passed; `pip check` temiz.
+  - Frontend `npm test` 33 passed; `npm run build` ve `npm run lint` temiz.
+  - `git diff --check` temiz; repoda test/benchmark artefaktı yok.
+- Bilinçli olarak kapsam dışı: el yazısı dedektörü, quality gate, Tesseract → Gemini düzeltmesi, ek OCR modeli, 3 sayfalık sabit gruplar dışında chunking, grupların paralel gönderilmesi, agent/RAG/vector DB, refactor.
 
 **Diğer**
 
@@ -717,20 +853,36 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Storage konumu için ortam değişkeni yok. `file_service`, D-017'ye göre `backend/storage/` yolunu kod içinde kullanır (çalışma dizininden bağımsız).
 - DOCX metin çıkarımı V1'de header/footer, textbox, iç içe tablolar ve gömülü nesneleri kapsamaz; bu alanlardaki metin alınmaz. DOCX'te OCR da yapılmaz.
 - DOC (Word 97–2003) çıkarımı gövde paragraflarını ve tablo hücrelerini kapsar; gömülü görüntülerdeki metin, makrolar, header/footer ve biçimlendirme alınmaz. DOC'ta OCR yapılmaz; şifreli veya bozuk `.doc` dosyaları `failed` olur.
-- Benchmarkta açık kalan noktalar: 90°/180° döndürülmüş taramalarda OCR anlamsız metin üretiyor ve belge `needs_review`'a düşüyor (otomatik döndürme/OSD kullanılmıyor); belirleyici içerik ilk 50.000 karakterden sonra yer alıyorsa (D-027) Gemini'ye hiç gitmiyor. İkisinde de sonuç `needs_review` olduğu için yanlış atama değil, sınıflandırılamama yaşanıyor. Yoğun gürültülü veya gölgeli taramada belge türü kayabiliyor (kurum doğru kalıyor; re-benchmarkta 04 ve 15). Bozuk text layer sorunu (P2) V1.2 · Adım 5'te kapatıldı.
+- **V1.3 notu:** Aşağıdaki OCR maddeleri Tesseract döneminde ölçüldü. V1.3'ten itibaren Tesseract yalnız acil durum yedeğidir (D-047); bu maddeler o yol için geçerlidir. Gemini transkripsiyonu bu senaryolarla (döndürme, gürültü, tablo/form) henüz ayrıca ölçülmedi.
+- Benchmarkta açık kalan noktalar: 90°/180° döndürülmüş taramalarda Tesseract anlamsız metin üretiyor ve belge `needs_review`'a düşüyor (otomatik döndürme/OSD kullanılmıyor); belirleyici içerik ilk 50.000 karakterden sonra yer alıyorsa (D-027) Gemini'ye hiç gitmiyor. İkisinde de sonuç `needs_review` olduğu için yanlış atama değil, sınıflandırılamama yaşanıyor. Yoğun gürültülü veya gölgeli taramada belge türü kayabiliyor (kurum doğru kalıyor; re-benchmarkta 04 ve 15). Bozuk text layer sorunu (P2) V1.2 · Adım 5'te kapatıldı.
 - P2 düzeltmesinin bilinen sınırı: bozuk metin katmanı **harf görünümlü** ise (ör. `qwzxk jvbnm`) kelime benzeri parça ürettiği için korunacak bilgi sayılır ve OCR metninin yanında kalır. Sembol, kontrol karakteri, U+FFFD ve PUA aileleri (benchmark senaryo 14 bu aileden) düşer. Kalan gürültü en fazla 200 karakterle sınırlıdır ve yanında belgenin tam OCR metni bulunur. Ayırt etmek Türkçe sözlük/dil modeli gerektireceği için kapsam dışı bırakıldı.
 - Yapısal OCR koşulunun bilinen yanlış pozitifi: tam sayfa arka plan/filigran görüntüsü olan **dijital** bir sayfada gömülü metin 200 karakterin altındaysa OCR gereksiz yere çalışır. Ölçülen maliyet ~0,2 sn; gömülü bilgi kaybolmuyor (birleştirme kuralı koruyor). Aynı durumda OCR metni gömülü metnin yerine geçtiği için, paylaşılan kısımda Tesseract'ın Türkçe karakter kayıpları (`İ→I`, `Ç→C`) nihai metne yansıyabilir; ölçülen senaryoların hiçbirinde görülmedi.
-- Görüntü belgelerinde (JPG/JPEG/PNG) OCR her zaman çalışır: dosya tek sayfalık belge olarak doğrudan okunur, gömülü metin aranmaz. Tesseract kurulu değilse bu belgeler `failed` olur.
-- EXIF `Orientation` etiketi taşıyan döndürülmüş fotoğraflar PyMuPDF tarafından doğru yönlendirilir. Etiketsiz döndürülmüş görüntülerde metin anlamsız çıkar (otomatik döndürme/OSD yok); bu, kayıtlı rotation sınırının devamıdır.
-- PDF'te OCR iki koşuldan birine bağlıdır: sayfanın kendi gömülü metni 10 karakterin altında olmalı, ya da sayfa alanının en az %50'si görüntüyken metni 200 karakteri geçmemeli. Normal metin PDF'lerinde ek maliyet yoktur — uzun metinli sayfa yapısal ölçüme hiç girmez. Tek sayfalık temiz bir taramada 400 dpi'de ~0,7 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
-- Tesseract büyük harf Türkçe metinde noktalı **İ**'yi noktasız I, **Ç**'yi C okuyabiliyor (smoke testinde "ŞİKAYET DİLEKÇESİ" → "ŞIKAYET DILEKCESI"). Gövde metni doğru çıktığı için sınıflandırma etkilenmedi; başlığa dayanan belgelerde dikkat edilmeli.
-- OCR kalitesi gerçek bir taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle gürültü, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) ile ölçüldü; ayrıca 15 senaryoluk manuel testte normal, temiz taranmış ve bozulmuş belgeler uçtan uca doğrulandı. Tablo ve form için yalnız sentetik örnekler denendi (V1.2 Adım 6'daki form senaryosu, Adım 7'deki tablo/form PNG'si); gerçek taranmış tablo ve form benchmarkı yok (V1.3 kapsamı).
-- Çok gürültülü taramalarda Tesseract kağıt dokusunu karakter sanıp beklenenden çok daha uzun metin üretebiliyor (ölçülen en kötü durumda 349 karakterlik belgeden 4282 karakter, süre ~5×). Üretilen fazlalık apaçık çöp parçalarıdır, akıcı ama yanlış metin değildir; ölçülen durumda sınıflandırma yine doğru sonuçlandı ve 50.000 karakter sınırının %8,6'sı kullanıldı. Çok sayfalı çok kötü taramalarda süre birikebilir.
-- `TESSDATA_PREFIX` yerel `backend/.env` dosyasındadır ve Git'e girmez; yeni bir makinede OCR istenirse Tesseract kurulup bu değişken ayarlanmalıdır (`README.md` 3. adım).
+- Görüntü belgeleri (JPG/JPEG/PNG) her zaman Gemini transkripsiyonuna gider; gömülü metin aranmaz. Transkripsiyon başarısız ya da yetersiz olursa ve Tesseract kurulu değilse bu belgeler `failed` olur.
+- Tesseract yedeğinde EXIF `Orientation` etiketi taşıyan döndürülmüş fotoğraflar PyMuPDF tarafından doğru yönlendirilir. Etiketsiz döndürülmüş görüntülerde metin anlamsız çıkar (otomatik döndürme/OSD yok); bu, kayıtlı rotation sınırının devamıdır. Gemini transkripsiyonunun EXIF/döndürme davranışı ayrıca ölçülmedi.
+- PDF'te transkripsiyon (ve yedekte sayfa OCR'ı) iki koşuldan birine bağlıdır: sayfanın kendi gömülü metni 10 karakterin altında olmalı, ya da sayfa alanının en az %50'si görüntüyken metni 200 karakteri geçmemeli. Normal metin PDF'lerinde ek maliyet yoktur — uzun metinli sayfa yapısal ölçüme hiç girmez. Tesseract yedeği tek sayfalık temiz bir taramada 400 dpi'de ~0,7 sn sürdü, ancak süre sayfa sayısı ve tarama kalitesiyle artar ve senkron isteğin toplam süresine eklenir.
+- Tesseract (yedek) büyük harf Türkçe metinde noktalı **İ**'yi noktasız I, **Ç**'yi C okuyabiliyor (smoke testinde "ŞİKAYET DİLEKÇESİ" → "ŞIKAYET DILEKCESI"). Gövde metni doğru çıktığı için sınıflandırma etkilenmedi; başlığa dayanan belgelerde dikkat edilmeli.
+- OCR kalitesi gerçek bir taranmış belge ve ondan türetilen 8 bozulma varyantı (gölge, soluk toner, speckle gürültü, perspektif, eğim+blur, düşük JPEG, birleşik gürültü, kötü fotokopi) ile ölçüldü; ayrıca 15 senaryoluk manuel testte normal, temiz taranmış ve bozulmuş belgeler uçtan uca doğrulandı. Tablo ve form için yalnız sentetik örnekler denendi (V1.2 Adım 6'daki form senaryosu, Adım 7'deki tablo/form PNG'si); gerçek taranmış tablo ve form benchmarkı yok (ileride değerlendirilebilir; Gemini transkripsiyonuyla da ölçülmedi).
+- Çok gürültülü taramalarda Tesseract (yedek) kağıt dokusunu karakter sanıp beklenenden çok daha uzun metin üretebiliyor (ölçülen en kötü durumda 349 karakterlik belgeden 4282 karakter, süre ~5×). Üretilen fazlalık apaçık çöp parçalarıdır, akıcı ama yanlış metin değildir; ölçülen durumda sınıflandırma yine doğru sonuçlandı ve 50.000 karakter sınırının %8,6'sı kullanıldı. Çok sayfalı çok kötü taramalarda süre birikebilir.
+- `TESSDATA_PREFIX` yerel `backend/.env` dosyasındadır ve Git'e girmez; yeni bir makinede acil durum OCR yedeği istenirse Tesseract kurulup bu değişken ayarlanmalıdır (`README.md` 3. adım).
+- **V1.3 Gemini transkripsiyonu (D-047) riskleri:**
+  - **Çok sayfalı PDF (çözüldü, D-047):** Tek çağrıda 5+ sayfada yalnız 1. sayfa dönüyordu. 3 sayfalık gruplarla 5–21 sayfada tüm sayfalar okundu (Adım 5).
+  - **Kalan sınırlar:**
+    - Sayfa eşiği ve 3 sayfalık grubun yeterliliği tek bir sentetik belge türüyle ölçüldü. Çok yoğun sayfalarda bir grubun yine eksik dönmesi olasıdır ve bunu yakalayan bir kontrol yoktur (yalnız boş ya da 10 karakterden kısa grup yakalanır).
+    - Gruplar sıralı okunduğu için süre sayfa sayısıyla artar: 21 sayfa 7 çağrı / ~36 sn.
+  - **Küçük ve temiz ölçüm seti:** 9 el yazısı + 8 basılı belge, çoğunlukla temiz tarama/render. Gerçek tarayıcı gürültüsü ve telefon fotoğrafı kapsamı sınırlı.
+  - **Akıcı ama yanlış okuma:** Yedek yalnız API hatası ve yetersiz metni yakalar. Gemini'nin akıcı ama yanlış transkripsiyonunu yakalayan bir kalite kapısı yoktur. Tesseract'ın çöp çıktısı göze batıyordu; akıcı ama yanlış metin daha zor fark edilir. Koruma: kullanıcı önizlemesi ve mevcut `needs_review` mantığı.
+  - **Uzun taranmış PDF süresi:**
+    - Ölçülen prepare süreleri: 12 sayfa 20 sn, 21 sayfa 36 sn (grup başına ~5 sn). 12 sayfada 2. grup başarısız olunca prepare 33 sn sürdü (1 grup + 3 deneme + 12 sayfa Tesseract).
+    - Sınırlar: Her grup çağrısının kendi 30 sn timeout'u ve 3 denemesi var. Yavaş API'de uzun belgelerde prepare, frontend'in 120 sn sınırını (D-039) aşabilir. Legacy `/classify`'da sınıflandırma süresi de eklenir.
+  - **Büyük dosyalar:** Inline istek boyutu sınırını aşan büyük dosyalar API'den kalıcı hata alır. Retry yapılmaz; Tesseract yedeğine düşer ve sonuç `needs_review` olur.
+  - **Maliyet ve gecikme:** OCR gereken belgede iki Gemini çağrısı (transkripsiyon + sınıflandırma) yapılır. Basılı belgede transkripsiyon Tesseract'tan ~2,5× yavaş.
+  - **Veri akışı:** OCR gereken belgelerde dosyanın kendisi (görüntü/PDF) Gemini'ye gönderilir.
+  - **Çıktı biçimi:** El yazısı benchmarkında iki örnekte LaTeX ok işareti ve sütun okuma sırası farkı görüldü; önizleme alanları etkilenebilir. Prompt ölçüldüğü haliyle korunuyor.
+  - **Kısa transkript:** 10 karakterden kısa transkript başarı sayılmaz ve Tesseract'a düşer. Gerçekten boş/okunmaz belgelerde bu, `422`'den önce bir Tesseract çalıştırması ekler.
 - DOCX için ZIP bomb koruması yok (V1). Doğrulama ve python-docx arşivi açarken içeriği tamamen açar; 50 MB giriş sınırı dışında ek sınır yok.
 - Endpoint upload'dan en fazla `MAX_FILE_SIZE + 1` bayt okur. Ancak Starlette/python-multipart, endpoint çalışmadan önce multipart gövdesini geçici dosyaya aktarır; yani 50 MB üstü bir yükleme yine de ağdan alınıp geçici diske yazılır. Uygulama seviyesinde gövde boyutu sınırı yok; gerçek dağıtımda sunucu/reverse proxy seviyesinde gövde sınırı konmalı.
 - Dosya gönderilmediğinde FastAPI'nin standart 422 doğrulama yanıtı (`{"detail": [...]}`) döner; bu, kabul sonrası `failed` 422 gövdesinden (`status = "failed"` + `message`) farklıdır. İkisi gövdedeki `status` alanıyla ayırt edilir (frontend böyle yapıyor); OpenAPI'de 422 için iki gövde de belgelenir (`FailedClassifyResponse`, `ValidationErrorResponse`).
-- Endpoint senkron ve thread pool'da çalışır; Gemini aşaması en kötü durumda ~93 sn bir thread'i meşgul eder. Eşzamanlı istek kapasitesi thread pool boyutuyla sınırlıdır (MVP için kabul edilebilir).
+- Endpoint senkron ve thread pool'da çalışır; her Gemini aşaması (transkripsiyon, sınıflandırma) en kötü durumda ~93 sn bir thread'i meşgul eder. Eşzamanlı istek kapasitesi thread pool boyutuyla sınırlıdır (MVP için kabul edilebilir).
 - Commit sunucuda başarılı olup istemci tarafında hata gibi görünürse (ör. bağlantı commit sırasında koparsa) dosya silinip kayıt kalabilir; nadir bir durum, MVP'de ayrıca ele alınmadı.
 - Endpoint testleri SQLite kullanır (`create_all` yalnızca testte); PostgreSQL'e özgü davranış gerçek smoke testle doğrulandı, otomatik testlerde yoktur.
 - `pytest` çalışırken Starlette/anyio kaynaklı 2 deprecation uyarısı çıkıyor (TestClient için `httpx2` önerisi); testleri etkilemiyor.
@@ -738,9 +890,9 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Kurum açıklamaları ilk taslaktır; gerçek örnek belgelerle test edilip iyileştirilmeli.
 - Katalogda olmayan birimlere ait belgeler (ör. ulaşım, veteriner hizmetleri, su/kanalizasyon) `needs_review`'a düşecektir. Bu beklenen davranıştır; sık görülürse katalog genişletilir.
 - 50.000 karakteri aşan belgelerde yalnızca ilk 50.000 karakter değerlendirilir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
-- İşlem senkron: en kötü durumda Gemini aşaması yaklaşık 93 sn sürer (3 × 30 sn timeout + 1 sn + 2 sn bekleme). Frontend ve varsa reverse proxy istek zaman aşımları bundan uzun olmalı.
+- İşlem senkron: en kötü durumda her Gemini aşaması yaklaşık 93 sn sürer (3 × 30 sn timeout + 1 sn + 2 sn bekleme). OCR gereken belgede prepare'e transkripsiyon aşaması ve gerekirse Tesseract yedeği, legacy `/classify`'a ise iki Gemini aşaması eklenir. Frontend ve varsa reverse proxy istek zaman aşımları bundan uzun olmalı.
 - Katalog dosyaları değiştirilirse görünen adlar da değişir; kataloglar modül yüklenirken okunduğu için uygulama yeniden başlatılmalıdır. Veritabanındaki eski kayıtlar ID tuttuğu için bu kayıtların adı da yeni katalogdan üretilir.
-- Frontend'in 120 sn zaman aşımı (D-039) yalnızca istemci tarafını keser; backend işlemeye devam edip kaydı yazabilir, yani kullanıcı hata görse de belge sınıflandırılmış olabilir. Ayrıca yükleme süresi 93 sn'lik en kötü duruma eklenir; sınıra yakın büyük dosyalarda 120 sn yetmeyebilir.
+- Frontend'in 120 sn zaman aşımı (D-039) yalnızca istemci tarafını keser; backend işlemeye devam edip kaydı yazabilir, yani kullanıcı hata görse de belge sınıflandırılmış olabilir. Ayrıca yükleme süresi 93 sn'lik en kötü duruma eklenir; sınıra yakın büyük dosyalarda ve transkripsiyonu zaman aşımına uğrayıp Tesseract yedeğine düşen uzun taramalarda 120 sn yetmeyebilir.
 - 50 MB sınırı D-040 gereği frontend'de de yer alıyor (`frontend/src/App.tsx` `MAX_FILE_SIZE`); sınır değişirse `file_service.MAX_FILE_SIZE` ile birlikte güncellenmelidir.
 - Frontend `ClassifyResponse` tipi backend şemasıyla elle eşleştiriliyor; otomatik sözleşme testi yok. Yanıt alanları değişirse iki taraf birlikte güncellenmelidir.
 - PDF kabulünde `%PDF` imzası dosyanın ilk baytında aranıyor. İmzadan önce ek bayt bulunan nadir gerçek PDF'ler `415` alır; manuel testte gerçek bir PDF reddedilirse ilk şüphe bu.
@@ -769,21 +921,23 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
   - **İki noktasız etiketler:** Tablo biçimli belgelerde konu etiketi iki noktasız yazıldıysa konu boş kalır. Tarih, evrak no ve gönderen etiketleri iki noktasız da okunur.
   - **Tarih yedeği:** Etiketsiz ve birden fazla farklı tarih içeren belgede tarih boş kalır.
   - **Kapsam:** Önizleme alanları yalnız görüntülemeye yöneliktir; saklanmaz ve sınıflandırmayı etkilemez.
-  - **Kalite uyarısı yok:** Düşük kaliteli OCR metni de `prepared` olur ve V1.4 bunun için uyarı vermez; bu V1.3'ün konusu.
+  - **Önizlemede kalite uyarısı yok:** Tesseract yedeğiyle hazırlanan belge `prepared` yanıtında `needs_review = true` taşır (D-046, D-047). Arayüz bunu önizlemede göstermez; işaret sınıflandırma sonucunda "İnceleme nedeni" olarak görünür. Gemini transkripsiyonundaki okuma hataları için ayrı bir kalite kapısı yoktur.
 
 ## Açık sorular
 
 İlgili geliştirme adımına başlamadan önce kullanıcıyla netleştirilir; karara bağlananlar `DECISIONS.md`'ye işlenir ve buradan silinir.
 
-- Açık soru yok. Manuel test kayıtlarının ve storage dosyalarının V1 final öncesi silinmesi kararlaştırıldı ve uygulandı; kalıcı bir ürün/teknik karar değiştirmediği için `DECISIONS.md`'ye yeni kayıt açılmadı.
+- Açık soru yok. 5+ sayfalık PDF transkripsiyonu sorusu karara bağlandı: en fazla 3 sayfalık gruplar (D-047, 2026-10-03).
+- Manuel test kayıtlarının ve storage dosyalarının V1 final öncesi silinmesi kararlaştırıldı ve uygulandı; kalıcı bir ürün/teknik karar değiştirmediği için `DECISIONS.md`'ye yeni kayıt açılmadı.
 
 ## Sıradaki geliştirme adımları
 
 **V1.4** — Adım 0–10 tamamlandı ve commit'lendi. Adım 10 konu kısalması düzeltildi (bkz. Adım 10 bulgusu). Yeni V1.4 işi açılmadı.
 
-**V1.3 (açık)** — Plan onaylandı. Sıradaki adım: pilot benchmark protokolü (yazar talimatı, sentetik içerik şablonları, manifest şeması, kriter dosyası). Pilot kriterleri dondurulduğunda V1.3 adımları bu dosyada ayrı başlık altında izlenir.
+**V1.3 (açık)** — Kod, testler (368 passed) ve gerçek ortam doğrulaması tamamlandı; dokümanlar senkron; iki commit `main`'de. Sıradaki adım: kullanıcı onayıyla push. V1.3'ün kapatılması kullanıcı kararıyla.
 
 Aşağıdakiler **açılmış iş değildir**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
 - Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi (manuel testte 05 senaryosunda görülen park/bahçeler ↔ zabıta ikilemi gibi durumlar).
+- Taranmış tablo ve form belgelerinde okuma dayanıklılığı; OCR kaynaklı özet ve gönderen bilgisinin güvenilirliği (eski V1.3 kapsamından taşındı).
 - Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication.

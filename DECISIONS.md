@@ -15,44 +15,83 @@
 
 ### D-001 — Desteklenen dosya türleri: PDF, DOC, DOCX, JPG/JPEG ve PNG
 - **Karar:** Sistem PDF, DOC, DOCX, JPG/JPEG ve PNG dosyalarını kabul eder. Metin çıkarımı türe göre ayrışır:
-  - **PDF** — gömülü metin okunur; gereken sayfalarda OCR fallback devreye girer (D-003), yani taranmış ve hybrid PDF'ler de desteklenir.
+  - **PDF** — gömülü metin okunur; güvenilir dijital metni olmayan PDF'ler (D-003) Gemini transkripsiyonuyla okunur (D-047), yani taranmış ve hybrid PDF'ler de desteklenir.
   - **DOC** — Word 97–2003 binary (OLE) belgesi; saf Python `legacy-doc` parser'ı ile doğrudan baytlardan okunur (D-002). Word, LibreOffice veya başka bir harici program gerekmez. OCR yapılmaz; gövde paragrafları ve tablo hücreleri alınır, gömülü görüntü, makro ve biçimlendirme kapsam dışıdır.
   - **DOCX** — python-docx ile okunur, OCR yapılmaz; dolayısıyla DOCX metin tabanlı olmalıdır.
-  - **JPG/JPEG/PNG** — gömülü metin aranmaz, belge tek sayfalık bir görüntü kabul edilip **doğrudan** OCR'lanır (D-042). PDF'e özgü sayfa/yapı kararları (D-003) uygulanmaz.
+  - **JPG/JPEG/PNG** — gömülü metin aranmaz; görüntünün metni **her zaman** Gemini transkripsiyonuyla okunur, gerekirse tek sayfalık belge olarak Tesseract yedeğine düşer (D-047, D-042). PDF'e özgü sayfa/yapı kararları (D-003) uygulanmaz.
   Kabulde uzantı tek başına yetmez: uzantı ile dosya imzası birlikte doğrulanır (PDF `%PDF`, DOCX ZIP + WordprocessingML, JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`); istemcinin gönderdiği content-type'a güvenilmez. DOC'ta OLE imzası (`D0 CF 11 E0 A1 B1 1A E1`) tek başına yetmez — XLS ve PPT de aynı imzayı taşır; bu yüzden OLE dizininde Word'e özgü `WordDocument` stream'i de aranır (metin çıkarmadan, yalnızca dizin okunarak). GIF, TIFF, BMP, WebP ve HEIC dahil diğer tüm türler desteklenmez ve reddedilir.
-- **Gerekçe:** Vatandaş dilekçeleri sıklıkla telefonla fotoğraflanarak veya taranarak JPG/PNG olarak geliyordu ve bu belgeler sisteme hiç alınamıyordu. Görüntüler için gereken OCR hattı taranmış PDF'ler nedeniyle zaten mevcut; yeni motor, servis veya bağımlılık gerekmeden PyMuPDF görüntüyü tek sayfalık belge olarak açıp aynı Tesseract yoluna verebiliyor. `.doc` başlangıçta kapsam dışıydı çünkü dönüştürme için Word veya LibreOffice gerekeceği varsayılmıştı; saf Python bir parser bu varsayımı ortadan kaldırdığı için kapsama alındı. Diğer görüntü formatları ise gerçek bir ihtiyaç doğmadan kapsamı genişletirdi.
+- **Gerekçe:** Vatandaş dilekçeleri sıklıkla telefonla fotoğraflanarak veya taranarak JPG/PNG olarak geliyordu ve bu belgeler sisteme hiç alınamıyordu. Görüntüler taranmış PDF'lerle aynı metin okuma yolunu kullanır (D-047); ayrı bir dosya türü hattı gerekmez. `.doc` başlangıçta kapsam dışıydı çünkü dönüştürme için Word veya LibreOffice gerekeceği varsayılmıştı; saf Python bir parser bu varsayımı ortadan kaldırdığı için kapsama alındı. Diğer görüntü formatları ise gerçek bir ihtiyaç doğmadan kapsamı genişletirdi.
 
 ### D-002 — Metin çıkarımı: PDF için PyMuPDF, DOCX için python-docx, DOC için legacy-doc
 - **Karar:** PDF metni PyMuPDF ile, DOCX metni python-docx ile, DOC (Word 97–2003) metni `legacy-doc` ile çıkarılır. Üçü de saf Python kütüphanesidir; harici program (Word, LibreOffice, antiword) çalıştırılmaz.
 - **Gerekçe:** Hızlı, yaygın kullanılan ve ek sistem bağımlılığı gerektirmeyen kütüphaneler. `legacy-doc` bağımlılıksızdır ve doğrudan baytlardan çalışır; izole ortamda Python 3.13 ile gerçek `.doc` dosyalarında doğrulandı (Türkçe karakterler korunuyor, tablo hücreleri geliyor, Word olmayan OLE dosyaları reddediliyor).
 
-### D-003 — Taranmış PDF'ler için OCR fallback (V1.1)
-- **Karar:** PDF'te OCR kararı **sayfa sayfa** verilir (teknik ayrıntı: D-042). Bir sayfa iki durumda OCR'lanır:
+### D-003 — PDF'te güvenilir dijital metin kararı: sayfa bazlı OCR koşulları (V1.1)
+- **Karar:** PDF'te metin katmanının güvenilirliği **sayfa sayfa** değerlendirilir (teknik ayrıntı: D-042). Bir sayfa iki durumda OCR gerektirir:
   1. Sayfanın kendi gömülü metni minimum uzunluğa (D-026) ulaşmıyorsa — sayfa taranmış sayılır.
   2. Sayfa **yapısal olarak görüntüye dayanıyorsa** (görüntülerin kapladığı alan sayfanın en az **%50**'si) **ve** gömülü metni **en fazla 200 karakter** ise — metin katmanı bozuk olabileceği için görüntü de okunur.
-  Diğer tüm sayfalar gömülü metniyle kalır; tamamen metin tabanlı PDF'lerde hiç OCR çağrısı yapılmaz. Sayfaların metni belge sırasıyla birleştirilir. DOCX'te OCR yapılmaz. Birleşik metin hâlâ kısaysa veya OCR kullanılamıyorsa belge `failed` olarak kaydedilir.
-- **Aynı sayfada gömülü metin + OCR:** İkinci durumda iki metin deterministik olarak karşılaştırılır (ikinci bir LLM çağrısı yoktur): gömülü metnin kelime benzeri parçalarının tamamı OCR metninde de varsa yalnızca OCR metni kullanılır (aynı içerik iki kez yazılmaz), en az biri yoksa iki metin de sayfa sırasıyla korunur (bilgi kaybı olmaz). Kelime benzeri parçası olmayan bozuk katmanlar korunacak bilgi taşımadığı için OCR metnine bırakılır.
-- **Gerekçe:** V1'de OCR kapsam dışıydı ve taranmış dilekçeler doğrudan `failed` oluyordu. Lokal OCR, ek servis ya da API maliyeti getirmeden bu belgeleri sınıflandırılabilir hale getirir; başarısız olduğunda akış V1'deki davranışa döner. Karar belge düzeyinde verildiğinde hybrid PDF'ler kaçıyordu (P1): kapak/evrak sayfasının metni eşiği geçtiği için taranmış asıl dilekçe hiç okunmuyordu. Yalnızca uzunluğa bakmak da yetmiyordu (P2): benchmark senaryo 14'te görüntü tamamen okunabilirken 26–33 karakterlik bozuk bir metin katmanı eşiği geçtiği için OCR hiç çalışmıyor ve belge `other` / `needs_review` olarak kapanıyordu; yapısal koşul eklendikten sonra aynı belge `complaint` / `temizlik_isleri` / `classified` oldu. Eşikler ölçülerek seçildi: kapsama %30–%72 ve uzunluk 100–400 aralığının tamamı 30 sayfalık korpusta sapmasız çalıştı, %50 ve 200 bu aralıkların ortasıdır. İçerik temelli "% alfabetik karakter" gibi kurallar ölçümde elendi: gerçek tarih, TCKN/VKN, sayı tablosu, madde numarası ve kısa resmi form metinlerinin çoğunu bozuk sayıyorlardı. Yapısal koşul bu metinlere hiç bakmaz, çünkü dijital sayfalarda görüntü kapsaması sıfıra yakındır.
+  - Hiçbir sayfa bu koşulları sağlamıyorsa PDF güvenilir dijital metin taşır ve tamamen gömülü metniyle okunur; Gemini transkripsiyonu veya OCR yapılmaz.
+  - En az bir sayfa sağlıyorsa PDF'in **tamamı** Gemini transkripsiyonuyla okunur: 1–3 sayfa tek çağrıda, 4+ sayfa en fazla 3 sayfalık sıralı gruplar hâlinde (D-047).
+  - Transkripsiyon başarısız veya yetersizse (tek bir grupta bile) Tesseract yedeği belgenin tamamında bu koşullarla sayfa sayfa çalışır: koşulu sağlayan sayfalar OCR'lanır, diğerleri gömülü metniyle kalır, sayfa metinleri belge sırasıyla birleştirilir.
+  - DOCX'te OCR yapılmaz. Nihai metin hâlâ kısaysa belge `failed` olarak kaydedilir.
+- **Aynı sayfada gömülü metin + OCR (Tesseract yedeği):** İkinci durumda iki metin deterministik olarak karşılaştırılır (ek LLM çağrısı yoktur): gömülü metnin kelime benzeri parçalarının tamamı OCR metninde de varsa yalnızca OCR metni kullanılır (aynı içerik iki kez yazılmaz), en az biri yoksa iki metin de sayfa sırasıyla korunur (bilgi kaybı olmaz). Kelime benzeri parçası olmayan bozuk katmanlar korunacak bilgi taşımadığı için OCR metnine bırakılır.
+- **Gerekçe:** V1.3'te OCR motoru değişti (D-047); sayfa koşulları "güvenilir dijital metin yok" kararının ölçülmüş tanımı olarak korundu. V1'de OCR kapsam dışıydı ve taranmış dilekçeler doğrudan `failed` oluyordu. Karar belge düzeyinde verildiğinde hybrid PDF'ler kaçıyordu (P1): kapak/evrak sayfasının metni eşiği geçtiği için taranmış asıl dilekçe hiç okunmuyordu. Yalnızca uzunluğa bakmak da yetmiyordu (P2): benchmark senaryo 14'te görüntü tamamen okunabilirken 26–33 karakterlik bozuk bir metin katmanı eşiği geçtiği için OCR hiç çalışmıyor ve belge `other` / `needs_review` olarak kapanıyordu; yapısal koşul eklendikten sonra aynı belge `complaint` / `temizlik_isleri` / `classified` oldu. Eşikler ölçülerek seçildi: kapsama %30–%72 ve uzunluk 100–400 aralığının tamamı 30 sayfalık korpusta sapmasız çalıştı, %50 ve 200 bu aralıkların ortasıdır. İçerik temelli "% alfabetik karakter" gibi kurallar ölçümde elendi: gerçek tarih, TCKN/VKN, sayı tablosu, madde numarası ve kısa resmi form metinlerinin çoğunu bozuk sayıyorlardı. Yapısal koşul bu metinlere hiç bakmaz, çünkü dijital sayfalarda görüntü kapsaması sıfıra yakındır.
 
-### D-042 — OCR: PyMuPDF'in yerleşik Tesseract'ı, `tur`, 400 dpi
+### D-047 — OCR gereken belgelerde Gemini multimodal transkripsiyon birincil, Tesseract acil durum yedeği (V1.3)
 - **Karar:**
-  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle **sayfa başına** yapılır: PDF'te gereken sayfalarda fallback olarak (D-003), JPG/JPEG/PNG'de ise tek sayfalık görüntünün tamamında doğrudan (D-001). `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
+  - Metin çıkarımı, belgenin güvenilir dijital metni olup olmadığına göre ayrışır:
+    - **Var** — DOC, DOCX ve D-003 koşullarının hiçbirini sağlamayan PDF'ler: mevcut yerel çıkarım (PyMuPDF, legacy-doc, python-docx). Gemini transkripsiyonu yapılmaz.
+    - **Yok** — JPG/JPEG/PNG ve en az bir sayfası D-003 koşulunu sağlayan PDF'ler (hybrid dahil): belgenin tamamı Gemini transkripsiyonuyla okunur:
+      - Görüntü ve 1–3 sayfalık PDF: dosya olduğu gibi, baytları ve MIME türüyle **tek** bir çağrıya gönderilir.
+      - 4+ sayfalık PDF: sayfa sırası korunarak en fazla **3 sayfalık** gruplara bölünür. Her grup aynı prompt ve ayarlarla ayrı bir çağrıda, sırayla okunur; ⌈sayfa / 3⌉ çağrı yapılır (21 sayfa = 7 çağrı).
+      - Grup metinleri sayfa sırasıyla birleştirilir.
+  - Her grubun (tek çağrıda belgenin) transkripsiyonu normalize edilir ve 10 karakter sınırına (D-026) tabidir. Tüm gruplar yeterliyse çıkarılan metin birleşik metindir.
+  - Herhangi bir grup 3 denemede tamamlanamazsa (D-033) **ya da** normalize metni 10 karakterden kısa kalırsa transkripsiyon başarılı sayılmaz:
+    - Kısmi Gemini sonucu kullanılmaz ve kalan gruplar gönderilmez.
+    - Mevcut Tesseract yolu (D-003, D-042) belgenin tamamında acil durum yedeği olarak çalışır:
+      - Yedeğin metni yeterliyse belge işlenmeye devam eder ama sonucu `needs_review` olur. `review_reason`, metnin yedek OCR ile okunduğunu söyleyen genel bir gerekçe taşır. İki adımlı akışta bu işaret `prepared` kayda yazılır ve sınıflandırma onu korur (D-046).
+      - Yedeğin metni de yetersizse mevcut `failed` + `422` davranışı geçerlidir (D-004, D-034). Transkripsiyon hatası `502` üretmez.
+  - Sınıflandırma, yalnız tüm gruplar başarıyla tamamlandıktan sonra (ya da yedek metinle) birleşik metin üzerinde **bir kez** çalışır.
+  - Transkripsiyon çağrısı:
+    - Model `GEMINI_MODEL`'dir; ayrı bir model değişkeni yoktur (D-031).
+    - temperature 0, 30 sn timeout, SDK retry kapalı, toplam en fazla 3 gerçek deneme (D-033). Yanıt şeması yoktur, düz metin döner.
+    - Prompt yalnız transkripsiyon ister (düzeltme, özetleme, tahmin ve yorum yasak) ve benchmarkta ölçüldüğü haliyle sabittir; değiştirilirse ölçüm tekrarlanır.
+    - Modele Tesseract çıktısı veya başka bir metin verilmez. Kısa ama boş olmayan yanıt yeniden denenmez.
+  - Transkripsiyon ve sınıflandırma ayrı çağrılardır ve birleştirilmez (D-008).
+  - Yapılmayacaklar:
+    - el yazısı dedektörü veya "belge el yazısı mı?" sınıflandırması
+    - önce Tesseract sonra Gemini düzeltmesi
+    - ek OCR modeli
+    - 3 sayfalık sabit gruplar dışında chunking; grupların paralel gönderilmesi (D-020)
+- **Gerekçe:**
+  - **El yazısı:** İnsanın rahat okuduğu gerçek Türkçe el yazısında (manuel ground truth'lu 9 örnek) Tesseract kullanılamaz kaldı: CER %37,0, WER %80,7 (macro). Gemini CER %3,9, WER %6,1 ile 9/9 örnekte hem CER hem WER'de daha iyiydi.
+  - **Basılı tarama:** 8 belgelik kontrol setinde gerileme yok. Gemini CER %0 / WER %0,24, Tesseract CER %3,8 / WER %4,5 (macro). 4 belgede iki motor eşit, 4'ünde Gemini daha iyi, hiçbirinde daha kötü değil. Gemini ~2,5× yavaş (8 belgede toplam ~24,0 sn, Tesseract ~9,7 sn).
+  - **Tek yol:** Ayrı bir el yazısı dedektörü yeni bir hata kaynağı ve karar katmanı eklerdi. Basılı belgelerde gerileme olmadığı için OCR gereken her belgede tek yol daha basit.
+  - **Yedek ve inceleme:** Tesseract'ın yedek olarak kalması, Gemini'ye ulaşılamadığında belgeyi okunur tutar. Daha zayıf bir okuma olduğu için sonucu insan incelemesine düşer.
+  - **3 sayfalık gruplar:** Gerçek ortam ölçümünde tek çağrı 2–4 sayfalık taranmış PDF'i eksiksiz okudu. 5, 6, 12 ve 21 sayfada model hata vermeden yalnız 1. sayfayı döndürdü. Yanıt boş olmadığı için bu sessiz eksik okuma yedeğe de düşmüyordu. 3 sayfa, ölçülen güvenli aralığın (≤ 4) içinde pay bırakır. Prompt grup başına değişmeden kalır, böylece ölçülmüş davranış korunur. Kısmi sonucun reddedilmesi, eksik metinle güvenli görünen bir sınıflandırmayı önler.
+  - **Ölçümün sınırları:** Set küçük (9 + 8 belge) ve çoğunlukla temiz tarama/render'lardan oluşuyor. Gerçek tarayıcı gürültüsü ve telefon fotoğrafı kapsamı sınırlı. Sayfa eşiği tek bir sentetik belge türüyle ölçüldü. Benchmark verileri repo dışında tutulur.
+  - **Veri akışı değişti:** OCR gereken belgelerde dosyanın kendisi (görüntü/PDF) Gemini'ye gönderilir; önceden yalnız çıkarılan metin gidiyordu.
+
+### D-042 — Acil durum OCR'ı: PyMuPDF'in yerleşik Tesseract'ı, `tur`, 400 dpi
+- **Karar:**
+  - Tesseract birincil OCR değildir. Yalnız Gemini transkripsiyonu başarısız olduğunda ya da yetersiz metin döndürdüğünde çalışan acil durum yedeğidir (D-047).
+  - OCR, PyMuPDF'in `get_textpage_ocr` API'siyle **sayfa başına** yapılır: PDF'te D-003 koşulunu sağlayan sayfalarda, JPG/JPEG/PNG'de tek sayfalık görüntünün tamamında. `pytesseract` veya ayrı bir `tesseract` süreci kullanılmaz; ayrı OCR servisi, kuyruk ya da soyutlama katmanı eklenmez.
   - Sayfanın "yapısal olarak görüntüye dayandığı", PyMuPDF'in `get_image_info` bilgisiyle ölçülür: sayfa dikdörtgeniyle kesişen görüntü alanlarının toplamı / sayfa alanı. Yeni kütüphane, sayfa render'ı veya ön işleme eklenmez; bu ölçüm yalnızca gömülü metni 10–200 karakter arasında olan sayfalarda yapılır.
-  - Dil `tur`, çözünürlük 400 dpi. İkisi de `file_service` içinde tek yerde sabittir. Belgeler Türkçe olduğu için İngilizce model eklenmez: gerçekçi bozulma testlerinde `tur+eng` Türkçe karakterleri daha çok kaybediyordu (özellikle `Ç→C`) ve hiçbir senaryoda öne geçmedi. Çözünürlük 300'den 400'e ölçümle çıkarıldı: font tabanlı sentetik el yazısı proxy'si, bozulmuş tarama ve basılı belgelerden oluşan 12 senaryoluk korpusta ortalama CER 0,292 → 0,237, tamamen düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru okunan rakam 14/22 → 16/22; basılı/dijital belgelerde çıkarılan metin değişmedi. Korpus gerçek insan el yazısı içermediği için bu ölçüm gerçek el yazısı performansını göstermez; gerçek el yazısı benchmarkı V1.3 kapsamındadır. 600 dpi ölçüldü ve **geri adım** attığı için (CER 0,315; form senaryosunda rakamların tamamı bozuldu) kullanılmaz. PSM/OEM ayarlanmaz: PyMuPDF'in `get_textpage_ocr` API'si bu parametreleri kabul etmez ve ayrı bir Tesseract süreci bu kararın kapsamı dışındadır.
-  - Tesseract dil dosyalarının klasörü `TESSDATA_PREFIX` ortam değişkeninden okunur ve OCR çağrısına doğrudan geçilir. Değişken **opsiyoneldir**: tanımlı değilse OCR atlanır. Kodda platforma özel kurulum yolu yazılmaz.
+  - Dil `tur`, çözünürlük 400 dpi. İkisi de `file_service` içinde tek yerde sabittir. Belgeler Türkçe olduğu için İngilizce model eklenmez: gerçekçi bozulma testlerinde `tur+eng` Türkçe karakterleri daha çok kaybediyordu (özellikle `Ç→C`) ve hiçbir senaryoda öne geçmedi. Çözünürlük 300'den 400'e ölçümle çıkarıldı: font tabanlı sentetik el yazısı proxy'si, bozulmuş tarama ve basılı belgelerden oluşan 12 senaryoluk korpusta ortalama CER 0,292 → 0,237, tamamen düşen satır 14 → 10, kayıp kritik alan 10 → 4, doğru okunan rakam 14/22 → 16/22; basılı/dijital belgelerde çıkarılan metin değişmedi. Bu korpus gerçek insan el yazısı içermiyordu. V1.3'te gerçek Türkçe el yazısıyla yapılan ölçümde Tesseract yetersiz kaldı (CER ~%37, WER ~%81) ve birincil rol Gemini transkripsiyonuna geçti (D-047). 600 dpi ölçüldü ve **geri adım** attığı için (CER 0,315; form senaryosunda rakamların tamamı bozuldu) kullanılmaz. PSM/OEM ayarlanmaz: PyMuPDF'in `get_textpage_ocr` API'si bu parametreleri kabul etmez ve ayrı bir Tesseract süreci bu kararın kapsamı dışındadır.
+  - Tesseract dil dosyalarının klasörü `TESSDATA_PREFIX` ortam değişkeninden okunur ve OCR çağrısına doğrudan geçilir. Değişken **opsiyoneldir**: tanımlı değilse yedek OCR atlanır. Kodda platforma özel kurulum yolu yazılmaz.
   - OCR hatası yükseltilmez: loglanır ve **o sayfa** gömülü metniyle değerlendirilir; diğer sayfalar etkilenmez ve mevcut `failed` + `422` davranışı korunur.
-- **Gerekçe:** PyMuPDF zaten bir bağımlılık ve Tesseract'ı derlenmiş olarak içeriyor; yeni Python paketi veya PATH'te `tesseract` binary'si gerekmiyor. OCR bir iyileştirme olduğu için başarısızlığı yeni bir hata sınıfı doğurmamalı. Ortam değişkeni, kurulum yolunun makineden makineye değişmesine izin verir.
+- **Gerekçe:** PyMuPDF zaten bir bağımlılık ve Tesseract'ı derlenmiş olarak içeriyor; yeni Python paketi veya PATH'te `tesseract` binary'si gerekmiyor. Yerel bir yedek, Gemini'ye ulaşılamadığında da belgenin okunabilmesini sağlar. OCR bir iyileştirme olduğu için başarısızlığı yeni bir hata sınıfı doğurmamalı. Ortam değişkeni, kurulum yolunun makineden makineye değişmesine izin verir.
 
 ### D-004 — Hatalı dosya ve `failed` kayıt davranışı
 - **Karar:**
   - Desteklenen türler (D-001: PDF, DOC, DOCX, JPG/JPEG, PNG) dışındaki dosyalar ve 50 MB'ı aşan dosyalar (D-028) sisteme kabul edilmez: storage'a yazılmaz, `documents` kaydı oluşturulmaz, 4xx ile reddedilir. Uzantısı doğru ama imzası uymayan dosyalar da (ör. `.png` uzantılı düz metin) kabul edilmez.
-  - Kabul edilen belgede metin çıkarımı başarısız olursa, yeterli metin çıkarılamazsa (D-026) veya Gemini çağrısı başarısız olursa (D-033) belge `status = failed` olarak kaydedilir. Görüntülerde OCR yapılandırılmamışsa, DOC parser'ı belgeyi çözemezse ya da dosya bozuk/eksikse akış aynı `failed` yoluna düşer; yeni hata sınıfı veya HTTP kodu eklenmez.
+  - Kabul edilen belgede metin çıkarımı başarısız olursa, yeterli metin çıkarılamazsa (D-026) veya Gemini sınıflandırma çağrısı başarısız olursa (D-033) belge `status = failed` olarak kaydedilir. Görüntülerde Gemini transkripsiyonu ve Tesseract yedeği yeterli metin üretemezse (D-047), DOC parser'ı belgeyi çözemezse ya da dosya bozuk/eksikse akış aynı `failed` yoluna düşer; yeni hata sınıfı veya HTTP kodu eklenmez.
   - `failed` kayıtlarında `document_type = null`, `institution_id = null`, `needs_review = false`, `review_reason = null`.
   - Teknik hata detayları kullanıcıya gösterilmez; loglanır. Kullanıcıya genel bir mesaj döner (HTTP kodları ve yanıt gövdesi: D-034).
 - **Gerekçe:** Kabul edilmeyen dosyalar gereksiz kayıt üretmez; işlenmeye alınmış belgeler izlenebilir kalır. Teknik detaylar kullanıcıya fayda sağlamaz ve sistemin iç yapısını açığa çıkarır.
 
 ### D-026 — Minimum metin uzunluğu: 10 karakter
-- **Karar:** Normalize edilmiş (ardışık boşluklar tek boşluğa indirilmiş, baş ve son boşlukları kırpılmış) metin en az 10 karakter olmalıdır. Daha kısaysa PDF'te önce OCR fallback denenir (D-003); metin yine kısaysa belge sınıflandırmaya gönderilmez ve `status = failed` kaydedilir.
+- **Karar:** Normalize edilmiş (ardışık boşluklar tek boşluğa indirilmiş, baş ve son boşlukları kırpılmış) metin en az 10 karakter olmalıdır. Aynı sınır Gemini transkripsiyonunun başarılı sayılması için de kullanılır: kısa transkript Tesseract yedeğine düşer (D-047). Nihai metin yine kısaysa belge sınıflandırmaya gönderilmez ve `status = failed` kaydedilir.
 - **Gerekçe:** Boş veya neredeyse boş belgeler için anlamsız Gemini çağrısı ve maliyet önlenir; düşük eşik kısa ama geçerli metinleri dışarıda bırakmaz.
 
 ### D-028 — Maksimum dosya boyutu: 50 MB
@@ -105,12 +144,16 @@
 ## LLM
 
 ### D-007 — LLM olarak Gemini API
-- **Karar:** Sınıflandırma Google Gemini API ile yapılır.
-- **Gerekçe:** Şemaya bağlı structured output ve enum kısıtlı çıktı desteği; hızlı ve düşük maliyetli model seçenekleri.
+- **Karar:** Sınıflandırma ve OCR gereken belgelerde metin transkripsiyonu (D-047) Google Gemini API ile yapılır.
+- **Gerekçe:** Şemaya bağlı structured output ve enum kısıtlı çıktı desteği; görüntü/PDF girdisi kabul eden multimodal model; hızlı ve düşük maliyetli model seçenekleri.
 
-### D-008 — Her belge için tek LLM çağrısı
-- **Karar:** Belge türü ve kurum aynı Gemini çağrısında belirlenir. Retry (D-033) aynı çağrının tekrarıdır, ek sınıflandırma adımı sayılmaz.
-- **Gerekçe:** Düşük gecikme ve maliyet; çok adımlı akışın getireceği karmaşıklıktan kaçınma.
+### D-008 — Belge başına tek sınıflandırma çağrısı; transkripsiyon ayrı çağrıdır
+- **Karar:**
+  - Belge türü, kurum, özet ve gönderen bilgisi tek bir Gemini sınıflandırma çağrısında belirlenir.
+  - OCR gereken belgelerde (D-047) bundan önce ayrı transkripsiyon çağrısı yapılır: görüntüde ve 1–3 sayfalık PDF'te bir, 4+ sayfalık PDF'te 3 sayfalık grup başına bir çağrı. Sınıflandırma birleşik metinle yine bir kez çalışır.
+  - Transkripsiyon ve sınıflandırma birleştirilmez: transkripsiyon yalnız metni okur, sınıflandırma yalnız çıkarılan metinle çalışır.
+  - Retry (D-033) aynı çağrının tekrarıdır, ek adım sayılmaz.
+- **Gerekçe:** Düşük gecikme ve maliyet; çok adımlı akışın getireceği karmaşıklıktan kaçınma. Transkripsiyonun ayrı kalması, çıkarılan metnin sınıflandırmadan önce önizlenip saklanmasını (D-045) ve sınıflandırma şemasının değişmemesini sağlar. Birleşik bir çağrı, ölçülmüş transkripsiyon davranışını da değiştirirdi.
 
 ### D-009 — Pydantic ile structured output
 - **Karar:** Model `document_type`, `institution_id`, `needs_review`, `review_reason` alanlarını ve D-044'teki `summary`, `sender_name`, `sender_institution` alanlarını Pydantic şemasına uygun döndürür.
@@ -128,20 +171,23 @@
 - **Gerekçe:** Maliyet ve gecikme sınırlanır; dilekçe ve başvurularda belge türü ve konu çoğunlukla metnin başında yer alır.
 
 ### D-031 — Gemini modeli ortam değişkeninden okunur, eksikse fail fast
-- **Karar:** Model adı `GEMINI_MODEL` ortam değişkeninden okunur; `.env.example` içindeki değer `gemini-3.5-flash-lite`. Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` (ve `GEMINI_API_KEY`) tanımlı değilse `app/llm/gemini_client.py` yüklenirken, yani uygulama başlangıcında, açık bir yapılandırma hatası verilir (D-035); sessizce varsayılan bir modele düşülmez.
+- **Karar:** Model adı `GEMINI_MODEL` ortam değişkeninden okunur; `.env.example` içindeki değer `gemini-3.5-flash-lite`. Aynı model transkripsiyon için de kullanılır (D-047); ayrı bir model değişkeni yoktur. Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_MODEL` (ve `GEMINI_API_KEY`) tanımlı değilse `app/llm/gemini_client.py` yüklenirken, yani uygulama başlangıcında, açık bir yapılandırma hatası verilir (D-035); sessizce varsayılan bir modele düşülmez.
 - **Gerekçe:** Sınıflandırma için hızlı ve düşük maliyetli bir model yeterli; model kod değişikliği olmadan değiştirilebilir. Eksik yapılandırma istek sırasında değil başlangıçta fark edilir ve hangi modelin kullanıldığı her zaman açıktır.
 
-### D-033 — Gemini çağrısı: 30 sn timeout, geçici hatalarda en fazla 3 deneme
+### D-033 — Gemini çağrıları: 30 sn timeout, geçici hatalarda en fazla 3 deneme
 - **Karar:**
-  - Her Gemini çağrısı için 30 saniye timeout; aynı istekle toplam en fazla 3 deneme.
-  - Retry edilir: network hataları, timeout hataları, `429`, `5xx` ve geçersiz model çıktısı. Structured output şemasına uymayan veya katalog dışı değer içeren yanıt geçici model hatası kabul edilir.
-  - Retry edilmez: `400`, `401`, `403` gibi kalıcı istemci/yapılandırma hataları. Belge hemen `status = failed` kaydedilir, `502` döner (D-034), teknik detaylar loglanır.
+  - Her Gemini çağrısı için 30 saniye timeout; aynı istekle toplam en fazla 3 deneme. Politika sınıflandırma ve transkripsiyon (D-047) çağrılarına ayrı ayrı uygulanır; 4+ sayfalık PDF'te her grup çağrısı kendi 3 denemesine sahiptir.
+  - Retry edilir: network hataları, timeout hataları, `429`, `5xx` ve geçersiz model çıktısı.
+    - Sınıflandırmada structured output şemasına uymayan veya katalog dışı değer içeren yanıt geçici model hatası kabul edilir.
+    - Transkripsiyonda boş yanıt geçersiz çıktı sayılır.
+  - Retry edilmez: `400`, `401`, `403` gibi kalıcı istemci/yapılandırma hataları.
   - Bekleme: 1. başarısız denemeden sonra 1 saniye, 2. başarısız denemeden sonra 2 saniye.
-  - 3 denemenin tamamı başarısızsa (hata veya hâlâ geçersiz çıktı) belge `status = failed` kaydedilir, kullanıcıya genel bir hata mesajıyla `502` döner (D-034), teknik detaylar loglanır; ham Gemini/API hata detayları gösterilmez.
+  - **Sınıflandırma tamamlanamazsa** (kalıcı hata ya da 3 denemenin tamamı başarısız): belge `status = failed` kaydedilir, kullanıcıya genel bir hata mesajıyla `502` döner (D-034), teknik detaylar loglanır; ham Gemini/API hata detayları gösterilmez.
+  - **Transkripsiyon tamamlanamazsa** hata yükseltilmez: belge Tesseract yedeğine düşer (D-047), `502` üretilmez.
   - Farklı bir Gemini modeline veya başka bir LLM'e fallback yoktur.
-  - Retry politikası yalnızca `classification_service` içinde uygulanır. google-genai SDK'nın kendi retry'ı kapalıdır (`HttpRetryOptions(attempts=1)`), automatic function calling kapalıdır. Her deneme tam bir gerçek HTTP isteğidir; toplam 3'ü aşmaz. SDK sürümü yükseltilirse bu davranış yeniden doğrulanmalıdır.
+  - Retry politikası yalnızca `classification_service` içinde uygulanır (sınıflandırma ve transkripsiyon fonksiyonları orada). google-genai SDK'nın kendi retry'ı kapalıdır (`HttpRetryOptions(attempts=1)`), automatic function calling kapalıdır. Her deneme tam bir gerçek HTTP isteğidir; toplam 3'ü aşmaz. SDK sürümü yükseltilirse bu davranış yeniden doğrulanmalıdır.
   - Timeout SDK'ya `HttpOptions(timeout=30_000)` olarak verilir; birim milisaniyedir.
-- **Gerekçe:** Geçici ağ/servis hatalarında ve tekrar denemede düzelebilecek geçersiz model çıktısında belge gereksiz yere `failed` olmaz; kalıcı hatalarda tekrar denemek yalnızca süreyi uzatır. Timeout ve kısa beklemeler senkron isteğin en kötü durum süresini sınırlar (Gemini aşaması ~93 sn). Fallback MVP için gereksiz karmaşıklık getirir.
+- **Gerekçe:** Geçici ağ/servis hatalarında ve tekrar denemede düzelebilecek geçersiz model çıktısında belge gereksiz yere `failed` olmaz; kalıcı hatalarda tekrar denemek yalnızca süreyi uzatır. Timeout ve kısa beklemeler senkron isteğin en kötü durum süresini sınırlar (her Gemini aşaması ~93 sn: 3 × 30 sn + 1 sn + 2 sn). Başka bir modele/LLM'e fallback MVP için gereksiz karmaşıklık getirir.
 
 ## Kataloglar
 
@@ -188,8 +234,8 @@
 ### D-019 — Yazma endpoint'leri ve operasyonel `GET /health`
 - **Karar:**
   - Kayıt **oluşturan** iki endpoint vardır. İkisi de `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası alır (D-001):
-    - `POST /api/documents/classify` — legacy / tek-adımlı sınıflandırma: kabul, metin çıkarımı, Gemini ve kayıt tek istekte yapılır. Geriye dönük uyumluluk için korunur.
-    - `POST /api/documents/prepare` — V1.4 iki adımlı akışın ilk adımı; kaydı `prepared` olarak oluşturur, Gemini çağırmaz (D-045).
+    - `POST /api/documents/classify` — legacy / tek-adımlı sınıflandırma: kabul, metin çıkarımı, Gemini sınıflandırması ve kayıt tek istekte yapılır. Geriye dönük uyumluluk için korunur.
+    - `POST /api/documents/prepare` — V1.4 iki adımlı akışın ilk adımı; kaydı `prepared` olarak oluşturur, Gemini sınıflandırması çağırmaz (D-045; OCR gereken belgede yalnız transkripsiyon, D-047).
   - Yalnızca `prepared` kayda uygulanabilen iki geçiş vardır (D-046): `POST /api/documents/{document_id}/classify` (sınıflandırma sonucunu yazar) ve `DELETE /api/documents/{document_id}/prepared` (kaydı ve dosyasını siler).
   - Kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme endpoint'i yoktur.
   - Kayıtları görüntülemeye yönelik salt okunur endpoint'ler D-043'te tanımlıdır. Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
@@ -218,14 +264,14 @@
     - `502` → Gemini ile sınıflandırma tamamlanamadı: geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen bir hata (ör. `400`/`401`/`403` ya da Gemini aşamasında beklenmeyen bir hata) oluştu.
   - Kabul sonrası dosya storage'a ya da kayıt veritabanına yazılamazsa (ör. disk hatası, veritabanı bağlantı/commit hatası) `failed` kaydı da oluşmaz: veritabanı işlemi geri alınır, bu isteğin storage dosyası (yarım yazılmışsa da) silinir ve ayrıntısız `500` (`Internal Server Error`) döner.
   - Diğer yanıtlar: başarılı sınıflandırma `200` (D-032; `status` `classified` veya `needs_review`). Kabul öncesi redlerde kayıt ve dosya oluşmaz (D-004): `413` (D-028) ve `415` (D-001) genel mesajlı `{"detail": "..."}` gövdesiyle, istek doğrulanamazsa (ör. `file` alanı yok) FastAPI'nin standart `422` gövdesiyle (`{"detail": [...]}`) döner. İki `422`, gövdedeki `status` alanıyla ayırt edilir.
-  - Bu kodlar legacy `POST /api/documents/classify` içindir. V1.4 `POST /api/documents/prepare` aynı kabul redlerini (`413`, `415`, doğrulama `422`), metin yetersizliğinde `failed` + `422` davranışını ve `500` davranışını kullanır; Gemini çağırmadığı için `502` üretmez. `POST /api/documents/{document_id}/classify` ve `DELETE /api/documents/{document_id}/prepared` kodları D-046'dadır.
+  - Bu kodlar legacy `POST /api/documents/classify` içindir. V1.4 `POST /api/documents/prepare` aynı kabul redlerini (`413`, `415`, doğrulama `422`), metin yetersizliğinde `failed` + `422` davranışını ve `500` davranışını kullanır. Gemini sınıflandırması çağırmadığı için `502` üretmez; OCR gereken belgedeki transkripsiyon hatası da `502`'ye değil Tesseract yedeğine gider (D-047). `POST /api/documents/{document_id}/classify` ve `DELETE /api/documents/{document_id}/prepared` kodları D-046'dadır.
   - Endpoint bunların dışında HTTP kodu üretmez; çerçevenin standart yanıtları (ör. çok parçalı gövde ayrıştırılamazsa `400`, yanlış HTTP metodu için `405`) endpoint çalışmadan döner. Hatanın ayrıntılı nedeni yalnızca loglanır; iç hata ayrıntısı (exception, stack trace, Gemini/kütüphane mesajı) yanıta girmez.
 - **Gerekçe:** Dışarıdan hata ayrımı basit kalır: sorun belgede mi yoksa sınıflandırma servisinde mi, HTTP kodundan anlaşılır. İstemci `failed` kaydının kimliğini alır; teknik hata detayları yanıta girmez. `500` bilinçli bir hata sınıfı değildir; kaydın yazılamadığı beklenmeyen durumda yarım kayıt veya yetim dosya bırakılmaz.
 
 ### D-044 — Özet ve gönderen bilgisi aynı Gemini çağrısında (V1.2)
 - **Karar:**
   - Sınıflandırma çıktısına üç alan eklenir: `summary` (belgenin amacını ve konusunu anlatan 1-3 kısa Türkçe cümle, her zaman dolu), `sender_name` ve `sender_institution` (yalnızca belgede açıkça yazıyorsa dolu, aksi hâlde `null`).
-  - Bu alanlar **mevcut tek sınıflandırma çağrısından** gelir (D-008); ikinci bir LLM çağrısı, ayrı bir çıkarım adımı, agent veya RAG eklenmez. Retry/timeout politikası (D-033) değişmez.
+  - Bu alanlar **mevcut sınıflandırma çağrısından** gelir (D-008); özet veya gönderen için ayrı bir LLM çağrısı, ayrı bir çıkarım adımı, agent veya RAG eklenmez. Retry/timeout politikası (D-033) değişmez.
   - Model tahmin etmez: gönderen kişi/kurum açıkça yazmıyorsa `null` verir. Belgenin muhatabı olan belediye/müdürlük gönderen kurum sayılmaz.
   - Boş veya yalnızca boşluktan oluşan `summary` geçersiz model çıktısıdır ve D-033'e göre retry edilir.
   - `documents` tablosuna üç nullable TEXT kolonu eklenir (`summary`, `sender_name`, `sender_institution`); migration `cedf33674167`. Nullable olmaları migration öncesi kayıtlarla uyum içindir. `failed` kayıtlarda üçü de `null` kalır.
@@ -235,10 +281,10 @@
 ### D-045 — Hazırla → önizle → sınıflandır akışı (V1.4)
 - **Karar:**
   - V1.4 arayüzü bir belgeyi iki adımda işler:
-    1. `POST /api/documents/prepare` dosyayı kabul eder (D-001, D-028), storage'a yazar ve metni çıkarır/OCR'lar; kayıt `status = prepared` olur.
-    2. Kullanıcı önizleyip onaylarsa `POST /api/documents/{document_id}/classify`, kayıttaki `extracted_text` ile tek bir Gemini çağrısı yapar (D-008, D-033).
-  - Aynı dosya için metin çıkarımı/OCR yalnızca bir kez yapılır; sınıflandırma adımı dosyayı yeniden okumaz.
-  - V1.4 frontend prepare → preview → classify akışında Gemini yalnız kullanıcı önizlemesi ve onayından sonra çağrılır. Mevcut `POST /api/documents/classify` geriye dönük uyumluluk için korunur ve tek-adımlı doğrudan sınıflandırma davranışını sürdürür. Yeni frontend bu legacy akışı kullanmaz.
+    1. `POST /api/documents/prepare` dosyayı kabul eder (D-001, D-028), storage'a yazar ve metni çıkarır (OCR gereken belgede Gemini transkripsiyonu, gerekirse Tesseract yedeği; D-047); kayıt `status = prepared` olur.
+    2. Kullanıcı önizleyip onaylarsa `POST /api/documents/{document_id}/classify`, kayıttaki `extracted_text` ile tek bir Gemini sınıflandırma çağrısı yapar (D-008, D-033).
+  - Aynı dosya için metin çıkarımı/transkripsiyon/OCR yalnızca bir kez yapılır; sınıflandırma adımı dosyayı yeniden okumaz.
+  - V1.4 frontend prepare → preview → classify akışında Gemini sınıflandırması yalnız kullanıcı önizlemesi ve onayından sonra çağrılır. OCR gereken belgelerde prepare aşamasında yalnız transkripsiyon çağrısı yapılır (D-047). Mevcut `POST /api/documents/classify` geriye dönük uyumluluk için korunur ve tek-adımlı doğrudan sınıflandırma davranışını sürdürür. Yeni frontend bu legacy akışı kullanmaz.
   - Prepare'de kabul redleri ve metin yetersizliği bugünkü sözleşmeyle aynıdır: `413`/`415`'te kayıt ve dosya oluşmaz; metin yetersizse `failed` kaydı + `422` döner (D-004, D-034). Başarılı prepare yanıtı, `GET /api/documents/{document_id}` detay yanıtıyla aynı şekildedir (`status = prepared`, `extracted_text` dahil, `file_reference` yok); yeni yanıt şeması eklenmez.
   - Arayüz:
     - Çoklu seçim ve sürükle-bırak; listede en fazla 5 dosya (D-040).
@@ -247,11 +293,12 @@
     - Orijinal belge (PDF ve JPG/JPEG/PNG) ile ham çıkarılan metin yardımcı görünümlerdir. Orijinal belge kullanıcının tarayıcısındaki dosyadan ayrı bir pencerede gösterilir ve yalnızca backend imza doğrulamasından geçmiş dosyalarda açılır; sunucuda ayrı bir önizleme endpoint'i yoktur.
     - DOC/DOCX'te yapılandırılmış önizleme ve çıkarılan metin gösterilir; Word render'ı, dönüştürücü veya yeni bağımlılık eklenmez.
   - İşleme sıralıdır: istemci aynı anda tek bir prepare veya classify isteği gönderir. Worker, kuyruk veya paralel işleme yoktur (D-020). Bir dosyanın hatası diğerlerinin işlenmesini durdurmaz.
-- **Gerekçe:** Kullanıcı analize gönderdiği belgenin doğru belge olduğunu Gemini çalışmadan önce görebilmelidir. Önizleme için ayrı bir yükleme veya ikinci bir OCR, süreyi uzatır ve önizlenen metinle sınıflandırılan metnin ayrışmasına yol açabilir. Mevcut `documents` tablosu ve düz metin `status` alanı ara durumu migration gerektirmeden taşıyabilir. Tek-adımlı endpoint, mevcut entegrasyonları bozmamak için korunur. Büyük bir PDF/görüntü görüntüleyicisi yerine okunur bir form, belgenin doğru olup olmadığını daha hızlı gösterir ve DOC/DOCX'te de aynı biçimde çalışır. Tarayıcı dosyanın baytlarına zaten sahip olduğundan orijinal belge için sunucuda yeni bir dosya sunma yüzeyi açılmaz.
+- **Gerekçe:** Kullanıcı analize gönderdiği belgenin doğru belge olduğunu Gemini sınıflandırması çalışmadan önce görebilmelidir. Önizleme için ayrı bir yükleme veya ikinci bir OCR, süreyi uzatır ve önizlenen metinle sınıflandırılan metnin ayrışmasına yol açabilir. Mevcut `documents` tablosu ve düz metin `status` alanı ara durumu migration gerektirmeden taşıyabilir. Tek-adımlı endpoint, mevcut entegrasyonları bozmamak için korunur. Büyük bir PDF/görüntü görüntüleyicisi yerine okunur bir form, belgenin doğru olup olmadığını daha hızlı gösterir ve DOC/DOCX'te de aynı biçimde çalışır. Tarayıcı dosyanın baytlarına zaten sahip olduğundan orijinal belge için sunucuda yeni bir dosya sunma yüzeyi açılmaz.
 
 ### D-046 — `prepared` kayıt yaşam döngüsü (V1.4)
 - **Karar:**
-  - **Tutulduğu yer:** `prepared` kayıt `documents` tablosunda tutulur; ayrı tablo, staging alanı veya migration yoktur. Sınıflandırma alanları `null`, `needs_review = false`, `created_at` hazırlık anıdır. Kayıt `GET /api/documents` listesinde görünmez (D-043); detay ve indirme ID ile çalışır.
+  - **Tutulduğu yer:** `prepared` kayıt `documents` tablosunda tutulur; ayrı tablo, staging alanı veya migration yoktur. Sınıflandırma alanları `null`, `created_at` hazırlık anıdır. Kayıt `GET /api/documents` listesinde görünmez (D-043); detay ve indirme ID ile çalışır.
+  - **Yedek OCR işareti:** `prepared` kayıtta `needs_review = false`'tur. Tek istisna, metni Tesseract yedeğiyle çıkarılan belgedir (D-047): `needs_review = true` ve `review_reason` yedek OCR gerekçesini taşır. Sınıflandırma bu işareti korur, sonuç `needs_review` olur ve model gerekçesi varsa yedek OCR gerekçesine eklenir. Sınıflandırma başarısız olursa işaret temizlenir (D-004).
   - **Sınıflandırma (`POST /api/documents/{document_id}/classify`):** Yalnızca `prepared` durumdaki ve orijinal dosyası storage'da mevcut olan kayıtta çalışır.
     - Kayıt yoksa `404`.
     - Kayıt `prepared` değilse ya da orijinal dosya storage'da yoksa `409` döner; Gemini ve metin çıkarımı çağrılmaz, kayıt değişmez. Böylece orijinali indirilemeyen bir sonuç kaydı oluşmaz. Storage yolu yanıtta ve logda yer almaz.
@@ -272,14 +319,14 @@
 ### D-020 — Senkron işleme
 - **Karar:**
   - Her istek kendi işini aynı istek içinde tamamlayıp sonucu döndürür; kuyruk veya arka plan işi yoktur.
-  - Legacy `POST /api/documents/classify` dosyayı kaydetme, metin çıkarımı, Gemini çağrısı (retry dahil) ve veritabanı kaydını tek istekte yapar.
-  - V1.4 akışında aynı iş iki senkron isteğe bölünür: `prepare` (kaydetme + metin çıkarımı) ve `/{document_id}/classify` (Gemini + sonucun yazılması) (D-045).
+  - Legacy `POST /api/documents/classify` dosyayı kaydetme, metin çıkarımı (gerekirse Gemini transkripsiyonu), Gemini sınıflandırma çağrısı (retry dahil) ve veritabanı kaydını tek istekte yapar.
+  - V1.4 akışında aynı iş iki senkron isteğe bölünür: `prepare` (kaydetme + metin çıkarımı/transkripsiyon) ve `/{document_id}/classify` (Gemini sınıflandırması + sonucun yazılması) (D-045).
   - Birden fazla belge istemcide sırayla işlenir; worker, kuyruk veya paralel işleme eklenmez.
 - **Gerekçe:** "API sonucu döndürür" akışının en basit karşılığı. Paralellik ölçüm ve somut ihtiyaç olmadan eklenmez; sıralı işleme OCR'ın CPU yükünü ve Gemini çağrılarını öngörülebilir tutar.
 
 ### D-021 — Agent sistemi kullanılmayacak
 - **Karar:** LangGraph dahil agent veya çok adımlı LLM orkestrasyonu yok.
-- **Gerekçe:** Görev tek çağrılık bir sınıflandırma; agent yapısı gereksiz karmaşıklık ve maliyet getirir.
+- **Gerekçe:** Görev bir sınıflandırma çağrısı ve gerektiğinde tek amaçlı bir transkripsiyon çağrısından ibaret (D-008); agent yapısı gereksiz karmaşıklık ve maliyet getirir.
 
 ### D-022 — RAG kullanılmayacak
 - **Karar:** Retrieval-augmented generation yok; kataloglar doğrudan prompt'a eklenir.
@@ -309,7 +356,7 @@
 
 ### D-039 — Frontend istek zaman aşımı: 120 saniye
 - **Karar:** Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma) için ayrı ayrı 120 saniye zaman aşımı uygular. Süre dolarsa istek iptal edilir ve kullanıcıya genel bir hata mesajı gösterilir.
-- **Gerekçe:** Senkron akışın en kötü durumu yaklaşık 93 saniyedir (D-033); 120 saniye bunun üzerine pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir. Sınıflandırmada bu durum, D-046'daki `409` → detay okuma akışıyla kurtarılır.
+- **Gerekçe:** Sınıflandırma isteğinin en kötü durumu yaklaşık 93 saniyedir (D-033). OCR gereken belgede prepare'in en kötü durumu, başarılı transkripsiyon gruplarının süresine başarısız grubun ~93 sn'si ve Tesseract yedeğinin süresi eklenerek bulunur; 120 saniyeye yaklaşabilir (D-047). 120 saniye bu durumlara pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir. Sınıflandırmada bu durum, D-046'daki `409` → detay okuma akışıyla kurtarılır.
 
 ### D-040 — Frontend'de dosya ön kontrolü ve en fazla 5 dosya; otorite backend'de
 - **Karar:**
