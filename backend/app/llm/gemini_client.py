@@ -1,7 +1,7 @@
 """google-genai SDK için ince sarmalayıcı: tek istek, 30 sn timeout.
 
 Retry politikası (D-033) yalnızca classification_service içinde yönetilir. SDK'nın kendi retry'ı
-kapalıdır (attempts=1); böylece generate_json'ın her çağrısı tam olarak bir gerçek HTTP isteğidir.
+kapalıdır (attempts=1); böylece generate_json'ın ve transcribe'ın her çağrısı tam olarak bir gerçek HTTP isteğidir.
 """
 
 from google import genai
@@ -35,6 +35,22 @@ def generate_json(prompt: str, response_schema: type[BaseModel]) -> str | None:
             response_schema=response_schema,
             temperature=0,
             # Tool kullanılmıyor; AFC döngüsü kapalı tutulur, her çağrı tek istek olarak kalır.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        ),
+    )
+    return response.text
+
+
+def transcribe(data: bytes, mime_type: str, prompt: str) -> str | None:
+    """Dosyayı MIME türüyle satır içi gönderen tek bir generate_content isteği yapar; modelin düz metnini döndürür (D-047).
+
+    Yanıt şeması yoktur. SDK hataları (google.genai.errors.APIError, httpx ağ/timeout hataları) olduğu gibi yükselir.
+    """
+    response = _client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[types.Part.from_bytes(data=data, mime_type=mime_type), prompt],
+        config=types.GenerateContentConfig(
+            temperature=0,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )

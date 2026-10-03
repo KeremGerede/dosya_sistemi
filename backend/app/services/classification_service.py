@@ -1,7 +1,7 @@
-"""Gemini ile belge türü ve kurum sınıflandırması (D-007–D-010, D-027, D-033).
+"""Gemini ile belge türü ve kurum sınıflandırması (D-007–D-010, D-027, D-033) ve OCR transkripsiyonu (D-047).
 
 HTTP yanıtı üretmez, veritabanına yazmaz. Sınıflandırma tamamlanamazsa ClassificationError yükselir;
-API katmanı bunu failed + 502'ye eşler.
+API katmanı bunu failed + 502'ye eşler. Transkripsiyon tamamlanamazsa None döner; API katmanı Tesseract yedeğine geçer.
 """
 
 import json
@@ -65,6 +65,25 @@ Belge metni:
 <belge>
 {text}
 </belge>"""
+
+# V1.3 benchmarkında ölçülen prompt; birebir korunur, değiştirilirse ölçüm tekrarlanır (D-047).
+TRANSCRIPTION_PROMPT = """Bu bir OCR/transkripsiyon görevidir.
+
+Belgede görünen okunabilir Türkçe metni olduğu gibi aktar.
+
+Kurallar:
+- Metni düzeltme.
+- Yazım veya dilbilgisi hatalarını düzeltme.
+- Eksik kelimeleri tahmin etme.
+- Özetleme yapma.
+- Açıklama veya yorum ekleme.
+- Belgedeki anlamı yeniden yazma.
+- Okuyamadığın kısmı uydurma.
+- Madde işareti, yıldız, çizgi gibi görsel biçimlendirme işaretlerinin birebir korunması önemli değildir.
+- Asıl amaç kelimelerin ve cümlelerin doğru aktarılmasıdır.
+- Mümkün olduğunca satır/paragraf yapısını koru.
+- Yalnızca transkripsiyon çıktısını döndür.
+"""
 
 
 class ClassificationError(Exception):
@@ -133,6 +152,30 @@ def classify_text(text: str) -> ClassificationResult:
             )
             if not retry:
                 raise ClassificationError("Belge Gemini ile sınıflandırılamadı.") from exc
+            time.sleep(RETRY_DELAYS_SECONDS[attempt - 1])
+
+
+def transcribe_document(content: bytes, mime_type: str) -> str | None:
+    """Dosyanın metnini tek bir Gemini transkripsiyon çağrısıyla okur (D-047); D-033'e göre en fazla 3 gerçek deneme.
+
+    Boş yanıt geçersiz çıktı sayılır ve yeniden denenir; uzunluk kontrolü çağırana aittir. Tamamlanamazsa hata
+    yükseltmez, None döner: çağıran Tesseract yedeğine geçer. Transkript ve dosya içeriği loglanmaz.
+    """
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            transcript = gemini_client.transcribe(content, mime_type, TRANSCRIPTION_PROMPT)
+            if not transcript or not transcript.strip():
+                raise InvalidModelOutputError("Model boş transkripsiyon döndürdü.")
+            return transcript
+        except Exception as exc:
+            retry = _is_retryable(exc) and attempt < MAX_ATTEMPTS
+            logger.warning(
+                "Gemini transkripsiyon denemesi %d/%d başarısız (%s%s, %s).",
+                attempt, MAX_ATTEMPTS, type(exc).__name__, _log_detail(exc),
+                "yeniden denenecek" if retry else "yeniden denenmeyecek",
+            )
+            if not retry:
+                return None
             time.sleep(RETRY_DELAYS_SECONDS[attempt - 1])
 
 

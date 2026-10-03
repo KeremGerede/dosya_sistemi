@@ -95,6 +95,36 @@ def gemini_must_not_be_called_unexpectedly(monkeypatch):
     monkeypatch.setattr(classification_service, "classify_text", unexpected_classify_text)
 
 
+class FakeTranscription:
+    """classification_service.transcribe_document yerine geçer; çağrıları MIME türü ve gönderilen içerikle kaydeder.
+
+    `result` her çağrıda döner; liste verilirse çağrı sırasıyla (grup başına) döner.
+    """
+
+    def __init__(self):
+        self.result = None
+        self.calls = []
+        self.contents = []
+
+    def __call__(self, content, mime_type):
+        self.calls.append(mime_type)
+        self.contents.append(content)
+        if isinstance(self.result, list):
+            return self.result[len(self.calls) - 1]
+        return self.result
+
+
+@pytest.fixture(autouse=True)
+def transcription(monkeypatch):
+    """Testler ağa çıkmaz. Varsayılan: Gemini transkripsiyonu tamamlanamaz (None) → Tesseract yedeği (D-047).
+
+    Başarılı transkripsiyon için testte `transcription.result = metin` atanır.
+    """
+    fake = FakeTranscription()
+    monkeypatch.setattr(classification_service, "transcribe_document", fake)
+    return fake
+
+
 @pytest.fixture
 def fake_classify(monkeypatch):
     """classification_service.classify_text'i sahte bir sonuç veya exception ile değiştirir; gelen metinleri kaydeder."""
@@ -736,9 +766,10 @@ def fake_image_ocr(monkeypatch):
     "file_name, image_format, expected_type",
     [("foto.jpg", "jpeg", "jpg"), ("foto.jpeg", "jpeg", "jpeg"), ("foto.png", "png", "png")],
 )
-def test_image_upload_is_classified(client, fake_classify, fake_image_ocr, session_factory, storage_dir,
+def test_image_upload_is_classified(client, fake_classify, fake_image_ocr, transcription, session_factory, storage_dir,
                                     file_name, image_format, expected_type):
     fake_image_ocr()
+    transcription.result = IMAGE_TEXT  # birincil yol: Gemini transkripsiyonu (D-047)
     calls = fake_classify(classification())
 
     response = upload(client, file_name, make_image(image_format=image_format))
@@ -993,10 +1024,12 @@ def failing_commit(session_factory):
     ids=["pdf", "docx", "doc", "png"],
 )
 def test_prepare_stores_file_and_text_without_calling_gemini(
-    client, session_factory, storage_dir, fake_image_ocr, caplog, file_name, content, file_type
+    client, session_factory, storage_dir, fake_image_ocr, transcription, caplog, file_name, content, file_type
 ):
-    # Gemini çağrılırsa autouse gemini_must_not_be_called_unexpectedly fixture'ı testi düşürür.
+    # Gemini sınıflandırması çağrılırsa autouse gemini_must_not_be_called_unexpectedly fixture'ı testi düşürür.
+    # Görüntünün metni transkripsiyonla okunur (D-047); dijital belgelerde transkripsiyon çağrılmaz.
     fake_image_ocr()
+    transcription.result = IMAGE_TEXT
 
     with caplog.at_level(logging.DEBUG):
         response = prepare(client, file_name, content)
@@ -1517,3 +1550,318 @@ def test_expired_prepared_document_is_only_cleaned_by_prepare(client, session_fa
 
     prepare(client, "yeni.pdf", make_pdf(PDF_TEXT))
     assert stored_document(session_factory, expired.id) is None
+
+
+# --- V1.3: Gemini transkripsiyonu birincil, Tesseract acil durum yedeği (D-047) ---
+
+TRANSCRIPT_TEXT = f"Sayın Başkanlığa, sokağımızdaki çöpler toplanmıyor. {SECRET_MARKER}"
+TESSERACT_TEXT = f"Sayin Baskanliga, sokagimizdaki copler toplanmiyor. {SECRET_MARKER}"
+OCR_FALLBACK_REASON = "Belge metni yedek OCR ile okundu; okuma hataları olabileceği için kontrol edilmelidir."
+
+
+def make_hybrid_pdf(cover: str) -> bytes:
+    """Metinli kapak sayfası + metin katmanı olmayan (taranmış gibi) ikinci sayfa."""
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text((72, 72), cover)
+        pdf.new_page()
+        return pdf.tobytes()
+
+
+@pytest.fixture
+def tesseract(monkeypatch):
+    """Tesseract yedeğini (_ocr_page_text) sabit metinle değiştirir; OCR'lanan sayfa numaralarını kaydeder."""
+    def install(text=TESSERACT_TEXT):
+        pages = []
+
+        def fake(page):
+            pages.append(page.number)
+            return text
+
+        monkeypatch.setattr(file_service, "_ocr_page_text", fake)
+        return pages
+
+    return install
+
+
+@pytest.mark.parametrize(
+    "file_name, content, mime_type",
+    [
+        ("foto.png", make_image(image_format="png"), "image/png"),
+        ("foto.jpg", make_image(), "image/jpeg"),
+        ("tarama.pdf", make_pdf(""), "application/pdf"),
+        ("hybrid.pdf", make_hybrid_pdf("EVRAK KAYIT FORMU Bu belge kayit sistemine alinmistir."), "application/pdf"),
+    ],
+    ids=["png", "jpg", "scanned-pdf", "hybrid-pdf"],
+)
+def test_document_without_reliable_text_uses_gemini_transcription_without_tesseract(
+    client, session_factory, transcription, tesseract, fake_classify, caplog, file_name, content, mime_type
+):
+    transcription.result = f"  {TRANSCRIPT_TEXT}\n"
+    pages = tesseract()
+    calls = fake_classify(classification())
+
+    with caplog.at_level(logging.DEBUG):
+        response = upload(client, file_name, content)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("classified", False, None)
+    assert transcription.calls == [mime_type]  # dosyanın tamamı için tek transkripsiyon çağrısı
+    assert pages == []  # Tesseract yedeği çalışmadı
+    [document] = all_documents(session_factory)
+    assert document.extracted_text == TRANSCRIPT_TEXT  # normalize edilmiş transkript
+    assert calls == [TRANSCRIPT_TEXT]  # ayrı sınıflandırma çağrısı (D-008)
+    assert SECRET_MARKER not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "file_name, content",
+    [("dilekce.pdf", make_pdf(PDF_TEXT)), ("dilekce.docx", make_docx(DOCX_TEXT)), ("dilekce.doc", DOC_FIXTURE.read_bytes())],
+    ids=["text-pdf", "docx", "doc"],
+)
+def test_documents_with_reliable_digital_text_are_never_transcribed(client, transcription, fake_classify, file_name, content):
+    transcription.result = TRANSCRIPT_TEXT
+    fake_classify(classification())
+
+    response = upload(client, file_name, content)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "classified"
+    assert transcription.calls == []
+
+
+@pytest.mark.parametrize("transcript", [None, "abc", "   kısa   "], ids=["failed", "short", "short-whitespace"])
+def test_failed_or_short_transcription_falls_back_to_tesseract_and_needs_review(
+    client, session_factory, transcription, tesseract, fake_classify, caplog, transcript
+):
+    transcription.result = transcript
+    pages = tesseract()
+    calls = fake_classify(classification())  # model belgeyi güvenle sınıflandırsa da sonuç incelemeye düşer
+
+    with caplog.at_level(logging.DEBUG):
+        response = upload(client, "foto.png", make_image(image_format="png"))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("needs_review", True, OCR_FALLBACK_REASON)
+    assert (body["document_type"], body["institution_id"]) == (DOCUMENT_TYPE, INSTITUTION)  # model önerisi korunur
+    assert transcription.calls == ["image/png"]  # API katmanında yeniden deneme yok
+    assert pages == [0]
+    [document] = all_documents(session_factory)
+    assert (document.status, document.needs_review, document.review_reason) == ("needs_review", True, OCR_FALLBACK_REASON)
+    assert document.extracted_text == TESSERACT_TEXT
+    assert calls == [TESSERACT_TEXT]
+    assert SECRET_MARKER not in caplog.text
+    assert "Tesseract" in caplog.text  # yedeğe geçiş loglanır (yalnız belge kimliği ve neden)
+
+
+def test_fallback_reason_is_combined_with_model_review_reason(client, transcription, tesseract, fake_classify):
+    tesseract()
+    fake_classify(classification(needs_review=True))
+
+    body = upload(client, "foto.png", make_image(image_format="png")).json()
+
+    assert (body["status"], body["institution_id"]) == ("needs_review", None)
+    assert body["review_reason"] == f"{OCR_FALLBACK_REASON} Kurum belirsiz."
+
+
+@pytest.mark.parametrize("transcript", [None, "abc"], ids=["failed", "short"])
+def test_short_tesseract_fallback_text_is_failed_with_422(client, session_factory, transcription, tesseract, transcript):
+    transcription.result = transcript
+    tesseract("kısa")
+
+    response = upload(client, "foto.png", make_image(image_format="png"))
+
+    assert response.status_code == 422
+    body = response.json()
+    assert (body["status"], body["message"], body["needs_review"], body["review_reason"]) == (
+        "failed", TEXT_FAILED_MESSAGE, False, None,
+    )
+    [document] = all_documents(session_factory)
+    assert (document.status, document.needs_review, document.review_reason) == ("failed", False, None)
+    assert document.extracted_text == "kısa"
+
+
+def test_fallback_then_classification_error_returns_502_without_review_flag(
+    client, session_factory, transcription, tesseract, fake_classify
+):
+    tesseract()
+    fake_classify(classification_error())
+
+    response = upload(client, "foto.png", make_image(image_format="png"))
+
+    assert response.status_code == 502
+    body = response.json()
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("failed", False, None)
+    [document] = all_documents(session_factory)
+    assert (document.status, document.needs_review, document.review_reason) == ("failed", False, None)
+    assert document.extracted_text == TESSERACT_TEXT
+
+
+def test_prepare_with_fallback_marks_prepared_record_and_classify_keeps_it(
+    client, session_factory, transcription, tesseract, fake_classify
+):
+    tesseract()
+
+    prepared = prepare(client, "foto.png", make_image(image_format="png"))
+
+    # Prepare'de Gemini sınıflandırması yok (autouse guard); yedek OCR işareti prepared kayıtta taşınır (D-046).
+    assert prepared.status_code == 200
+    body = prepared.json()
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("prepared", True, OCR_FALLBACK_REASON)
+    assert body["extracted_text"] == TESSERACT_TEXT
+    document_id = body["document_id"]
+
+    calls = fake_classify(classification())
+    response = client.post(classify_url(document_id))
+
+    assert response.status_code == 200
+    result = response.json()
+    assert (result["status"], result["needs_review"], result["review_reason"]) == ("needs_review", True, OCR_FALLBACK_REASON)
+    assert result["institution_id"] == INSTITUTION
+    assert calls == [TESSERACT_TEXT]
+    document = stored_document(session_factory, document_id)
+    assert (document.status, document.needs_review, document.review_reason) == ("needs_review", True, OCR_FALLBACK_REASON)
+
+
+def test_prepare_with_good_transcription_is_not_marked_for_review(client, transcription, tesseract, fake_classify):
+    transcription.result = TRANSCRIPT_TEXT
+    pages = tesseract()
+
+    body = prepare(client, "foto.jpg", make_image()).json()
+
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("prepared", False, None)
+    assert body["extracted_text"] == TRANSCRIPT_TEXT
+    assert pages == []
+    fake_classify(classification())
+    assert client.post(classify_url(body["document_id"])).json()["status"] == "classified"
+
+
+def test_classify_prepared_fallback_document_error_clears_review_flag(
+    client, session_factory, transcription, tesseract, fake_classify
+):
+    tesseract()
+    document_id = prepare(client, "foto.png", make_image(image_format="png")).json()["document_id"]
+    fake_classify(classification_error())
+
+    response = client.post(classify_url(document_id))
+
+    assert response.status_code == 502
+    assert (response.json()["needs_review"], response.json()["review_reason"]) == (False, None)
+    document = stored_document(session_factory, document_id)
+    assert (document.status, document.needs_review, document.review_reason) == ("failed", False, None)
+
+
+# --- V1.3: 4+ sayfalık PDF en fazla 3 sayfalık gruplar hâlinde okunur (D-047) ---
+
+GROUP_TEXTS = [f"Grup {number} metni: sayfalar okundu. {SECRET_MARKER}" for number in (1, 2, 3)]
+
+
+def make_scanned_pdf(pages: int) -> bytes:
+    """Metin katmanı yetersiz (taranmış gibi) sayfalar; sırayı izlemek için her sayfada 10 karakterden kısa işaret."""
+    with pymupdf.open() as pdf:
+        for number in range(1, pages + 1):
+            pdf.new_page().insert_text((72, 72), f"S{number}")
+        return pdf.tobytes()
+
+
+def part_pages(content: bytes) -> list[str]:
+    with pymupdf.open(stream=content, filetype="pdf") as pdf:
+        return [page.get_text().strip() for page in pdf]
+
+
+def test_long_pdf_is_transcribed_in_ordered_groups_and_classified_once(
+    client, session_factory, transcription, tesseract, fake_classify, caplog
+):
+    transcription.result = list(GROUP_TEXTS)
+    pages = tesseract()
+    calls = fake_classify(classification())
+
+    with caplog.at_level(logging.DEBUG):
+        response = upload(client, "uzun.pdf", make_scanned_pdf(7))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("classified", False, None)
+    assert transcription.calls == ["application/pdf"] * 3  # ⌈7 / 3⌉ grup
+    assert [part_pages(part) for part in transcription.contents] == [["S1", "S2", "S3"], ["S4", "S5", "S6"], ["S7"]]
+    combined = " ".join(GROUP_TEXTS)  # sayfa sırasıyla birleşik metin
+    [document] = all_documents(session_factory)
+    assert document.extracted_text == combined
+    assert calls == [combined]  # sınıflandırma birleşik metinle bir kez
+    assert pages == []
+    assert SECRET_MARKER not in caplog.text
+
+
+def test_pdf_with_three_pages_is_sent_unchanged_in_one_call(client, transcription, fake_classify):
+    content = make_scanned_pdf(3)
+    transcription.result = GROUP_TEXTS[0]
+    fake_classify(classification())
+
+    assert upload(client, "uc_sayfa.pdf", content).json()["status"] == "classified"
+    assert transcription.contents == [content]
+
+
+@pytest.mark.parametrize("failing_group", [None, "abc"], ids=["failed", "short"])
+def test_failed_or_short_group_falls_back_to_tesseract_for_the_whole_document(
+    client, session_factory, transcription, tesseract, fake_classify, failing_group
+):
+    transcription.result = [GROUP_TEXTS[0], failing_group, GROUP_TEXTS[2]]
+    pages = tesseract()
+    calls = fake_classify(classification())
+
+    response = upload(client, "uzun.pdf", make_scanned_pdf(7))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("needs_review", True, OCR_FALLBACK_REASON)
+    assert len(transcription.calls) == 2  # başarısız gruptan sonra kalan grup gönderilmez
+    assert pages == list(range(7))  # Tesseract yedeği belgenin tamamında
+    [document] = all_documents(session_factory)
+    assert document.extracted_text == " ".join([TESSERACT_TEXT] * 7)
+    assert "Grup 1" not in document.extracted_text  # kısmi Gemini sonucu kullanılmaz
+    assert calls == [document.extracted_text]
+
+
+def test_prepare_long_pdf_with_failed_group_marks_prepared_record_for_review(
+    client, session_factory, transcription, tesseract, fake_classify
+):
+    transcription.result = [GROUP_TEXTS[0], None]
+    tesseract()
+
+    body = prepare(client, "uzun.pdf", make_scanned_pdf(5)).json()
+
+    assert (body["status"], body["needs_review"], body["review_reason"]) == ("prepared", True, OCR_FALLBACK_REASON)
+    fake_classify(classification())
+    result = client.post(classify_url(body["document_id"])).json()
+    assert (result["status"], result["review_reason"]) == ("needs_review", OCR_FALLBACK_REASON)
+
+
+def test_prepare_long_pdf_reads_all_groups_without_classifying(client, transcription, tesseract):
+    transcription.result = GROUP_TEXTS[:2]
+    pages = tesseract()
+
+    body = prepare(client, "uzun.pdf", make_scanned_pdf(4)).json()
+
+    # Prepare'de sınıflandırma çağrılmaz (autouse guard); iki grup okunur ve birleştirilir.
+    assert (body["status"], body["needs_review"]) == ("prepared", False)
+    assert body["extracted_text"] == " ".join(GROUP_TEXTS[:2])
+    assert len(transcription.calls) == 2
+    assert pages == []
+
+
+def test_pdf_that_cannot_be_split_falls_back_to_tesseract_without_500(
+    client, session_factory, transcription, tesseract, fake_classify, monkeypatch
+):
+    def split_error(content, file_type):
+        raise RuntimeError("bolunemeyen PDF")
+
+    monkeypatch.setattr(file_service, "transcription_parts", split_error)
+    tesseract()
+    fake_classify(classification())
+
+    response = upload(client, "uzun.pdf", make_scanned_pdf(5))
+
+    assert response.status_code == 200
+    assert (response.json()["status"], response.json()["review_reason"]) == ("needs_review", OCR_FALLBACK_REASON)
+    assert transcription.calls == []

@@ -40,6 +40,7 @@ OCR_LANGUAGE = "tur"  # taranmış PDF fallback'i ve görüntü belgeleri (D-042
 OCR_DPI = 400
 OCR_COVERAGE_MIN = 0.5  # sayfa alanının bu oranı görüntüyse sayfa yapısal olarak taranmış sayılır (D-003)
 OCR_SHORT_TEXT_MAX = 200  # taranmış sayfada bu uzunluğa kadar gömülü metin OCR ile birlikte değerlendirilir
+TRANSCRIPTION_MAX_PAGES = 3  # Gemini transkripsiyonu çağrı başına en fazla bu kadar PDF sayfası okur (D-047)
 
 # Gömülü metin ile OCR metnini karşılaştırmak için: Türkçe harfler sadeleştirilir, 3+ karakterli parçalar alınır.
 _ASCII_FOLD = str.maketrans("çÇğĞıIİöÖşŞüÜâÂîÎûÛ", "ccggiiioossuuaaiiuu")
@@ -135,9 +136,47 @@ def delete_file(file_reference: str) -> None:
     (STORAGE_DIR / file_reference).unlink(missing_ok=True)
 
 
+def needs_ocr(content: bytes, file_type: str) -> bool:
+    """Belgenin güvenilir dijital metni yoksa True; metni önce Gemini transkripsiyonuyla okunur (D-047).
+
+    JPG/JPEG/PNG her zaman; PDF en az bir sayfası D-003 koşulunu sağlıyorsa. DOC ve DOCX'te OCR yapılmaz.
+    OCR veya render yapmaz. Açılamayan PDF False döner; hatayı bugünkü gibi extract_text üretir.
+    """
+    if file_type in IMAGE_SIGNATURES:
+        return True
+    if file_type != "pdf":
+        return False
+    try:
+        with pymupdf.open(stream=content, filetype="pdf") as pdf:
+            return any(_page_needs_ocr(page, page.get_text()) for page in pdf)
+    except Exception:  # bozuk, şifreli veya okunamayan PDF
+        return False
+
+
+def transcription_parts(content: bytes, file_type: str) -> list[bytes]:
+    """Gemini transkripsiyonuna sırayla gönderilecek parçalar (D-047).
+
+    Görüntü ve en fazla TRANSCRIPTION_MAX_PAGES sayfalık PDF olduğu gibi tek parçadır. Daha uzun PDF, sayfa sırası
+    korunarak en fazla TRANSCRIPTION_MAX_PAGES sayfalık PDF parçalarına bölünür.
+    """
+    if file_type != "pdf":
+        return [content]
+    with pymupdf.open(stream=content, filetype="pdf") as pdf:
+        if pdf.page_count <= TRANSCRIPTION_MAX_PAGES:
+            return [content]
+        parts = []
+        for start in range(0, pdf.page_count, TRANSCRIPTION_MAX_PAGES):
+            end = min(start + TRANSCRIPTION_MAX_PAGES, pdf.page_count) - 1
+            with pymupdf.open() as part:
+                part.insert_pdf(pdf, from_page=start, to_page=end)
+                parts.append(part.tobytes(garbage=3, deflate=True))
+        return parts
+
+
 def extract_text(content: bytes, file_type: str) -> str:
     """Normalize edilmiş TAM metni döndürür (50.000 karakter kesmesi yapılmaz).
 
+    Yerel çıkarım ve Tesseract acil durum yedeğidir (D-042, D-047); Gemini transkripsiyonu API katmanında denenir.
     PDF'te OCR kararı sayfa sayfa verilir (D-003, D-042): kendi metni MIN_TEXT_LENGTH'in altında kalan
     sayfalar OCR'lanır; yapısal olarak görüntüye dayanan ve gömülü metni kısa kalan sayfalarda OCR metni
     gömülü metinle birleştirilir; diğerleri gömülü metniyle kalır. OCR yapılandırılmamışsa veya hata verirse o
@@ -185,12 +224,22 @@ def _page_text(page) -> str:
     bozuk ama MIN_TEXT_LENGTH'i geçen bir metin katmanı görüntüdeki asıl belgeyi gizleyemez.
     """
     embedded = page.get_text()
-    normalized = normalize_text(embedded)
-    if len(normalized) < MIN_TEXT_LENGTH:
-        return _ocr_page_text(page) or embedded
-    if len(normalized) > OCR_SHORT_TEXT_MAX or _image_coverage(page) < OCR_COVERAGE_MIN:
+    if not _page_needs_ocr(page, embedded):
         return embedded
+    if len(normalize_text(embedded)) < MIN_TEXT_LENGTH:
+        return _ocr_page_text(page) or embedded
     return _merge_page_text(embedded, _ocr_page_text(page))
+
+
+def _page_needs_ocr(page, embedded: str) -> bool:
+    """D-003: metni MIN_TEXT_LENGTH'in altındaki sayfa ya da görüntüye dayanıp metni kısa kalan sayfa OCR gerektirir.
+
+    Görüntü kapsaması yalnızca metni MIN_TEXT_LENGTH–OCR_SHORT_TEXT_MAX arasındaki sayfalarda ölçülür.
+    """
+    length = len(normalize_text(embedded))
+    if length < MIN_TEXT_LENGTH:
+        return True
+    return length <= OCR_SHORT_TEXT_MAX and _image_coverage(page) >= OCR_COVERAGE_MIN
 
 
 def _image_coverage(page) -> float:

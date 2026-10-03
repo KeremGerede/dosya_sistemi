@@ -983,3 +983,117 @@ def test_doc_parser_failure_becomes_text_extraction_error(monkeypatch):
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)  # özgün hata zincirde kalır
     assert belge_metni not in str(exc_info.value)
+
+
+# --- Güvenilir dijital metin kararı: Gemini transkripsiyonuna gitme (V1.3, D-047) ---
+
+HEALTHY_LONG_LAYER = "\n".join(["Bu taranmis sayfanin metin katmani saglikli ve yeterince uzundur."] * 4)
+COVER_TEXT = "EVRAK KAYIT FORMU Bu belge resmi evrak kayit sistemine alinmistir."
+
+PDF_CASES = {
+    "text-pdf": lambda: make_pdf("Birinci sayfanin yeterli uzunlukta metni."),
+    "image-only": lambda: make_mixed_pdf(("image", "Taranmis dilekce metni")),
+    "hybrid": lambda: make_mixed_pdf(("text", COVER_TEXT), ("image", "Asil dilekce taranmis sayfada")),
+    "broken-layer": lambda: make_scan_pdf("Taranmis dilekce metni", layer=GARBAGE_LAYER),  # senaryo 14
+    "healthy-long-layer": lambda: make_scan_pdf("Taranmis dilekce", layer=HEALTHY_LONG_LAYER),
+    "low-coverage": lambda: make_scan_pdf("Taranmis dilekce", layer=GARBAGE_LAYER, coverage=0.45),
+    "9-chars": lambda: make_pdf("123456789"),
+    "10-chars": lambda: make_pdf("1234567890"),
+    "short-digital": lambda: make_pdf("Evrak Kayit No: 2026/4417 Tarih: 18.09.2026"),
+}
+PDF_NEEDS_OCR = {"image-only", "hybrid", "broken-layer", "9-chars"}
+
+
+@pytest.mark.parametrize("case", PDF_CASES.keys())
+def test_needs_ocr_for_pdf_follows_page_level_conditions(case):
+    """D-003 koşullarından birini sağlayan tek bir sayfa bile PDF'i Gemini transkripsiyonuna gönderir."""
+    assert file_service.needs_ocr(PDF_CASES[case](), "pdf") is (case in PDF_NEEDS_OCR)
+
+
+@pytest.mark.parametrize("case", PDF_CASES.keys())
+def test_needs_ocr_matches_the_pages_tesseract_fallback_would_ocr(ocr_spy, case):
+    """Eşikler tek yerde: Gemini'ye gitme kararı, Tesseract yedeğinin OCR'layacağı sayfalarla tutarlıdır."""
+    content = PDF_CASES[case]()
+
+    extract_text(content, "pdf")
+
+    assert file_service.needs_ocr(content, "pdf") is bool(ocr_spy)
+
+
+@pytest.mark.parametrize(
+    "content_factory, file_type, expected",
+    [
+        (lambda: make_image(image_format="jpeg"), "jpg", True),
+        (lambda: make_image(image_format="jpeg"), "jpeg", True),
+        (lambda: make_image(image_format="png"), "png", True),
+        (lambda: make_docx("Kısa"), "docx", False),
+        (lambda: doc_bytes(), "doc", False),
+        (lambda: b"%PDF-1.7\nbozuk icerik", "pdf", False),  # hatayı bugünkü gibi extract_text üretir
+    ],
+    ids=["jpg", "jpeg", "png", "docx", "doc", "corrupt-pdf"],
+)
+def test_needs_ocr_for_images_word_and_corrupt_pdf(content_factory, file_type, expected):
+    assert file_service.needs_ocr(content_factory(), file_type) is expected
+
+
+def test_needs_ocr_never_runs_ocr_or_renders(monkeypatch):
+    hybrid, image = PDF_CASES["hybrid"](), make_image()  # test belgeleri render ile üretilir; önce hazırlanır
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("needs_ocr OCR çalıştırmamalı.")
+
+    monkeypatch.setattr(file_service, "_ocr_page_text", fail_if_called)
+    monkeypatch.setattr(pymupdf.Page, "get_textpage_ocr", fail_if_called)
+    monkeypatch.setattr(pymupdf.Page, "get_pixmap", fail_if_called)
+
+    assert file_service.needs_ocr(hybrid, "pdf") is True
+    assert file_service.needs_ocr(image, "jpg") is True
+
+
+# --- Transkripsiyon grupları: 4+ sayfalık PDF en fazla 3 sayfalık parçalara (V1.3, D-047) ---
+
+
+def page_texts(content: bytes) -> list[str]:
+    with pymupdf.open(stream=content, filetype="pdf") as pdf:
+        return [page.get_text().strip() for page in pdf]
+
+
+def numbered_pdf(pages: int) -> bytes:
+    return make_pdf(*[f"S{number}" for number in range(1, pages + 1)])
+
+
+@pytest.mark.parametrize("pages", [1, 2, 3])
+def test_pdf_with_up_to_three_pages_is_one_unchanged_part(pages):
+    content = numbered_pdf(pages)
+
+    assert file_service.transcription_parts(content, "pdf") == [content]  # mevcut tek çağrı davranışı
+
+
+@pytest.mark.parametrize(
+    "pages, group_sizes",
+    [(4, [3, 1]), (5, [3, 2]), (6, [3, 3]), (12, [3, 3, 3, 3]), (21, [3] * 7)],
+)
+def test_longer_pdf_is_split_into_ordered_groups_of_at_most_three_pages(pages, group_sizes):
+    parts = file_service.transcription_parts(numbered_pdf(pages), "pdf")
+
+    assert [len(page_texts(part)) for part in parts] == group_sizes
+    assert [text for part in parts for text in page_texts(part)] == [f"S{n}" for n in range(1, pages + 1)]
+    assert file_service.TRANSCRIPTION_MAX_PAGES == 3
+
+
+def test_scanned_page_images_are_kept_in_their_group():
+    content = make_mixed_pdf(*[("image", f"Taranmis sayfa {number}") for number in range(1, 5)])
+
+    parts = file_service.transcription_parts(content, "pdf")
+
+    assert len(parts) == 2
+    for part in parts:
+        with pymupdf.open(stream=part, filetype="pdf") as pdf:
+            assert all(page.get_images() for page in pdf)  # görüntü taşınmazsa Gemini boş sayfa okur
+
+
+@pytest.mark.parametrize("file_type, image_format", [("jpg", "jpeg"), ("jpeg", "jpeg"), ("png", "png")])
+def test_image_is_one_unchanged_part(file_type, image_format):
+    content = make_image(image_format=image_format)
+
+    assert file_service.transcription_parts(content, file_type) == [content]

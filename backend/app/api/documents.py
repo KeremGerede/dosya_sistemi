@@ -1,6 +1,7 @@
 """Belge endpoint'leri.
 
-- POST /api/documents/classify (legacy / tek-adımlı): kabul kontrolü → storage → metin çıkarımı → Gemini → veritabanı.
+- POST /api/documents/classify (legacy / tek-adımlı): kabul kontrolü → storage → metin çıkarımı (güvenilir dijital
+  metin yoksa Gemini transkripsiyonu, gerekirse Tesseract yedeği; D-047) → Gemini sınıflandırması → veritabanı.
 - V1.4 iki adımlı akış (D-045, D-046): POST /prepare (kabul → storage → metin çıkarımı → prepared kaydı),
   POST /{id}/classify (kayıttaki metinle Gemini) ve DELETE /{id}/prepared (hazırlanmış kaydı ve dosyasını siler).
 - Salt okunur kayıt endpoint'leri (D-043).
@@ -40,6 +41,7 @@ FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB sınırını aşıyor."
 UNSUPPORTED_FILE_MESSAGE = "Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."
 TEXT_EXTRACTION_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
+OCR_FALLBACK_REVIEW_REASON = "Belge metni yedek OCR ile okundu; okuma hataları olabileceği için kontrol edilmelidir."
 DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."
 ALREADY_PROCESSED_MESSAGE = "Belge zaten işlenmiş."
 SOURCE_FILE_MISSING_MESSAGE = "Belgenin orijinal dosyasına ulaşılamadı; belgeyi kaldırıp yeniden yükleyin."
@@ -165,10 +167,19 @@ def _create_document(file: UploadFile, db: Session, *, classify: bool):
 
 
 def _extract_into(document: Document, content: bytes) -> tuple[int, str] | None:
-    """Metni çıkarıp kayda yazar. Yetersizse kayıt failed olur ve (422, mesaj) döner."""
+    """Metni çıkarıp kayda yazar. Yetersizse kayıt failed olur ve (422, mesaj) döner.
+
+    Güvenilir dijital metni olmayan belge önce Gemini ile transkribe edilir (D-047). Transkripsiyon başarısız ya da
+    normalize metni yetersizse Tesseract yedeği çalışır; yedeğin metni yeterliyse belge needs_review işaretlenir.
+    """
     extracted_text = None
+    ocr_fallback = False
     try:
-        extracted_text = file_service.extract_text(content, document.file_type)
+        if file_service.needs_ocr(content, document.file_type):
+            extracted_text = _transcribe(document, content)
+            ocr_fallback = extracted_text is None
+        if extracted_text is None:
+            extracted_text = file_service.extract_text(content, document.file_type)
         file_service.check_text_length(extracted_text)
     except file_service.TextExtractionError as exc:
         logger.warning("Belge %s: metin çıkarılamadı veya yetersiz (%s).", document.id, exc)
@@ -177,26 +188,66 @@ def _extract_into(document: Document, content: bytes) -> tuple[int, str] | None:
         return 422, TEXT_EXTRACTION_FAILED_MESSAGE
 
     document.extracted_text = extracted_text
+    if ocr_fallback:
+        document.needs_review = True
+        document.review_reason = OCR_FALLBACK_REVIEW_REASON
     return None
 
 
+def _transcribe(document: Document, content: bytes) -> str | None:
+    """Belgeyi Gemini ile okur (D-047); 4+ sayfalık PDF en fazla 3 sayfalık gruplar hâlinde sırayla okunur.
+
+    Bir grup bile tamamlanamaz ya da normalize metni MIN_TEXT_LENGTH'in altında kalırsa kısmi sonuç kullanılmaz,
+    kalan gruplar gönderilmez ve None döner: çağıran belgenin tamamında Tesseract yedeğine geçer.
+    """
+    try:
+        parts = file_service.transcription_parts(content, document.file_type)
+    except Exception as exc:  # gruplara bölünemeyen PDF isteği düşürmez; belge Tesseract yedeğiyle okunur
+        logger.warning(
+            "Belge %s: PDF transkripsiyon gruplarına bölünemedi (%s); Tesseract yedeği kullanılıyor.",
+            document.id, type(exc).__name__,
+        )
+        return None
+    texts = []
+    for number, part in enumerate(parts, start=1):
+        transcript = classification_service.transcribe_document(part, file_service.MEDIA_TYPES[document.file_type])
+        text = file_service.normalize_text(transcript) if transcript else ""
+        if len(text) < file_service.MIN_TEXT_LENGTH:
+            logger.warning(
+                "Belge %s: Gemini transkripsiyonu %s (grup %d/%d); Tesseract yedeği kullanılıyor.",
+                document.id, "tamamlanamadı" if transcript is None else "yetersiz metin döndürdü", number, len(parts),
+            )
+            return None
+        texts.append(text)
+    return " ".join(texts)  # normalize edilmiş grup metinleri, sayfa sırasıyla
+
+
 def _classify_into(document: Document) -> tuple[int, str] | None:
-    """Kayıttaki metni tek Gemini çağrısıyla sınıflandırır. Başarısızsa kayıt failed olur ve (502, mesaj) döner."""
+    """Kayıttaki metni tek Gemini çağrısıyla sınıflandırır. Başarısızsa kayıt failed olur ve (502, mesaj) döner.
+
+    Tesseract yedeğiyle okunan belgenin önceden konmuş needs_review işareti korunur (D-046, D-047).
+    """
+    ocr_fallback = document.needs_review  # sınıflandırmadan önce yalnız _extract_into'daki yedek OCR işaretler
     try:
         result = classification_service.classify_text(document.extracted_text)
     except classification_service.ClassificationError as exc:
         logger.warning("Belge %s: Gemini sınıflandırması tamamlanamadı (%s).", document.id, type(exc.__cause__).__name__)
         document.status = "failed"
+        document.needs_review = False  # failed kayıtta inceleme işareti yok (D-004)
+        document.review_reason = None
         return 502, CLASSIFICATION_FAILED_MESSAGE
 
+    review_reasons = [OCR_FALLBACK_REVIEW_REASON] if ocr_fallback else []
+    if result.review_reason:
+        review_reasons.append(result.review_reason)
     document.document_type = result.document_type
     document.institution_id = result.institution_id
-    document.needs_review = result.needs_review
-    document.review_reason = result.review_reason
+    document.needs_review = result.needs_review or ocr_fallback
+    document.review_reason = " ".join(review_reasons) or None
     document.summary = result.summary
     document.sender_name = result.sender_name
     document.sender_institution = result.sender_institution
-    document.status = "needs_review" if result.needs_review else "classified"
+    document.status = "needs_review" if document.needs_review else "classified"
     logger.info("Belge %s sınıflandırıldı: status=%s.", document.id, document.status)
     return None
 

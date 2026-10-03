@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -517,3 +518,178 @@ def test_prompt_forbids_splitting_or_inventing_sender_name():
     assert "Kişinin adını parçalama ve yeni bir isim oluşturma" in prompt
     assert "belgede yazan adı soyadını olduğu gibi kullan" in prompt
     assert "Açıkça yazmıyorsa null ver" in prompt and "isim üretme" in prompt
+
+
+# --- Gemini transkripsiyonu (V1.3, D-047) ---
+
+IMAGE_BYTES = b"\x89PNG\r\n\x1a\n GIZLI_DOSYA_BAYTLARI"
+TRANSCRIPT = "Sayın Belediye Başkanlığına, sokağımızdaki çöpler toplanmıyor. Gereğini arz ederim."
+
+
+class FakeTranscriber:
+    """gemini_client.transcribe yerine geçer; her çağrıda sıradaki sonucu döndürür veya fırlatır."""
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    def __call__(self, data, mime_type, prompt):
+        self.calls.append((data, mime_type, prompt))
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+@pytest.fixture
+def fake_transcriber(monkeypatch):
+    def install(*outcomes):
+        fake = FakeTranscriber(*outcomes)
+        monkeypatch.setattr(gemini_client, "transcribe", fake)
+        return fake
+
+    return install
+
+
+def test_transcription_sends_file_bytes_mime_type_and_fixed_prompt(fake_transcriber, sleeps):
+    fake = fake_transcriber(TRANSCRIPT)
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") == TRANSCRIPT
+    assert fake.calls == [(IMAGE_BYTES, "image/png", classification_service.TRANSCRIPTION_PROMPT)]
+    assert sleeps == []
+
+
+def test_transcription_prompt_asks_only_for_verbatim_transcription():
+    """Prompt benchmarkta ölçüldüğü haliyle sabittir (D-047): yalnız transkripsiyon; düzeltme, özet, tahmin yok."""
+    prompt = classification_service.TRANSCRIPTION_PROMPT
+
+    assert prompt.startswith("Bu bir OCR/transkripsiyon görevidir.")
+    for rule in (
+        "Metni düzeltme.", "Eksik kelimeleri tahmin etme.", "Özetleme yapma.", "Açıklama veya yorum ekleme.",
+        "Okuyamadığın kısmı uydurma.", "Yalnızca transkripsiyon çıktısını döndür.",
+    ):
+        assert rule in prompt
+
+
+@pytest.mark.parametrize("empty", [None, "", "  \n "], ids=["none", "empty", "whitespace"])
+def test_empty_transcription_is_invalid_output_and_retried(fake_transcriber, sleeps, empty):
+    fake = fake_transcriber(empty, TRANSCRIPT)
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") == TRANSCRIPT
+    assert len(fake.calls) == 2
+    assert sleeps == [1]
+
+
+def test_empty_transcription_on_all_attempts_returns_none(fake_transcriber, sleeps):
+    fake = fake_transcriber("", "", "", "")
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") is None
+    assert len(fake.calls) == 3
+    assert sleeps == [1, 2]
+
+
+def test_short_but_non_empty_transcription_is_returned_without_retry(fake_transcriber, sleeps):
+    """Uzunluk kontrolü çağırana aittir (D-047): kısa ama boş olmayan yanıt yeniden denenmez."""
+    fake = fake_transcriber("abc")
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") == "abc"
+    assert len(fake.calls) == 1
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("error", RETRYABLE_ERRORS.values(), ids=RETRYABLE_ERRORS.keys())
+def test_transcription_retryable_error_returns_none_after_three_attempts(fake_transcriber, sleeps, error):
+    fake = fake_transcriber(error, error, error, error)
+
+    # Hata yükselmez: çağıran Tesseract yedeğine geçer, prepare'de 502 oluşmaz (D-034, D-047).
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") is None
+    assert len(fake.calls) == 3
+    assert sleeps == [1, 2]
+
+
+@pytest.mark.parametrize("error", RETRYABLE_ERRORS.values(), ids=RETRYABLE_ERRORS.keys())
+def test_transcription_retryable_error_can_succeed_on_third_attempt(fake_transcriber, sleeps, error):
+    fake = fake_transcriber(error, error, TRANSCRIPT)
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") == TRANSCRIPT
+    assert len(fake.calls) == 3
+    assert sleeps == [1, 2]
+
+
+@pytest.mark.parametrize("code", [400, 401, 403])
+def test_transcription_permanent_client_errors_are_not_retried(fake_transcriber, sleeps, code):
+    fake = fake_transcriber(api_error(code), TRANSCRIPT)
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") is None
+    assert len(fake.calls) == 1
+    assert sleeps == []
+
+
+def test_transcription_unexpected_error_returns_none_without_retry(fake_transcriber, sleeps):
+    fake = fake_transcriber(RuntimeError("beklenmeyen hata"), TRANSCRIPT)
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") is None
+    assert len(fake.calls) == 1
+    assert sleeps == []
+
+
+def test_transcription_logs_hide_transcript_file_bytes_and_raw_api_body(fake_transcriber, sleeps, caplog):
+    fake_transcriber(api_error(503), "", TRANSCRIPT)
+
+    with caplog.at_level(logging.DEBUG):
+        assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") == TRANSCRIPT
+
+    assert TRANSCRIPT not in caplog.text and "Belediye" not in caplog.text
+    assert "GIZLI_DOSYA_BAYTLARI" not in caplog.text
+    assert "ham hata" not in caplog.text
+    # Güvenli bağlam kalır: deneme numarası, hata türü ve HTTP kodu.
+    assert "1/3" in caplog.text and "2/3" in caplog.text
+    assert "HTTP 503" in caplog.text and "InvalidModelOutputError" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "handler, expected_requests, expected_sleeps",
+    [
+        (respond_status(503), 3, [1, 2]),
+        (respond_status(500), 3, [1, 2]),
+        (respond_status(429), 3, [1, 2]),
+        (raise_error(httpx.ReadTimeout("zaman aşımı")), 3, [1, 2]),
+        (raise_error(httpx.ConnectError("bağlantı yok")), 3, [1, 2]),
+        (lambda request: gemini_http_response(""), 3, [1, 2]),
+        (respond_status(400), 1, []),
+        (respond_status(401), 1, []),
+        (respond_status(403), 1, []),
+    ],
+    ids=["503", "500", "429", "timeout", "network", "empty-output", "400", "401", "403"],
+)
+def test_real_sdk_transcription_sends_at_most_three_http_requests(
+    monkeypatch, sleeps, caplog, handler, expected_requests, expected_sleeps
+):
+    requests = use_mock_transport(monkeypatch, handler)
+
+    with caplog.at_level(logging.DEBUG):
+        assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") is None
+
+    assert len(requests) == expected_requests
+    assert sleeps == expected_sleeps
+    assert "test-api-key" not in caplog.text
+
+
+def test_real_sdk_transcription_sends_inline_file_and_prompt_without_schema(monkeypatch, sleeps):
+    requests = use_mock_transport(monkeypatch, lambda request: gemini_http_response(TRANSCRIPT))
+
+    assert classification_service.transcribe_document(IMAGE_BYTES, "image/png") == TRANSCRIPT
+
+    [request] = requests
+    assert request.url.path.endswith("/models/test-model:generateContent")
+    assert "test-api-key" not in str(request.url)
+    assert request.extensions["timeout"]["read"] == 30.0
+    body = json.loads(request.content)
+    [content] = body["contents"]
+    file_part, prompt_part = content["parts"]
+    assert file_part["inlineData"]["mimeType"] == "image/png"
+    assert base64.b64decode(file_part["inlineData"]["data"]) == IMAGE_BYTES
+    assert prompt_part["text"] == classification_service.TRANSCRIPTION_PROMPT
+    config = body["generationConfig"]
+    assert config["temperature"] == 0
+    assert "responseSchema" not in config and "responseMimeType" not in config
