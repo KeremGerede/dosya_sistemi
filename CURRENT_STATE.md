@@ -13,7 +13,7 @@
   - Adım 10: gerçek PostgreSQL + gerçek Gemini + gerçek Tesseract OCR ile uçtan uca doğrulama. PDF'in "Orijinal Belgeyi Gör" penceresinde görüntülenmesi kullanıcı tarafından gerçek masaüstü tarayıcıda elle doğrulandı.
   - `pytest` 275 passed, frontend `npm test` 33 passed.
   - `c412720` (`feat: add multi-document preview and upload workflow`) olarak `main`'e alındı.
-- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**. Gerçek el yazısı ve basılı tarama benchmarkları repo dışında tamamlandı (2026-10-03). Mimari karar alındı: OCR gereken belgelerde Gemini multimodal transkripsiyon birincil, Tesseract acil durum yedeği (D-047). 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunuyor. Kod ve testler gerçek ortamda doğrulandı; iki commit olarak `main`'e alındı, henüz push edilmedi. Ayrıntı: "Üzerinde çalışılan işler".
+- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**. Gerçek el yazısı ve basılı tarama benchmarkları repo dışında tamamlandı (2026-10-03). Mimari karar alındı: OCR gereken belgelerde Gemini multimodal transkripsiyon birincil, Tesseract acil durum yedeği (D-047). 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunuyor. V1.3 production implementasyonu ve gerçek ortam (E2E) doğrulaması tamamlandı. Commit'ler `origin/main`'e push edildi. Ayrıntı: "Üzerinde çalışılan işler".
 
 Sürüm numaraları kapsam başlığıdır, teslim sırası değildir; iki iş hattı birbirinden bağımsız ilerler.
 
@@ -825,7 +825,10 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
   - Adım 1: benchmarklar. Adım 2: karar ve dokümantasyon. Adım 3: kod ve testler.
   - Adım 4: gerçek ortam doğrulaması; 5+ sayfa blocker'ı bulundu.
   - Adım 5: 3 sayfalık grup transkripsiyonu; blocker kapandı, gerçek ortamda yeniden doğrulandı.
-- Değişiklikler iki commit olarak `main`'e alındı: `docs: record V1.3 Gemini transcription architecture` ve `feat: use Gemini transcription with grouped PDF fallback`. Henüz push edilmedi.
+- Değişiklikler iki commit olarak `main`'e alındı ve `origin/main`'e push edildi:
+  - `1a59cf4` (`docs: record V1.3 Gemini transcription architecture`)
+  - `2d536ce` (`feat: use Gemini transcription with grouped PDF fallback`)
+  - Push sonrası local HEAD = `origin/main` ve working tree temiz.
 - Final kontroller (commit öncesi):
   - `pytest` 368 passed; `pip check` temiz.
   - Frontend `npm test` 33 passed; `npm run build` ve `npm run lint` temiz.
@@ -934,7 +937,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 **V1.4** — Adım 0–10 tamamlandı ve commit'lendi. Adım 10 konu kısalması düzeltildi (bkz. Adım 10 bulgusu). Yeni V1.4 işi açılmadı.
 
-**V1.3 (açık)** — Kod, testler (368 passed) ve gerçek ortam doğrulaması tamamlandı; dokümanlar senkron; iki commit `main`'de. Sıradaki adım: kullanıcı onayıyla push. V1.3'ün kapatılması kullanıcı kararıyla.
+**V1.3 (açık)** — Production implementasyonu, testler (368 passed) ve gerçek ortam (E2E) doğrulaması tamamlandı. Dokümanlar senkron, commit'ler `origin/main`'e push edildi. Açık V1.3 işi yok; iş hattının kapatılması kullanıcı kararıyla.
 
 Aşağıdakiler **açılmış iş değildir**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
