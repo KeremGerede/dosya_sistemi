@@ -6,14 +6,21 @@
 
 ## Mevcut aşama
 
-**V1.0–V1.2 ve V1.4 tamamlandı. Açık iş hattı: V1.3.**
+**V1.0–V1.4 tamamlandı. Açık iş hattı yok.**
 
 - **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow): **tamamlandı**.
   - Adım 0–9: kararlar (D-045, D-046), backend (prepare, classify-by-id, discard, liste filtresi, TTL yedek temizliği) ve frontend (en fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı analiz, 409 kurtarma).
   - Adım 10: gerçek PostgreSQL + gerçek Gemini + gerçek Tesseract OCR ile uçtan uca doğrulama. PDF'in "Orijinal Belgeyi Gör" penceresinde görüntülenmesi kullanıcı tarafından gerçek masaüstü tarayıcıda elle doğrulandı.
   - `pytest` 275 passed, frontend `npm test` 33 passed.
   - `c412720` (`feat: add multi-document preview and upload workflow`) olarak `main`'e alındı.
-- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **açık**. Gerçek el yazısı ve basılı tarama benchmarkları repo dışında tamamlandı (2026-10-03). Mimari karar alındı: OCR gereken belgelerde Gemini multimodal transkripsiyon birincil, Tesseract acil durum yedeği (D-047). 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunuyor. V1.3 production implementasyonu ve gerçek ortam (E2E) doğrulaması tamamlandı. Commit'ler `origin/main`'e push edildi. Ayrıntı: "Üzerinde çalışılan işler".
+- **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction): **tamamlandı** (2026-10-03, D-047). Ayrıntı: "Tamamlanan işler" › V1.3 · Adım 1–5.
+  - OCR/transkripsiyonda birincil yol Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`).
+  - Tesseract acil durum yedeği; yedekle okunan belge `needs_review` olur.
+  - 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunur.
+  - El yazısı (9 örnek) ve basılı tarama (8 belge) benchmarklarıyla doğrulandı.
+  - Gerçek ortam E2E doğrulaması yapıldı; 21 sayfalık taranmış PDF 7 grup çağrısıyla okundu, 21/21 sayfa geldi.
+  - `pytest` 368 passed, frontend `npm test` 33 passed.
+  - Production implementasyonu ve E2E doğrulaması tamamlandı; commit'ler `origin/main`'de.
 
 Sürüm numaraları kapsam başlığıdır, teslim sırası değildir; iki iş hattı birbirinden bağımsız ilerler.
 
@@ -819,7 +826,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 - Adım 0–10 tamamlandı: dokümantasyon, backend, frontend ve gerçek ortamda uçtan uca doğrulama. Gerçek tarayıcıda PDF kontrolü elle yapıldı.
 - Değişiklikler tek commit olarak `main`'e alındı. Açık V1.4 işi yok.
 
-**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (açık; karar D-047, 2026-10-03)**
+**V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği (tamamlandı; D-047, 2026-10-03)**
 
 - Adım 1–5 tamamlandı:
   - Adım 1: benchmarklar. Adım 2: karar ve dokümantasyon. Adım 3: kod ve testler.
@@ -834,6 +841,7 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
   - Frontend `npm test` 33 passed; `npm run build` ve `npm run lint` temiz.
   - `git diff --check` temiz; repoda test/benchmark artefaktı yok.
 - Bilinçli olarak kapsam dışı: el yazısı dedektörü, quality gate, Tesseract → Gemini düzeltmesi, ek OCR modeli, 3 sayfalık sabit gruplar dışında chunking, grupların paralel gönderilmesi, agent/RAG/vector DB, refactor.
+- İş hattı kapatıldı (2026-10-03). Açık V1.3 işi yok.
 
 **Diğer**
 
@@ -937,10 +945,10 @@ Adım 5'te manuel test matrisi gerçek belgelerle uygulandı ve **11/11 senaryo 
 
 **V1.4** — Adım 0–10 tamamlandı ve commit'lendi. Adım 10 konu kısalması düzeltildi (bkz. Adım 10 bulgusu). Yeni V1.4 işi açılmadı.
 
-**V1.3 (açık)** — Production implementasyonu, testler (368 passed) ve gerçek ortam (E2E) doğrulaması tamamlandı. Dokümanlar senkron, commit'ler `origin/main`'e push edildi. Açık V1.3 işi yok; iş hattının kapatılması kullanıcı kararıyla.
+**V1.3** — Tamamlandı ve kapatıldı (2026-10-03). Yeni V1.3 işi açılmadı.
 
 Aşağıdakiler **açılmış iş değildir**; biri ele alınacaksa önce `DECISIONS.md` (ve gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
 - Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi (manuel testte 05 senaryosunda görülen park/bahçeler ↔ zabıta ikilemi gibi durumlar).
-- Taranmış tablo ve form belgelerinde okuma dayanıklılığı; OCR kaynaklı özet ve gönderen bilgisinin güvenilirliği (eski V1.3 kapsamından taşındı).
+- Taranmış tablo ve form belgelerinde okuma dayanıklılığı; OCR kaynaklı özet ve gönderen bilgisinin güvenilirliği.
 - Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication.

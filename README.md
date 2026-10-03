@@ -4,7 +4,7 @@ Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki be
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-**Durum:** V1.0–V1.2 ve **V1.4** — Çoklu Belge Yükleme ve Önizleme (UX/workflow) tamamlandı. Açık iş hattı: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction; uygulandı ve gerçek ortamda doğrulandı).
+**Durum:** V1.0–V1.4 tamamlandı. Son kapatılan iş hattı: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction). Şu anda açık iş hattı yok.
 
 ## İçindekiler
 
@@ -73,12 +73,16 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 
 ### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
 
-**Açık — uygulandı ve gerçek ortamda doğrulandı.** OCR/extraction iş hattı (D-047). Kapsam:
+**Tamamlandı.** OCR/extraction iş hattı (D-047). Teslim edilenler:
 
-- Gerçek Türkçe el yazısı benchmarkı (repo dışında). 9 örnekte Tesseract CER ~%37, Gemini CER ~%4; Gemini 9/9 örnekte daha iyi.
-- Basılı tarama gerileme kontrolü (repo dışında). 8 belgede Gemini 4'ünde daha iyi, 4'ünde eşit, hiçbirinde daha kötü değil.
-- OCR gereken belgelerde (görüntüler, taranmış/hybrid PDF'ler) Gemini multimodal transkripsiyonu birincil yol. 4+ sayfalık PDF'ler en fazla 3 sayfalık gruplar hâlinde okunur.
-- Gemini başarısız olursa ya da yetersiz metin döndürürse Tesseract acil durum yedeği belgenin tamamında çalışır ve sonuç `needs_review` olarak işaretlenir.
+- OCR gereken belgelerde (görüntüler, taranmış/hybrid PDF'ler) birincil OCR/transkripsiyon: Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`).
+- Tesseract acil durum yedeği: Gemini başarısız olursa ya da yetersiz metin döndürürse belgenin tamamında çalışır; sonuç `needs_review` olur.
+- 4+ sayfalık PDF'lerin en fazla 3 sayfalık sıralı gruplar hâlinde okunması.
+- El yazısı ve basılı tarama benchmark doğrulaması (repo dışında):
+  - El yazısı, 9 örnek: Tesseract CER ~%37, Gemini CER ~%4.
+  - Basılı tarama, 8 belge: gerileme yok.
+- Gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulama. 21 sayfalık taranmış PDF 7 grup çağrısıyla okundu, 21/21 sayfa geldi.
+- Backend `pytest` 368, frontend `npm test` 33 test; production implementasyonu ve E2E doğrulaması tamamlandı.
 
 ### V1.4 — Çoklu Belge Yükleme ve Önizleme
 
@@ -538,11 +542,7 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 
 ## Yol Haritası
 
-### V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği
-
-**Açık — uygulandı ve gerçek ortamda doğrulandı.** OCR/extraction iş hattı. Teslim edilenler [Sürüm Geçmişi](#v13--el-yazısı-ve-gelişmiş-ocr-güvenilirliği) bölümündedir. Gerçek ortam doğrulamasında 3–21 sayfalık taranmış PDF'lerin tüm sayfaları okundu (21 sayfa = 7 transkripsiyon çağrısı, ~36 sn).
-
-V1.4 tamamlandı; teslim edilenler [Sürüm Geçmişi](#v14--çoklu-belge-yükleme-ve-önizleme) bölümündedir.
+Şu anda açık iş hattı yok. V1.3 ve V1.4 tamamlandı; teslim edilenler [Sürüm Geçmişi](#sürüm-geçmişi) bölümündedir.
 
 ### Daha Sonra Değerlendirilebilecekler
 
