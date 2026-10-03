@@ -19,7 +19,7 @@ Bu üç dosya projenin ana referansıdır.
 - `DECISIONS.md` yalnızca güncel ve aktif kararları içermelidir.
 - Karar geçmişi Git üzerinden takip edilir.
 - Geliştirme ilerledikçe `CURRENT_STATE.md` dosyasını güncelle.
-- `CURRENT_STATE.md` içinde tamamlanan işleri, mevcut durumu, bilinen sorunları ve sıradaki adımı güncel tut.
+- `CURRENT_STATE.md` geliştirme günlüğü değildir; yalnız güncel durumu, aktif riskleri ve sıradaki adımları tutar. Eski ayrıntılar Git geçmişinde kalır.
 - `PROJECT_BRAIN.md` dosyasını yalnızca projenin temel amacı, mimarisi veya kapsamı gerçekten değiştiğinde güncelle.
 
 ## Geliştirme Prensibi

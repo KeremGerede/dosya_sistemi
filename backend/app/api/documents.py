@@ -83,7 +83,7 @@ def classify_document(file: Annotated[UploadFile, File()], db: Annotated[Session
     "/prepare",
     response_model=DocumentDetail,
     responses=UPLOAD_ERROR_RESPONSES,
-    summary="Belgeyi doğrular, saklar ve metnini çıkarır; Gemini çağırmaz",
+    summary="Belgeyi doğrular, saklar ve metnini çıkarır (gerekirse Gemini transkripsiyonu); sınıflandırma yapmaz",
 )
 def prepare_document(file: Annotated[UploadFile, File()], db: Annotated[Session, Depends(get_db)]):
     """V1.4 akışının ilk adımı (D-045): kayıt prepared olur; yanıt önizleme için çıkarılan metni içerir."""

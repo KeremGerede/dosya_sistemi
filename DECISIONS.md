@@ -48,7 +48,9 @@
   - Her grubun (tek çağrıda belgenin) transkripsiyonu normalize edilir ve 10 karakter sınırına (D-026) tabidir. Tüm gruplar yeterliyse çıkarılan metin birleşik metindir.
   - Herhangi bir grup 3 denemede tamamlanamazsa (D-033) **ya da** normalize metni 10 karakterden kısa kalırsa transkripsiyon başarılı sayılmaz:
     - Kısmi Gemini sonucu kullanılmaz ve kalan gruplar gönderilmez.
-    - Mevcut Tesseract yolu (D-003, D-042) belgenin tamamında acil durum yedeği olarak çalışır:
+    - Belgenin tamamı, mevcut yerel çıkarım + Tesseract acil durum yedeği yolundan (D-003, D-042) yeniden çıkarılır:
+      - PDF'te Tesseract OCR yalnız D-003 koşulunu sağlayan sayfalarda çalışır; diğer sayfalarda güvenilir gömülü metin korunur.
+      - Görüntü belgelerde görüntünün tamamı Tesseract ile OCR'lanır.
       - Yedeğin metni yeterliyse belge işlenmeye devam eder ama sonucu `needs_review` olur. `review_reason`, metnin yedek OCR ile okunduğunu söyleyen genel bir gerekçe taşır. İki adımlı akışta bu işaret `prepared` kayda yazılır ve sınıflandırma onu korur (D-046).
       - Yedeğin metni de yetersizse mevcut `failed` + `422` davranışı geçerlidir (D-004, D-034). Transkripsiyon hatası `502` üretmez.
   - Sınıflandırma, yalnız tüm gruplar başarıyla tamamlandıktan sonra (ya da yedek metinle) birleşik metin üzerinde **bir kez** çalışır.

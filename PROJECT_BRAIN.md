@@ -23,8 +23,8 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 5. Güvenilir dijital metin kararı:
    - **PDF:** Her sayfa ayrı değerlendirilir (D-003). Kendi metni 10 karakterden kısa olan sayfa taranmış sayılır. Alanının en az %50'si görüntü olan ve gömülü metni en fazla 200 karakter kalan sayfa da OCR gerektirir (bozuk metin katmanı olasılığı). Böyle bir sayfa yoksa PDF gömülü metniyle okunur; varsa PDF'in tamamı transkripsiyona gider: 1–3 sayfa **tek** çağrıda, 4+ sayfa en fazla **3 sayfalık** sıralı gruplar hâlinde. Grup metinleri sayfa sırasıyla birleştirilir.
    - **Görüntü:** JPG/JPEG/PNG'de gömülü metin aranmaz; görüntü her zaman transkripsiyona gider.
-   - **Transkripsiyon:** Her grubun sonucu normalize edilir. Bir grubun bile metni 10 karakterden kısaysa ya da çağrısı 3 denemede tamamlanamazsa kısmi sonuç kullanılmaz; **Tesseract acil durum yedeği** belgenin tamamında çalışır (`tur`, 400 dpi; D-042):
-     - Görüntü tek sayfa olarak, PDF'te yalnız koşulu sağlayan sayfalar OCR'lanır.
+   - **Transkripsiyon:** Her grubun sonucu normalize edilir. Bir grubun bile metni 10 karakterden kısaysa ya da çağrısı 3 denemede tamamlanamazsa kısmi sonuç kullanılmaz; belgenin tamamı mevcut yerel çıkarım + **Tesseract acil durum yedeği** yolundan yeniden çıkarılır (`tur`, 400 dpi; D-042):
+     - Görüntü tek sayfa olarak OCR'lanır; PDF'te Tesseract yalnız D-003 koşulunu sağlayan sayfalarda çalışır, diğer sayfaların güvenilir gömülü metni korunur.
      - İkinci koşuldaki sayfalarda gömülü metin ile OCR metni karşılaştırılır: OCR metni gömülü metnin kelime benzeri parçalarının tamamını içeriyorsa yalnızca OCR metni, içermiyorsa ikisi birden kullanılır.
      - Sayfa metinleri belge sırasıyla birleştirilir.
      - Yedeğin metni yeterliyse belge yedek OCR işaretiyle (`needs_review = true` + `review_reason`) devam eder.
@@ -186,14 +186,14 @@ Başlangıç kurum kataloğu (kod oluşturulduktan sonra tek kaynak `institution
 ## 7. LLM sözleşmesi
 
 - **Model:** `GEMINI_MODEL` ortam değişkeninden okunur (`.env.example`: `gemini-3.5-flash-lite`); aynı model transkripsiyon için de kullanılır. Tanımlı değilse uygulama başlamaz. Farklı bir modele veya başka bir LLM'e fallback yoktur.
-- **Girdi:** Normalize edilmiş metnin en fazla ilk 50.000 karakteri + her iki katalog (id, name, description). Sınırı aşan kısım gönderilmez; chunking, RAG veya çok parçalı işleme yoktur.
+- **Girdi:** Normalize edilmiş metnin en fazla ilk 50.000 karakteri + her iki katalog (id, name, description). Sınırı aşan kısım gönderilmez; sınıflandırma girdisi için chunking, RAG veya çok parçalı işleme yoktur.
 - **Tek sınıflandırma çağrısı:** Belge türü, kurum, özet ve gönderen aynı çağrıda belirlenir. Şemadaki enum değerleri kataloglardan üretilir. OCR gereken belgede bundan önce ayrı bir transkripsiyon çağrısı yapılır; iki çağrı birleştirilmez (D-008).
 - **Timeout ve retry:** Retry aynı çağrının tekrarıdır, ek bir sınıflandırma adımı değildir.
   - Retry politikası yalnızca `classification_service`'te uygulanır; SDK'nın kendi retry'ı kapalıdır. Toplam gerçek API isteği 3'ü aşmaz.
   - Her Gemini çağrısı için 30 sn timeout; toplam en fazla 3 deneme.
   - Retry edilir: network hataları, timeout, `429`, `5xx` ve geçersiz model çıktısı (structured output şemasına uymayan veya katalog dışı değer içeren yanıt — geçici model hatası sayılır).
   - Retry edilmez: `400`, `401`, `403` gibi kalıcı istemci/yapılandırma hataları. Belge hemen `failed` kaydedilir, `502` döner.
-  - Bekleme: 1. başarısız denemeden sonra 1 sn, 2. başarısız denemeden sonra 2 sn. En kötü durumda her Gemini aşaması (transkripsiyon, sınıflandırma) yaklaşık 93 sn sürer.
+  - Bekleme: 1. başarısız denemeden sonra 1 sn, 2. başarısız denemeden sonra 2 sn. En kötü durumda her Gemini çağrısı (her transkripsiyon grubu ve sınıflandırma) yaklaşık 93 sn sürer.
   - Tüm denemeler başarısızsa (3. denemede de hata veya geçersiz çıktı) belge `failed` kaydedilir, `502` ile genel bir mesaj döner, teknik detaylar loglanır; ham Gemini/API hataları gösterilmez.
 
 **Transkripsiyon sözleşmesi (D-047):**
@@ -203,8 +203,8 @@ Başlangıç kurum kataloğu (kod oluşturulduktan sonra tek kaynak `institution
 - **Çıktı:** Yanıt şeması yoktur; düz metin döner, normalize edilir.
 - **Çağrı ayarları:** temperature 0, 30 sn timeout, SDK retry kapalı.
 - **Retry:** Sınıflandırmayla aynı politika, en fazla 3 gerçek deneme. Boş yanıt geçersiz çıktı sayılır ve yeniden denenir. `400`/`401`/`403` yeniden denenmez.
-- **Gruplar:** Görüntü ve 1–3 sayfalık PDF dosya olduğu gibi tek çağrıyla okunur. 4+ sayfalık PDF sayfa sırası korunarak en fazla 3 sayfalık gruplara bölünür; her grup aynı prompt ve ayarlarla ayrı bir çağrıda, sırayla okunur. Grup metinleri sayfa sırasıyla birleştirilir ve sınıflandırma birleşik metinle bir kez çalışır.
-- **Başarısızlık:** Bir grup bile tamamlanamaz ya da normalize metni 10 karakterden kısa kalırsa kısmi sonuç kullanılmaz, kalan gruplar gönderilmez. Hata yükseltilmez ve `502` üretilmez; Tesseract yedeği belgenin tamamında çalışır. Kısa ama boş olmayan yanıt yeniden denenmez.
+- **Gruplar** (yalnız OCR gereken belgelerde; güvenilir dijital metni olan PDF transkripsiyona gitmez): Görüntü ve 1–3 sayfalık PDF dosya olduğu gibi tek çağrıyla okunur. 4+ sayfalık PDF sayfa sırası korunarak en fazla 3 sayfalık gruplara bölünür; her grup aynı prompt ve ayarlarla ayrı bir çağrıda, sırayla okunur. Grup metinleri sayfa sırasıyla birleştirilir ve sınıflandırma birleşik metinle bir kez çalışır.
+- **Başarısızlık:** Bir grup bile tamamlanamaz ya da normalize metni 10 karakterden kısa kalırsa kısmi sonuç kullanılmaz, kalan gruplar gönderilmez. Hata yükseltilmez ve `502` üretilmez. Belgenin tamamı yerel çıkarım + Tesseract yedek yolundan yeniden çıkarılır; PDF'te Tesseract yalnız D-003 koşulunu sağlayan sayfalarda çalışır, diğer sayfaların güvenilir gömülü metni korunur. Kısa ama boş olmayan yanıt yeniden denenmez.
 - **Yasak girdiler:** Modele Tesseract çıktısı, ground truth veya başka bir metin verilmez.
 
 Structured output alanları:
@@ -317,8 +317,8 @@ Hata ve red davranışı:
 | Desteklenen tür değil (GIF, TIFF, BMP, WebP, HEIC vb.) veya imza uyuşmuyor | Kayıt yok, dosya saklanmaz | `415`, genel mesaj |
 | 50 MB'ı aşıyor | Kayıt yok, dosya saklanmaz | `413`, genel mesaj |
 | Metin çıkarımı başarısız veya normalize metin < 10 karakter | `failed` kaydı | `422`, `failed` gövdesi |
-| Gemini geçici hatası (network, timeout, `429`, `5xx`) veya geçersiz model çıktısı, 3 deneme de başarısız | `failed` kaydı | `502`, `failed` gövdesi |
-| Gemini kalıcı hatası (`400`/`401`/`403`) veya Gemini aşamasında beklenmeyen hata, retry yok | `failed` kaydı | `502`, `failed` gövdesi |
+| Gemini sınıflandırma çağrısında geçici hata (network, timeout, `429`, `5xx`) veya geçersiz model çıktısı, 3 deneme de başarısız | `failed` kaydı | `502`, `failed` gövdesi |
+| Gemini sınıflandırma çağrısında kalıcı hata (`400`/`401`/`403`) veya beklenmeyen hata, retry yok | `failed` kaydı | `502`, `failed` gövdesi |
 | Beklenmeyen sunucu hatası (ör. dosya storage'a ya da kayıt veritabanına yazılamadı) | Kayıt yok, bu isteğin storage dosyası (yarım yazılmışsa da) silinir | `500`, ayrıntı dönmez |
 
 Kabul sonrası `failed` yanıt gövdesi, başarılı yanıttaki alanları ve genel bir `message` alanını içerir:
@@ -383,7 +383,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 ## 12. Açıkça kapsam dışı
 
-DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · el yazısı dedektörü veya belge türüne göre OCR motoru seçimi · Tesseract çıktısının Gemini ile düzeltilmesi · ek OCR modeli · transkripsiyon ile sınıflandırmanın tek çağrıda birleştirilmesi · transkripsiyonda 3 sayfalık sabit gruplar dışında chunking ve grupların paralel gönderilmesi · 50 MB üstü dosyalar · uzun belgeler için chunking veya karmaşık belge işleme · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtlar için güncelleme/silme endpoint'leri (yalnızca `prepared` kayda özgü geçişler vardır — D-046) · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
+DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · el yazısı dedektörü veya belge türüne göre OCR motoru seçimi · Tesseract çıktısının Gemini ile düzeltilmesi · ek OCR modeli · transkripsiyon ile sınıflandırmanın tek çağrıda birleştirilmesi · dinamik veya gelişmiş chunking ve karmaşık uzun belge işleme (sınıflandırmada ilk 50.000 karakter kuralı, D-027; transkripsiyonda yalnız OCR gereken PDF'ler için 3 sayfalık sabit gruplar, D-047) · transkripsiyon gruplarının paralel gönderilmesi · 50 MB üstü dosyalar · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtlar için güncelleme/silme endpoint'leri (yalnızca `prepared` kayda özgü geçişler vardır — D-046) · kayıtlarda arama, filtre ve sayfalama · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 
