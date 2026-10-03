@@ -26,8 +26,13 @@ Graphify proje hafızası değil; kod keşfi ve impact analysis aracıdır.
 
 - **Kullan:** kod yolu belirsizse; değişiklik birden fazla modülü ya da katmanı (frontend/backend/DB) etkiliyorsa; etkilenen dosya veya symbol'ler belirsizse; eski bir özelliğe dönülüyorsa; bug'ın hangi katmanda olduğu net değilse.
 - **Kullanma:** ilgili dosya zaten belliyse; tek dosyalık küçük bir değişiklikse; dokümantasyon, metin veya CSS gibi lokal bir işse.
-- Mevcut grafiği kullan. Yalnız repo yapısı anlamlı biçimde değiştiyse ya da grafiğin güncelliği belirsizse yeniden oluştur.
-- Çıktının tamamını değil, yalnız görevle ilgili ilişkileri incele.
+- Kullanırken mevcut `graphify-out` grafiğinin yalnız görevle ilgili kısmını incele.
+- **Refresh** (grafiği yeniden oluşturmak) kullanımdan ayrıdır ve pahalıdır; gerekmiyorsa çalıştırma.
+  - Grafiğin yaşı ya da yeni oturum tek başına refresh sebebi değildir.
+  - Refresh şu durumlarda düşünülür:
+    - kod yapısında anlamlı değişiklik (yeni modül/servis, önemli endpoint/akış değişimi, klasör/mimari değişim, büyük refactor)
+    - görevle ilgili, grafiğin eskidiğine dair somut bir işaret
+  - Dokümantasyon, CSS/UI, küçük bugfix, test veya lokal değişiklikler için refresh yapılmaz.
 
 ## Görev büyüklüğüne göre çalışma
 
