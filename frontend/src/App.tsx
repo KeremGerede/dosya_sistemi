@@ -572,6 +572,9 @@ function PreviewPanel({
 
   return (
     <div className="record-detail preview" id={id}>
+      {/* Analiz bittiyse sonuç önce gelir; önizleme formu altında kalır. */}
+      {item.result !== null && (item.state === 'done' || item.state === 'review') && <ResultCard result={item.result} />}
+
       <section className="doc-preview" aria-labelledby={titleId}>
         <h3 id={titleId}>Belge Önizlemesi</h3>
         <dl className="preview-fields">
@@ -649,8 +652,6 @@ function PreviewPanel({
           </label>
         )}
       </section>
-
-      {item.result !== null && (item.state === 'done' || item.state === 'review') && <ResultCard result={item.result} />}
     </div>
   )
 }
@@ -1076,6 +1077,13 @@ function App() {
                             <div className="name-cell">
                               <span className="record-name">{item.file.name}</span>
                               {item.error !== null && <span className="row-error">{item.error}</span>}
+                              {/* Analiz sonucu satırda özetlenir; ayrıntı "Sonucu Gör" panelindedir. */}
+                              {item.result !== null && (item.state === 'done' || item.state === 'review') && (
+                                <span className="row-result">
+                                  <strong>Tür:</strong> {item.result.document_type_name ?? 'Belirlenemedi'} ·{' '}
+                                  <strong>Kurum:</strong> {item.result.institution_name ?? 'Belirlenemedi'}
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td data-label="Format · Boyut" className="col-meta">
@@ -1096,7 +1104,7 @@ function App() {
                               aria-expanded={isOpen}
                               aria-controls={isOpen ? panelId : undefined}
                             >
-                              {isOpen ? 'Kapat' : 'Önizle'}
+                              {isOpen ? 'Kapat' : item.state === 'done' || item.state === 'review' ? 'Sonucu Gör' : 'Önizle'}
                             </button>
                             <button
                               type="button"

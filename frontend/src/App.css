@@ -680,8 +680,9 @@ tr.open .chevron {
   width: 17%;
 }
 
+/* "Sonucu Gör" + "Kaldır" yan yana sığar */
 .batch-table th:nth-child(5) {
-  width: 9rem;
+  width: 10rem;
 }
 
 /* Önizleme öncesi doğru dosyayı tanımak için ad kısaltılmaz, gerekirse alt satıra geçer. */
@@ -696,13 +697,27 @@ tr.open .chevron {
   min-width: 0;
 }
 
-.row-error {
+/* Satır altı bilgi: hata ya da analiz sonucu (tür · kurum); ad gibi kısaltılmaz, gerekirse alt satıra geçer. */
+.row-error,
+.row-result {
   display: block;
   margin-top: 0.2rem;
-  color: var(--err-text);
   font-size: 0.8rem;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.row-error {
+  color: var(--err-text);
+}
+
+.row-result {
+  color: var(--text-muted);
+}
+
+.row-result strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .col-meta {
@@ -761,12 +776,30 @@ tr.open .chevron {
   color: var(--err-text);
 }
 
+/* Uzun liste/önizlemede ana aksiyon ekranın altında görünür kalır; liste sonunda normal yerine oturur.
+   Opak zemin ve üst çizgi, altından kayan içerikle karışmasını önler. Dar ekranda akışta kalır. */
 .batch-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   margin-top: 1rem;
+  padding: 0.75rem 0;
+  background-color: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+/* Odaklanan ya da görünüme kaydırılan öğe sabit çubuğun altında kalmaz */
+html:has(.batch-actions) {
+  scroll-padding-bottom: 5rem;
+}
+
+/* Analizden sonra panel sonuç kartıyla başlar */
+.preview > .notice {
+  margin: 0 0 1rem;
 }
 
 /* Belge Önizlemesi: çıkarılan metinden oluşturulan yapılandırılmış form (varsayılan görünüm) */
@@ -958,6 +991,18 @@ dl.preview-fields {
 
   button.primary {
     flex: 1 1 100%;
+  }
+
+  /* Dar ekranda aksiyon çubuğu sabitlenmez; önceki akış davranışı korunur. */
+  .batch-actions {
+    position: static;
+    padding: 0;
+    background-color: transparent;
+    border-top: none;
+  }
+
+  html:has(.batch-actions) {
+    scroll-padding-bottom: 0;
   }
 
   .col-actions {

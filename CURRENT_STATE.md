@@ -17,6 +17,7 @@
 - **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow; D-045, D-046): **tamamlandı**.
   - Hazırla → önizle → sınıflandır akışı. En fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı işleme.
   - `prepared` kayıt yaşam döngüsü: kaldırma (`DELETE …/prepared`), `409` kurtarma, sahipsiz kayıtlar için 24 saatlik yedek temizlik.
+  - Analiz sonrası satırda tür/kurum, "Sonucu Gör" ile sonuç-önce panel ve masaüstünde sabit analiz çubuğu (2026-10-04).
   - Gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulandı. PDF görüntüleyici gerçek tarayıcıda elle doğrulandı.
 - **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction; D-047): **tamamlandı**.
   - OCR gereken belgelerde birincil OCR/transkripsiyon: Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`).

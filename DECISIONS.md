@@ -291,6 +291,7 @@
   - Arayüz:
     - Çoklu seçim ve sürükle-bırak; listede en fazla 5 dosya (D-040).
     - Her dosyada ad, format, boyut, önizleme, kaldırma ve analiz seçimi.
+    - Analizi biten satırda belge türü ve kurum kısa bir satırda görünür; satır düğmesi "Sonucu Gör" olur ve panel sonuç kartıyla başlar. Masaüstünde analiz düğmesi ekranın altında sabit kalır.
     - Önizleme içerik merkezlidir. Varsayılan görünüm, çıkarılan metinden tarayıcıda deterministik olarak oluşturulan yapılandırılmış "Belge Önizlemesi" formudur: dosya adı, hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Açıkça bulunamayan alan boş (`—`) kalır; tahmin edilmez. Önizleme alanları saklanmaz; yeni endpoint veya DB alanı eklenmez.
     - Orijinal belge (PDF ve JPG/JPEG/PNG) ile ham çıkarılan metin yardımcı görünümlerdir. Orijinal belge kullanıcının tarayıcısındaki dosyadan ayrı bir pencerede gösterilir ve yalnızca backend imza doğrulamasından geçmiş dosyalarda açılır; sunucuda ayrı bir önizleme endpoint'i yoktur.
     - DOC/DOCX'te yapılandırılmış önizleme ve çıkarılan metin gösterilir; Word render'ı, dönüştürücü veya yeni bağımlılık eklenmez.
