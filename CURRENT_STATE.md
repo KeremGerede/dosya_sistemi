@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-10-03
+> **Son güncelleme:** 2026-10-04
 >
 > Projenin güncel durumu (snapshot). Geliştirme günlüğü değildir: yalnız güncel durum, aktif riskler ve sıradaki adımlar tutulur. Geçmiş ayrıntılar Git geçmişinde, sürüm özetleri `README.md` "Sürüm Geçmişi" bölümündedir.
 >
@@ -8,7 +8,11 @@
 
 ## Mevcut aşama
 
-**V1.0–V1.4 tamamlandı. Açık iş hattı yok.**
+**V1.0–V1.4 ve Kayıtlar deneyimi iyileştirmesi tamamlandı. Açık iş hattı yok.**
+
+- **Kayıtlar deneyimi** (frontend; D-048): **tamamlandı**.
+  - Listede ve detayda belge türü; dosya adında arama (büyük/küçük harf ve Türkçe karakter duyarsız); tür/kurum/durum filtresi; Toplam Kayıt / İnceleme Gereken / Başarısız sayıları.
+  - Tamamen istemci tarafı; backend, API ve veritabanı değişmedi. Gerçek backend ve PostgreSQL ile 1366×768'de tarayıcıda doğrulandı.
 
 - **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow; D-045, D-046): **tamamlandı**.
   - Hazırla → önizle → sınıflandır akışı. En fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı işleme.
@@ -71,6 +75,7 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 **Frontend** (`frontend/`): React + Vite + TypeScript, tek sayfa.
 - `src/App.tsx` — sınıflandırma ve kayıtlar görünümleri.
 - `src/documentPreview.ts` — önizleme alanlarının deterministik çıkarımı.
+- `src/records.ts` — Kayıtlar arama, filtre ve özet sayıları için saf yardımcılar (D-048).
 
 **Geliştirme ortamı** (D-036):
 - PostgreSQL 18 Docker Compose ile `127.0.0.1:5433`'te çalışır.
@@ -86,7 +91,7 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 ## Test baseline
 
 - **Backend:** `pytest` **368 passed** (Starlette/anyio kaynaklı 2 bilinen deprecation uyarısıyla); `pip check` temiz.
-- **Frontend:** `npm test` **33 passed**; `npm run build` ve `npm run lint` temiz.
+- **Frontend:** `npm test` **42 passed**; `npm run build` ve `npm run lint` temiz.
 - **Otomatik testler** gerçek Gemini API'si veya Docker PostgreSQL gerektirmez:
   - Endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır.
   - Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
@@ -171,6 +176,10 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
   - Alanlar saklanmaz ve sınıflandırmayı etkilemez.
 - **120 sn zaman aşımı** (D-039) yalnız istemciyi keser; backend işlemi tamamlamış olabilir. Sınıflandırmada `409` → detay okuma ile kurtarılır.
 
+**Kayıtlar görünümü**
+
+- **İstemci tarafı filtre:** Liste sayfalamasız tek istekte gelir; arama, filtre ve özet sayıları yüklü liste üzerinde çalışır. Tür/kurum seçenekleri yalnız mevcut kayıtlardakilerdir. Kayıt sayısı çok artarsa sunucu tarafı sayfalama/filtre ayrı karar gerektirir (D-048).
+
 **Geliştirme ortamı**
 
 - **Port ve adres:** Bu makinede 5432'yi yerel bir Windows PostgreSQL servisi kullanıyor; Docker PostgreSQL `127.0.0.1:5433`'te. `DATABASE_URL`'de `localhost` değil `127.0.0.1` kullanılmalı (IPv6 `::1` bağlantısı asılı kalıyor).
@@ -183,7 +192,7 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
   - Proxy yalnız geliştirme içindir; ayrı origin dağıtımında CORS/reverse proxy kararı gerekir.
 - **Elle senkron tutulanlar:** 50 MB sınırı frontend'de de tanımlı ve backend ile birlikte güncellenmeli. Frontend `ClassifyResponse` tipi backend şemasıyla elle eşleştirilir.
 - **Test kapsamı boşlukları:**
-  - Frontend'de bileşen/tarayıcı testi yok; yalnız `src/documentPreview.ts` birim testleri var (`npm test`, Node 22.18+).
+  - Frontend'de bileşen/tarayıcı testi yok; yalnız `src/documentPreview.ts` ve `src/records.ts` birim testleri var (`npm test`, Node 22.18+).
   - Endpoint testleri SQLite kullanır; PostgreSQL'e özgü davranış yalnız gerçek ortam testleriyle doğrulanır.
 - **Küçük notlar:** Frontend'de favicon yok (geliştirmede `/favicon.ico` 404). Backend için linter yok. Ayrı dev requirements olmadığı için `pytest` `requirements.txt` içinde.
 

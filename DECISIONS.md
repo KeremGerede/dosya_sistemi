@@ -249,7 +249,7 @@
   - `GET /api/documents/{document_id}` — aynı alanlar + `extracted_text`; `prepared` dahil her durumdaki kayıt ID ile okunabilir. Kayıt yoksa `404`.
   - `GET /api/documents/{document_id}/download` — orijinal dosya, kullanıcının yüklediği `file_name` ile ve `file_type`'a karşılık gelen media type ile döner; kayıt ya da fiziksel dosya yoksa ayrıntısız `404`.
   - `file_reference` ve storage yolu hiçbir yanıtta dönmez; indirilecek yol yalnızca veritabanındaki kayıttan türetilir ve storage klasörü dışına çıkan bir yol kabul edilmez.
-  - Bu aşamada arama, filtre, sayfalama, silme, düzenleme ve authentication yoktur.
+  - Endpoint'lerde arama, filtre, sayfalama, silme, düzenleme ve authentication yoktur; Kayıtlar görünümündeki arama ve filtre istemci tarafındadır (D-048).
 - **Gerekçe:** Sınıflandırma sonuçlarının ve orijinal belgenin görülebilmesi modülün ilk gerçek kullanım ihtiyacı. Endpoint'ler salt okunur olduğu için yeni tablo, migration veya yazma yüzeyi gerekmez; `file_reference`'ın gizli kalması iç depolama düzenini dışarı sızdırmaz.
 
 ### D-032 — Classify yanıt alanları
@@ -367,3 +367,13 @@
   - 5 dosya sınırı yalnızca arayüz sınırıdır: backend'de toplu işlem kavramı ve toplam boyut sınırı yoktur, dosya başına 50 MB sınırı korunur.
   - Bu kontroller yalnızca kullanıcı deneyimi içindir: kabul kararı backend'e aittir (D-001, D-028), backend doğrulamaları kaldırılmaz ve `413` / `415` yanıtları frontend'de ayrıca işlenir.
 - **Gerekçe:** Kullanıcı yanlış veya büyük dosyada anında geri bildirim alır; gereksiz yükleme ve sunucu işi önlenir. İstemci kontrolü atlatılabileceği için güvenlik sınırı sayılmaz. 5 dosya, sıralı işlemede bekleme süresini ve tek ekranda gözden geçirmeyi yönetilebilir tutar. 50 MB sınırı bu nedenle frontend'de de yazılır; sınır değişirse iki yer birlikte güncellenmelidir.
+
+### D-048 — Kayıtlar görünümü: belge türü, istemci tarafı arama/filtre ve özet sayıları
+- **Karar:**
+  - Kayıtlar listesinde ve kayıt detayında belge türü (`document_type_name`; yoksa "Belirlenemedi") gösterilir.
+  - Arama ve filtre yalnız istemci tarafındadır ve `GET /api/documents`'ın döndürdüğü kayıtlar üzerinde çalışır:
+    - Dosya adında arama büyük/küçük harfe duyarsızdır; Türkçe karakterler sade eşleriyle eşleşir (ş/s, ğ/g, ü/u, ö/o, ç/c, ı/i; önizlemedeki katlamayla aynı). Bulanık arama yoktur.
+    - Belge türü, hedef kurum ve durum (`classified` / `needs_review` / `failed`) filtreleri birlikte uygulanır. Tür ve kurum seçenekleri yüklü kayıtlardan türetilir; türü ya da kurumu olmayan kayıtlar "Belirlenemedi" seçeneğinde toplanır.
+  - Üç özet sayısı gösterilir: Toplam Kayıt, İnceleme Gereken (`needs_review`), Başarısız (`failed`). Sayılar tüm yüklü kayıtlardandır; filtreden etkilenmez.
+  - Backend, API, şema ve veritabanı değişmez. Endpoint'lerde arama, filtre ve sayfalama yoktur (D-043); kayıt sayısı istemcide işlenemeyecek kadar büyürse sunucu tarafı filtre/sayfalama ayrı bir karardır.
+- **Gerekçe:** Liste endpoint'i gereken bütün alanları sayfalamasız döndürdüğü için yeni endpoint, sorgu katmanı veya analytics altyapısı gerekmez (D-024). "Sınıflandırıldı" sayısı gösterilmez: `needs_review` belgeler de sınıflandırılmıştır; seçilen üç sayı birbiriyle çakışmaz ve aksiyon gerektiren kayıtları öne çıkarır. Saf yardımcılar `node:test` ile test edilir (D-037).

@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 import { buildDocumentPreview } from './documentPreview'
+import { NO_FILTERS, countRecords, filterOptions, filterRecords } from './records'
+import type { RecordFilters } from './records'
 import './App.css'
 
 // Kullanıcı deneyimi için ön kontroller; kabul kararı backend'e aittir (D-040).
@@ -229,6 +231,8 @@ function RecordsView() {
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  // Arama ve filtre yalnız istemci tarafındadır (D-048); Yenile'de korunur.
+  const [filters, setFilters] = useState<RecordFilters>(NO_FILTERS)
 
   // Durum yalnızca istek sonuçlandığında güncellenir; efekt içinde senkron setState yapılmaz.
   const load = useCallback(async () => {
@@ -280,13 +284,29 @@ function RecordsView() {
     return <p className="status" role="status">Kayıtlar yükleniyor...</p>
   }
 
+  const records = documents ?? []
+  const visible = filterRecords(records, filters)
+  const counts = countRecords(records)
+  const typeOptions = filterOptions(records.map((item) => ({ id: item.document_type, name: item.document_type_name })))
+  const institutionOptions = filterOptions(
+    records.map((item) => ({ id: item.institution_id, name: item.institution_name })),
+  )
+  const filtering = Object.values(filters).some((value) => value.trim() !== '')
+
   return (
     <section className="records">
       <div className="records-head">
         <h2>Kayıtlar</h2>
-        <button type="button" className="secondary" onClick={() => void load()}>
-          Yenile
-        </button>
+        <div className="records-actions">
+          {filtering && (
+            <button type="button" className="secondary" onClick={() => setFilters(NO_FILTERS)}>
+              Filtreleri Temizle
+            </button>
+          )}
+          <button type="button" className="secondary" onClick={() => void load()}>
+            Yenile
+          </button>
+        </div>
       </div>
 
       {message !== null && (
@@ -299,11 +319,80 @@ function RecordsView() {
         <p className="empty">Henüz sınıflandırılmış belge yok. İlk belgeyi "Belge Sınıflandırma" sekmesinden yükleyebilirsiniz.</p>
       )}
 
-      {(documents ?? []).length > 0 && (
+      {records.length > 0 && (
+        <>
+          {/* Sayılar tüm yüklü kayıtlardandır, filtreden etkilenmez (D-048). */}
+          <ul className="record-stats" aria-label="Kayıt özeti">
+            <li>
+              <span className="stat-label">Toplam Kayıt</span>
+              <span className="stat-value">{counts.total}</span>
+            </li>
+            <li className="stat-review">
+              <span className="stat-label">İnceleme Gereken</span>
+              <span className="stat-value">{counts.needsReview}</span>
+            </li>
+            <li className="stat-failed">
+              <span className="stat-label">Başarısız</span>
+              <span className="stat-value">{counts.failed}</span>
+            </li>
+          </ul>
+
+          <div className="records-filters">
+            <input
+              type="search"
+              placeholder="Belge adında ara"
+              aria-label="Belge adında ara"
+              value={filters.query}
+              onChange={(event) => setFilters({ ...filters, query: event.target.value })}
+            />
+            <select
+              aria-label="Belge türü"
+              value={filters.documentType}
+              onChange={(event) => setFilters({ ...filters, documentType: event.target.value })}
+            >
+              <option value="">Tüm türler</option>
+              {typeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Gideceği kurum"
+              value={filters.institution}
+              onChange={(event) => setFilters({ ...filters, institution: event.target.value })}
+            >
+              <option value="">Tüm kurumlar</option>
+              {institutionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Durum"
+              value={filters.status}
+              onChange={(event) => setFilters({ ...filters, status: event.target.value })}
+            >
+              <option value="">Tüm durumlar</option>
+              {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {visible.length === 0 && <p className="empty">Filtrelerle eşleşen kayıt yok.</p>}
+        </>
+      )}
+
+      {visible.length > 0 && (
         <table className="records-table">
           <thead>
             <tr>
               <th scope="col">Belge Adı</th>
+              <th scope="col">Belge Türü</th>
               <th scope="col">Gideceği Kurum</th>
               <th scope="col">Durum</th>
               <th scope="col">Tarih</th>
@@ -311,7 +400,7 @@ function RecordsView() {
             </tr>
           </thead>
           <tbody>
-            {(documents ?? []).map((item) => (
+            {visible.map((item) => (
               <Fragment key={item.document_id}>
                 <tr className={openId === item.document_id ? 'open' : undefined}>
                   <td data-label="Belge Adı">
@@ -328,6 +417,9 @@ function RecordsView() {
                         {item.file_name}
                       </span>
                     </button>
+                  </td>
+                  <td data-label="Belge Türü" className="col-type">
+                    {item.document_type_name ?? 'Belirlenemedi'}
                   </td>
                   <td data-label="Gideceği Kurum" className="col-institution">
                     {item.institution_name ?? 'Belirlenemedi'}
@@ -352,9 +444,13 @@ function RecordsView() {
 
                 {openId === item.document_id && (
                   <tr className="detail-row">
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       <div className="record-detail">
                         {item.summary !== null && <p className="record-summary">{item.summary}</p>}
+
+                        <p className="record-type">
+                          <strong>Belge Türü:</strong> {item.document_type_name ?? 'Belirlenemedi'}
+                        </p>
 
                         {(item.sender_name !== null || item.sender_institution !== null) && (
                           <p className="record-sender">

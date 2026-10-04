@@ -124,7 +124,7 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 - Gönderen kişi ve kurum bilgisinin çıkarımı (yalnızca belgede açıkça yazıyorsa)
 - Belirsizlikte `needs_review` ile insan incelemesine yönlendirme
 - PostgreSQL üzerinde kalıcı kayıt, Alembic ile şema yönetimi
-- Kayıt listesi, detay görüntüleme ve orijinal dosyayı indirme
+- Kayıt listesi (belge türü ve kurumuyla), detay görüntüleme ve orijinal dosyayı indirme; dosya adında arama, tür/kurum/durum filtresi ve özet sayıları (tarayıcı tarafında)
 - Gemini çağrısı için timeout ve geçici hatalarda sınırlı retry
 - Güvenli loglama: belge metni, API anahtarı ve ham model çıktısı loglanmaz
 
@@ -272,7 +272,7 @@ Sürümler `backend/requirements.txt` ve `frontend/package.json` dosyalarında p
 | GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metnin tamamını içerir |
 | GET | `/api/documents/{document_id}/download` | Orijinal belgeyi yüklendiği adla indirir |
 
-Kayıt endpoint'leri salt okunurdur: kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme, ayrıca arama, filtre, sayfalama ve authentication yoktur. Henüz sınıflandırılmamış `prepared` kayıtlar listede görünmez. Sahipsiz kalanlar 24 saatten eskiyse bir sonraki prepare çağrısında temizlenir (zamanlayıcı yok). Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
+Kayıt endpoint'leri salt okunurdur: kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme, ayrıca arama, filtre, sayfalama ve authentication yoktur; arayüzdeki arama ve filtre yüklü liste üzerinde tarayıcıda çalışır. Henüz sınıflandırılmamış `prepared` kayıtlar listede görünmez. Sahipsiz kalanlar 24 saatten eskiyse bir sonraki prepare çağrısında temizlenir (zamanlayıcı yok). Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
 
 **Classify yanıtının alanları:** `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
 
@@ -459,7 +459,7 @@ Değerler `backend/.env` dosyasında tutulur. `.env` Git'e girmez; `.env.example
 | `npm run dev` | Vite dev sunucusunu başlatır |
 | `npm run build` | TypeScript derlemesi ve production build (`dist/`) |
 | `npm run lint` | oxlint ile statik analiz |
-| `npm test` | Önizleme alanı çıkarımının birim testleri (Node'un yerleşik test çalıştırıcısı; Node 22.18+ gerekir) |
+| `npm test` | Önizleme alanı çıkarımı ve Kayıtlar arama/filtre yardımcılarının birim testleri (Node'un yerleşik test çalıştırıcısı; Node 22.18+ gerekir) |
 
 ### Docker
 
@@ -486,7 +486,7 @@ Repo kökünde:
 
 ### Otomatik Testler
 
-Doğrulanmış baseline: backend `pytest` **368 passed**, frontend `npm test` **33 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı, sahte sınıflandırma ve sahte transkripsiyon kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) birim testleridir.
+Doğrulanmış baseline: backend `pytest` **368 passed**, frontend `npm test` **42 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı, sahte sınıflandırma ve sahte transkripsiyon kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) ve Kayıtlar arama/filtre/özet yardımcılarının (`src/records.ts`) birim testleridir.
 
 Kapsanan alanlar:
 

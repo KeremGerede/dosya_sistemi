@@ -25,7 +25,8 @@ const FOLD_MAP: Record<string, string> = { ç: 'c', ğ: 'g', ı: 'i', ö: 'o', �
 
 // Karşılaştırma için Türkçe küçük harfe çevirip aksanları sadeleştirir. Uzunluk korunur (her karakter tek karaktere
 // eşlenir), böylece katlanmış metindeki konumlar orijinal metinde de geçerlidir. OCR'ın İ→I, Ç→C kayıpları da eşleşir.
-function fold(text: string): string {
+// Kayıtlar'daki dosya adı araması da aynı katlamayı kullanır (D-048).
+export function fold(text: string): string {
   return text.toLocaleLowerCase('tr-TR').replace(/[çğıöşüâîû]/g, (char) => FOLD_MAP[char])
 }
 
