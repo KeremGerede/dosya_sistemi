@@ -8,17 +8,22 @@
 
 ## Mevcut aşama
 
-**V1.0–V1.4 ve Kayıtlar deneyimi iyileştirmesi tamamlandı. Açık iş hattı yok.**
+**Ana iş hatları tamamlandı: V1.0–V1.4 ve V1.4 sonrası arayüz iyileştirmeleri. Sunum öncesi preflight ve uçtan uca demo provası geçti; blocker veya high bulgu yok. Açık iş hattı yok; yeni feature henüz seçilmedi.**
+
+- **Sunum hazırlığı** (2026-10-04): Preflight ve demo provası gerçek PostgreSQL ve Gemini ile geçti. Kapsam: tek belge, OCR (taranmış PDF ve görüntü), `needs_review` dahil çoklu yükleme, Kayıtlar, yeniden başlatma sonrası kalıcılık.
+  - Açık kontrol: PDF orijinal görünümü sunum tarayıcısında elle denenmeli; otomatik test tarayıcısında PDF görüntüleyici yok.
 
 - **Kayıtlar deneyimi** (frontend; D-048): **tamamlandı**.
   - Listede ve detayda belge türü; dosya adında arama (büyük/küçük harf ve Türkçe karakter duyarsız); tür/kurum/durum filtresi; Toplam Kayıt / İnceleme Gereken / Başarısız sayıları.
-  - Tamamen istemci tarafı; backend, API ve veritabanı değişmedi. Gerçek backend ve PostgreSQL ile 1366×768'de tarayıcıda doğrulandı.
+  - Tamamen istemci tarafı; backend, API ve veritabanı değişmedi.
+
+- **Çoklu analiz ve sonuç deneyimi** (frontend; D-045): **tamamlandı**.
+  - Analiz sonrası satırda tür/kurum; "Sonucu Gör" ile sonuç-önce panel; masaüstünde sabit analiz çubuğu.
+  - Sonuç kartı: tür/kurum birincil, AI özeti, "Kontrol Öneriliyor" + kontrol nedeni, orijinal belgeyi gör/indir; önizleme ve çıkarılan metin varsayılan kapalı.
 
 - **V1.4 — Çoklu Belge Yükleme ve Önizleme** (UX/workflow; D-045, D-046): **tamamlandı**.
   - Hazırla → önizle → sınıflandır akışı. En fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı işleme.
   - `prepared` kayıt yaşam döngüsü: kaldırma (`DELETE …/prepared`), `409` kurtarma, sahipsiz kayıtlar için 24 saatlik yedek temizlik.
-  - Analiz sonrası satırda tür/kurum, "Sonucu Gör" ile sonuç-önce panel ve masaüstünde sabit analiz çubuğu (2026-10-04).
-  - Sonuç kartı: tür/kurum birincil, AI özeti, "Kontrol Öneriliyor" + kontrol nedeni, orijinal belgeyi gör/indir; önizleme ve çıkarılan metin varsayılan kapalı (2026-10-04).
   - Gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulandı. PDF görüntüleyici gerçek tarayıcıda elle doğrulandı.
 - **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction; D-047): **tamamlandı**.
   - OCR gereken belgelerde birincil OCR/transkripsiyon: Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`).
@@ -98,7 +103,7 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
   - Endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır.
   - Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
 
-**Son gerçek ortam doğrulaması** (2026-10-03; PostgreSQL + Gemini + Tesseract):
+**V1.3 gerçek ortam doğrulaması** (2026-10-03; PostgreSQL + Gemini + Tesseract):
 - **Basılı kontrol seti (8 belge):** Production transkripti, benchmark çıktısıyla normalize edilmiş haliyle 8/8 aynı.
 - **Dijital PDF/DOCX/DOC:** Transkripsiyon yok; çıkarılan metin değişmedi.
 - **Hybrid ve bozuk metin katmanlı PDF:** Tek transkripsiyon; tüm içerik okundu, bozuk katman sızmadı.
@@ -204,7 +209,7 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
 
 ## Sıradaki geliştirme hedefleri
 
-Açık iş hattı yok; V1.3 ve V1.4 tamamlandı. Aşağıdakiler **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
+Açık iş hattı yok; ana iş hatları tamamlandı ve yeni feature henüz seçilmedi. Aşağıdakiler **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
 
 - Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi
 - Taranmış tablo ve form belgelerinde okuma dayanıklılığı

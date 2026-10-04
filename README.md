@@ -4,7 +4,7 @@ Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki be
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-**Durum:** V1.0–V1.4 tamamlandı. Son kapatılan iş hattı: **V1.3** — El Yazısı ve Gelişmiş OCR Güvenilirliği (OCR/extraction). Şu anda açık iş hattı yok.
+**Durum:** V1.0–V1.4 ve V1.4 sonrası arayüz iyileştirmeleri (Kayıtlar, çoklu analiz ve sonuç deneyimi) tamamlandı. Şu anda açık iş hattı yok.
 
 ## İçindekiler
 
@@ -82,7 +82,7 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
   - El yazısı, 9 örnek: Tesseract CER ~%37, Gemini CER ~%4.
   - Basılı tarama, 8 belge: gerileme yok.
 - Gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulama. 21 sayfalık taranmış PDF 7 grup çağrısıyla okundu, 21/21 sayfa geldi.
-- Backend `pytest` 368, frontend `npm test` 33 test; production implementasyonu ve E2E doğrulaması tamamlandı.
+- Teslim anında backend `pytest` 368, frontend `npm test` 33 test; production implementasyonu ve E2E doğrulaması tamamlandı (güncel baseline: [Test ve Kalite](#test-ve-kalite)).
 
 ### V1.4 — Çoklu Belge Yükleme ve Önizleme
 
@@ -96,6 +96,14 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 - Dosya başına durum ve sonuç gösterimi
 - İki adımlı API (`prepare`, `/{document_id}/classify`, `DELETE /{document_id}/prepared`), `409` kurtarma ve sahipsiz hazırlıklar için 24 saatlik yedek temizlik
 - Gerçek PostgreSQL, Gemini ve Tesseract OCR ile metin PDF, taranmış PDF, DOCX, DOC ve JPG üzerinde uçtan uca doğrulama
+
+### V1.4 sonrası — Arayüz İyileştirmeleri
+
+**Tamamlandı.** Yalnız frontend; backend, API ve veritabanı değişmedi (D-045, D-048). Teslim edilenler:
+
+- Kayıtlar: listede ve detayda belge türü; dosya adında arama (büyük/küçük harf ve Türkçe karakter duyarsız); tür, kurum ve durum filtreleri; Toplam Kayıt / İnceleme Gereken / Başarısız özet sayıları
+- Çoklu analiz: analizi biten satırda belge türü ve hedef kurum; satır düğmesi analizden sonra "Sonucu Gör" olur ve panel sonuç kartıyla başlar; masaüstünde analiz düğmesi ekranın altında sabit kalır
+- Sonuç kartı: "Analiz tamamlandı" başlığı ve dosya adı; birincil Belge Türü ve Hedef Kurum; AI Özeti; `needs_review`'da "Kontrol Öneriliyor" ve kontrol nedeni; Orijinal Belgeyi Gör / İndir. Önizleme formu ve çıkarılan metin analizden sonra varsayılan kapalıdır; kesinlik ya da doğruluk iddiası taşıyan ifade kullanılmaz
 
 ## Projenin Amacı
 
@@ -124,6 +132,8 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 - Gönderen kişi ve kurum bilgisinin çıkarımı (yalnızca belgede açıkça yazıyorsa)
 - Belirsizlikte `needs_review` ile insan incelemesine yönlendirme
 - PostgreSQL üzerinde kalıcı kayıt, Alembic ile şema yönetimi
+- En fazla 5 dosyalık çoklu yükleme ve iki adımlı akış: hazırla → önizle → sınıflandır (metin çıkarımı/OCR yalnız bir kez)
+- Sonuç kartı: belge türü ve hedef kurum birincil, AI özeti, inceleme gerekiyorsa "Kontrol Öneriliyor" ve kontrol nedeni, orijinal belgeyi görme/indirme
 - Kayıt listesi (belge türü ve kurumuyla), detay görüntüleme ve orijinal dosyayı indirme; dosya adında arama, tür/kurum/durum filtresi ve özet sayıları (tarayıcı tarafında)
 - Gemini çağrısı için timeout ve geçici hatalarda sınırlı retry
 - Güvenli loglama: belge metni, API anahtarı ve ham model çıktısı loglanmaz
@@ -504,6 +514,7 @@ Kapsanan alanlar:
 - İki adımlı akış: prepare, hazırlanmış belgeyi sınıflandırma (dosya yeniden okunmadan), kaldırma, `409` durumları ve 24 saatlik yedek temizlik
 - Gemini transkripsiyonu: retry/timeout, boş ve kısa yanıt, 3 sayfalık gruplar, Tesseract yedeğine düşüş ve `needs_review` işaretinin korunması
 - Önizleme alanlarının deterministik çıkarımı (konu, tarih, evrak no, gönderen; açıkça yazmayan alan boş kalır)
+- Kayıtlar arama/filtre/özet yardımcıları (Türkçe karakter duyarsız dosya adı araması, birlikte uygulanan filtreler, özet sayıları)
 
 ### Gerçek / Uçtan Uca Doğrulamalar
 
@@ -518,6 +529,7 @@ Kapsanan alanlar:
 - Gerçek Türkçe el yazısı (9 örnek) ve basılı tarama (8 belge) üzerinde Tesseract ile Gemini transkripsiyonunun karşılaştırması (V1.3, repo dışında)
 - V1.4 çoklu yükleme ve önizleme akışının gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması
 - V1.3 Gemini transkripsiyonunun gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması. Kapsam: basılı kontrol seti, dijital belgeler, hybrid ve bozuk metin katmanlı PDF, zorlanmış 503 ile Tesseract yedeği, 3–21 sayfalık taranmış PDF'ler
+- Sunum öncesi preflight ve uçtan uca demo provası (gerçek PostgreSQL ve Gemini): tek belge akışı, taranmış PDF ve görüntü (OCR), `needs_review` dahil 3 dosyalık çoklu yükleme, Kayıtlar filtreleri/detay/indirme, backend ve PostgreSQL yeniden başlatıldıktan sonra kayıtların kalıcılığı
 
 Güncel test baseline'ı ve son doğrulama özeti: [`CURRENT_STATE.md`](CURRENT_STATE.md). Ayrıntılı geçmiş Git geçmişindedir.
 
@@ -536,13 +548,14 @@ Güncel test baseline'ı ve son doğrulama özeti: [`CURRENT_STATE.md`](CURRENT_
 - Kurum yönlendirmesi mevcut katalogla sınırlıdır; katalogda olmayan birimlere ait belgeler `needs_review` olur.
 - Tesseract yalnız yedektir; kurulu değilse ve Gemini transkripsiyonu da başarısız olursa taranmış PDF'ler ve görüntü belgeleri `failed` olur.
 - Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma) için 120 saniye zaman aşımı uygular (D-039); süre dolsa da backend işlemi tamamlamış olabilir.
+- "Orijinal Belgeyi Gör" PDF'lerde tarayıcının yerleşik PDF görüntüleyicisini kullanır; görüntüleyicisi olmayan tarayıcılarda (çoğu mobil) yerine bilgi mesajı gösterilir. DOC/DOCX için orijinal görünüm yoktur.
 - Aynı makinede aynı projeden ikinci bir Docker Compose stack'i başlatmak container adı, port ve volume çakışmasına yol açar; temiz bir makinede tek klon sorunsuz çalışır.
 
 Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.md`](CURRENT_STATE.md)
 
 ## Yol Haritası
 
-Şu anda açık iş hattı yok. V1.3 ve V1.4 tamamlandı; teslim edilenler [Sürüm Geçmişi](#sürüm-geçmişi) bölümündedir.
+Şu anda açık iş hattı yok. V1.3, V1.4 ve V1.4 sonrası arayüz iyileştirmeleri tamamlandı; teslim edilenler [Sürüm Geçmişi](#sürüm-geçmişi) bölümündedir.
 
 ### Daha Sonra Değerlendirilebilecekler
 
