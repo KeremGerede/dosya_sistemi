@@ -156,8 +156,9 @@ button.primary:disabled {
   cursor: not-allowed;
 }
 
-/* İkincil aksiyon (Yenile, Önizle, Kaldır, Tamamlananları Temizle) */
-button.secondary {
+/* İkincil aksiyon (Yenile, Önizle, Kaldır, Tamamlananları Temizle; bağlantı olarak: Orijinal Belgeyi İndir) */
+button.secondary,
+a.secondary {
   padding: 0.4rem 0.85rem;
   background-color: var(--surface);
   border: 1px solid var(--border-strong);
@@ -167,7 +168,13 @@ button.secondary {
   transition: background-color 0.12s ease;
 }
 
-button.secondary:hover:not(:disabled) {
+a.secondary {
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+
+button.secondary:hover:not(:disabled),
+a.secondary:hover {
   background-color: var(--surface-muted);
 }
 
@@ -238,14 +245,6 @@ button.small {
   margin-bottom: 0;
 }
 
-.success {
-  border-left-color: var(--ok-border);
-}
-
-.success h2 {
-  color: var(--ok-text);
-}
-
 .review {
   background-color: var(--warn-bg);
   border-color: var(--warn-border);
@@ -283,11 +282,6 @@ dd {
   overflow-wrap: anywhere;
 }
 
-dd.summary {
-  font-weight: 400;
-  line-height: 1.55;
-}
-
 .review-reason {
   margin-top: 0.9rem;
   padding: 0.7rem 0.9rem;
@@ -296,6 +290,79 @@ dd.summary {
   border-radius: var(--radius-sm);
   font-size: 0.925rem;
   line-height: 1.55;
+}
+
+/* Analiz sonucu (D-045): başlık + dosya, birincil tür/kurum, AI özeti, aksiyonlar. Normal sonuç nötr kalır;
+   başarı rengi kullanılmaz (anlamsal kalite kapısı yok). */
+
+.result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.notice .result-head h2 {
+  margin: 0;
+}
+
+.notice .result-file {
+  margin: 0.15rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+dl.result-primary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.result-primary > div {
+  padding: 0.75rem 0.9rem;
+  background-color: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.result-primary dt {
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.result-primary dd {
+  margin: 0.25rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.result-summary p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+/* Analizden sonra önizleme ve çıkarılan metin ikincil, varsayılan kapalı bölümdedir */
+.result-details > summary {
+  padding: 0.35rem 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.result-details[open] > summary {
+  margin-bottom: 0.75rem;
 }
 
 /* Kayıtlar */
@@ -745,7 +812,8 @@ tr.open .chevron {
 
 .badge.batch-queued,
 .badge.batch-preparing,
-.badge.batch-waiting {
+.badge.batch-waiting,
+.badge.neutral {
   background-color: var(--surface-muted);
   border-color: var(--border-strong);
   color: var(--text-muted);
@@ -1082,6 +1150,11 @@ dl.preview-fields {
 
   dd {
     margin-bottom: 0.6rem;
+  }
+
+  dl.result-primary {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
   }
 
   dl.preview-fields {

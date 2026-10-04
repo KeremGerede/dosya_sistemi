@@ -110,7 +110,7 @@ const BATCH_LABELS: Record<BatchState, string> = {
   waiting: 'Bekliyor',
   analyzing: 'Analiz Ediliyor',
   done: 'Tamamlandı',
-  review: 'İnceleme Gerekiyor',
+  review: 'Kontrol Öneriliyor',
   failed: 'Başarısız',
 }
 
@@ -491,43 +491,69 @@ function RecordsView() {
   )
 }
 
-function ResultCard({ result }: { result: ClassifyResponse }) {
+// Analiz sonucu (D-045). Anlamsal kalite kapısı olmadığından kesinlik iddiası yoktur: başlık her durumda
+// "Analiz tamamlandı"dır; needs_review'da "Kontrol Öneriliyor" gösterilir. Tür ve kurum birincil sonuçtur.
+function ResultCard({ result, onViewOriginal }: { result: ClassifyResponse; onViewOriginal: (() => void) | null }) {
   return (
-    <section className={result.needs_review ? 'notice review' : 'notice success'}>
-      <h2>{result.needs_review ? 'İnsan incelemesi gerekiyor' : 'Belge başarıyla sınıflandırıldı.'}</h2>
-      {result.needs_review && <p>Belge işlendi; sonucun bir kişi tarafından kontrol edilmesi gerekiyor.</p>}
-      <dl>
-        <dt>Dosya</dt>
-        <dd>{result.file_name}</dd>
-        <dt>Belge Türü</dt>
-        <dd>{result.document_type_name ?? 'Belirlenemedi'}</dd>
-        <dt>Gönderileceği Kurum</dt>
-        <dd>{result.institution_name ?? 'Belirlenemedi'}</dd>
-        {/* Gönderen alanları yalnızca belgede açıkça yazıyorsa gösterilir. */}
-        {result.sender_name !== null && (
-          <>
-            <dt>Gönderen Kişi</dt>
-            <dd>{result.sender_name}</dd>
-          </>
-        )}
-        {result.sender_institution !== null && (
-          <>
-            <dt>Gönderen Kurum</dt>
-            <dd>{result.sender_institution}</dd>
-          </>
-        )}
-        {result.summary !== null && (
-          <>
-            <dt>Belge Özeti</dt>
-            <dd className="summary">{result.summary}</dd>
-          </>
-        )}
+    <section className={result.needs_review ? 'notice result review' : 'notice result'} aria-label="Analiz sonucu">
+      <div className="result-head">
+        <div>
+          <h2>Analiz tamamlandı</h2>
+          <p className="result-file">{result.file_name}</p>
+        </div>
+        <span className={result.needs_review ? 'badge needs_review' : 'badge neutral'}>
+          {result.needs_review ? 'Kontrol Öneriliyor' : 'Sınıflandırıldı'}
+        </span>
+      </div>
+
+      <dl className="result-primary">
+        <div>
+          <dt>Belge Türü</dt>
+          <dd>{result.document_type_name ?? 'Belirlenemedi'}</dd>
+        </div>
+        <div>
+          <dt>Hedef Kurum</dt>
+          <dd>{result.institution_name ?? 'Belirlenemedi'}</dd>
+        </div>
       </dl>
-      {result.needs_review && result.review_reason !== null && (
+
+      {result.needs_review && (
         <p className="review-reason">
-          <strong>İnceleme nedeni:</strong> {result.review_reason}
+          {result.review_reason !== null ? (
+            <>
+              <strong>Kontrol nedeni:</strong> {result.review_reason}
+            </>
+          ) : (
+            'Sonucu orijinal belgeyle karşılaştırmanız önerilir.'
+          )}
         </p>
       )}
+
+      {result.summary !== null && (
+        <div className="result-summary">
+          <h3>AI Özeti</h3>
+          <p>{result.summary}</p>
+        </div>
+      )}
+
+      {/* Gönderen alanları yalnızca belgede açıkça yazıyorsa gelir. */}
+      {(result.sender_name !== null || result.sender_institution !== null) && (
+        <p className="record-sender">
+          <strong>Gönderen:</strong>{' '}
+          {[result.sender_name, result.sender_institution].filter((value) => value !== null).join(' · ')}
+        </p>
+      )}
+
+      <div className="result-actions">
+        {onViewOriginal !== null && (
+          <button type="button" className="secondary" onClick={onViewOriginal}>
+            Orijinal Belgeyi Gör
+          </button>
+        )}
+        <a className="secondary" href={`/api/documents/${result.document_id}/download`}>
+          Orijinal Belgeyi İndir
+        </a>
+      </div>
     </section>
   )
 }
@@ -569,89 +595,102 @@ function PreviewPanel({
   const textId = `${id}-text`
   const canViewOriginal = fileType !== null && fileType in PREVIEW_MEDIA_TYPES
   const canSelect = item.state === 'ready' || item.state === 'waiting'
+  const result = item.state === 'done' || item.state === 'review' ? item.result : null
 
-  return (
-    <div className="record-detail preview" id={id}>
-      {/* Analiz bittiyse sonuç önce gelir; önizleme formu altında kalır. */}
-      {item.result !== null && (item.state === 'done' || item.state === 'review') && <ResultCard result={item.result} />}
-
-      <section className="doc-preview" aria-labelledby={titleId}>
-        <h3 id={titleId}>Belge Önizlemesi</h3>
-        <dl className="preview-fields">
-          <div className="field wide">
-            <dt>Dosya</dt>
-            <dd>{preview.fileName}</dd>
-          </div>
-          <div className="field wide">
-            <dt>Hitap / Başlık</dt>
-            <FieldValue value={preview.heading} />
-          </div>
-          <div className="field wide">
-            <dt>Konu</dt>
-            <FieldValue value={preview.subject} />
-          </div>
-          <div className="field">
-            <dt>Tarih</dt>
-            <FieldValue value={preview.date} />
-          </div>
-          <div className="field">
-            <dt>Evrak No</dt>
-            <FieldValue value={preview.documentNo} />
-          </div>
-          <div className="field">
-            <dt>Gönderen</dt>
-            <FieldValue value={preview.sender} />
-          </div>
-          <div className="field">
-            <dt>Gönderen Kurum</dt>
-            <FieldValue value={preview.senderInstitution} />
-          </div>
-          <div className="field wide">
-            <dt>Belge İçeriği</dt>
-            {text === null ? (
-              <dd className="missing">Bu belgeden metin çıkarılamadı.</dd>
-            ) : (
-              <FieldValue value={preview.content} className="content" />
-            )}
-          </div>
-        </dl>
-        {text !== null && canSelect && (
-          <p className="hint">"—": belgede açıkça bulunamadı. Bu bir hata değildir; belge yine analiz edilebilir.</p>
-        )}
-
-        <div className="preview-actions">
-          {canViewOriginal && (
-            <button type="button" className="secondary" onClick={onViewOriginal}>
-              Orijinal Belgeyi Gör
-            </button>
-          )}
-          {text !== null && (
-            <button type="button" className="secondary" onClick={onToggleText} aria-expanded={textOpen} aria-controls={textId}>
-              {textOpen ? 'Çıkarılan Metni Gizle' : 'Çıkarılan Metni Gör'}
-            </button>
+  const previewSection = (
+    <section className="doc-preview" aria-labelledby={titleId}>
+      <h3 id={titleId}>Belge Önizlemesi</h3>
+      <dl className="preview-fields">
+        <div className="field wide">
+          <dt>Dosya</dt>
+          <dd>{preview.fileName}</dd>
+        </div>
+        <div className="field wide">
+          <dt>Hitap / Başlık</dt>
+          <FieldValue value={preview.heading} />
+        </div>
+        <div className="field wide">
+          <dt>Konu</dt>
+          <FieldValue value={preview.subject} />
+        </div>
+        <div className="field">
+          <dt>Tarih</dt>
+          <FieldValue value={preview.date} />
+        </div>
+        <div className="field">
+          <dt>Evrak No</dt>
+          <FieldValue value={preview.documentNo} />
+        </div>
+        <div className="field">
+          <dt>Gönderen</dt>
+          <FieldValue value={preview.sender} />
+        </div>
+        <div className="field">
+          <dt>Gönderen Kurum</dt>
+          <FieldValue value={preview.senderInstitution} />
+        </div>
+        <div className="field wide">
+          <dt>Belge İçeriği</dt>
+          {text === null ? (
+            <dd className="missing">Bu belgeden metin çıkarılamadı.</dd>
+          ) : (
+            <FieldValue value={preview.content} className="content" />
           )}
         </div>
-        {(fileType === 'doc' || fileType === 'docx') && (
-          <p className="hint">Word belgelerinin görünümü gösterilmez; önizleme çıkarılan metinden oluşturulur.</p>
-        )}
-        {textOpen && text !== null && (
-          <pre className="extracted-text" id={textId}>
-            {text}
-          </pre>
-        )}
+      </dl>
+      {text !== null && canSelect && (
+        <p className="hint">"—": belgede açıkça bulunamadı. Bu bir hata değildir; belge yine analiz edilebilir.</p>
+      )}
 
-        {canSelect && (
-          <label className="include-toggle">
-            <input
-              type="checkbox"
-              checked={item.selected}
-              disabled={item.state !== 'ready' || item.removing}
-              onChange={(event) => onSelect(event.target.checked)}
-            />
-            Analize dahil et
-          </label>
+      <div className="preview-actions">
+        {canViewOriginal && (
+          <button type="button" className="secondary" onClick={onViewOriginal}>
+            Orijinal Belgeyi Gör
+          </button>
         )}
-      </section>
+        {text !== null && (
+          <button type="button" className="secondary" onClick={onToggleText} aria-expanded={textOpen} aria-controls={textId}>
+            {textOpen ? 'Çıkarılan Metni Gizle' : 'Çıkarılan Metni Gör'}
+          </button>
+        )}
+      </div>
+      {(fileType === 'doc' || fileType === 'docx') && (
+        <p className="hint">Word belgelerinin görünümü gösterilmez; önizleme çıkarılan metinden oluşturulur.</p>
+      )}
+      {textOpen && text !== null && (
+        <pre className="extracted-text" id={textId}>
+          {text}
+        </pre>
+      )}
+
+      {canSelect && (
+        <label className="include-toggle">
+          <input
+            type="checkbox"
+            checked={item.selected}
+            disabled={item.state !== 'ready' || item.removing}
+            onChange={(event) => onSelect(event.target.checked)}
+          />
+          Analize dahil et
+        </label>
+      )}
+    </section>
+  )
+
+  // Analiz bittiyse sonuç kartı önce gelir; önizleme ve çıkarılan metin varsayılan kapalı ikincil bölüme iner.
+  return (
+    <div className="record-detail preview" id={id}>
+      {result === null ? (
+        previewSection
+      ) : (
+        <>
+          <ResultCard result={result} onViewOriginal={canViewOriginal ? onViewOriginal : null} />
+          <details className="result-details">
+            <summary>Belge önizlemesi ve çıkarılan metin</summary>
+            {previewSection}
+          </details>
+        </>
+      )}
     </div>
   )
 }

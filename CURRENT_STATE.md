@@ -18,6 +18,7 @@
   - Hazırla → önizle → sınıflandır akışı. En fazla 5 dosya, sürükle-bırak, içerik merkezli önizleme, sıralı işleme.
   - `prepared` kayıt yaşam döngüsü: kaldırma (`DELETE …/prepared`), `409` kurtarma, sahipsiz kayıtlar için 24 saatlik yedek temizlik.
   - Analiz sonrası satırda tür/kurum, "Sonucu Gör" ile sonuç-önce panel ve masaüstünde sabit analiz çubuğu (2026-10-04).
+  - Sonuç kartı: tür/kurum birincil, AI özeti, "Kontrol Öneriliyor" + kontrol nedeni, orijinal belgeyi gör/indir; önizleme ve çıkarılan metin varsayılan kapalı (2026-10-04).
   - Gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulandı. PDF görüntüleyici gerçek tarayıcıda elle doğrulandı.
 - **V1.3 — El Yazısı ve Gelişmiş OCR Güvenilirliği** (OCR/extraction; D-047): **tamamlandı**.
   - OCR gereken belgelerde birincil OCR/transkripsiyon: Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`).
@@ -123,7 +124,7 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
   - Dosyanın kendisi (görüntü/PDF) Gemini'ye gönderilir.
 - **Çıktı biçimi:** El yazısında LaTeX ok işareti ve sütun okuma sırası farkı görülebilir; önizleme alanları etkilenebilir. Prompt ölçüldüğü haliyle sabittir.
 - **Kısa transkript:** 10 karakterden kısa transkript yedek yola düşer. Gerçekten boş ya da okunmaz belgede `422`'den önce bir Tesseract çalıştırması eklenir.
-- **Önizlemede yedek OCR uyarısı yok:** İşaret `prepared` yanıtında bulunur; arayüzde yalnız sınıflandırma sonucunda "İnceleme nedeni" olarak görünür.
+- **Önizlemede yedek OCR uyarısı yok:** İşaret `prepared` yanıtında bulunur; arayüzde yalnız sınıflandırma sonucunda "Kontrol nedeni" olarak görünür.
 - **Filigranlı dijital sayfa:** Tam sayfa arka plan/filigran görüntüsü olan bir dijital sayfada metin 200 karakterin altındaysa belge gereksiz yere transkripsiyona gider (ek çağrı ve süre).
 - **Ölçülmeyenler:** Döndürülmüş görüntüler, gürültülü taramalar ve taranmış tablo/formlar Gemini ile ayrıca ölçülmedi.
 - **Tesseract yedeğinin sınırları:**
