@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-10-04
+> **Son güncelleme:** 2026-10-06
 >
 > Projenin güncel durumu (snapshot). Geliştirme günlüğü değildir: yalnız güncel durum, aktif riskler ve sıradaki adımlar tutulur. Geçmiş ayrıntılar Git geçmişinde, sürüm özetleri `README.md` "Sürüm Geçmişi" bölümündedir.
 >
@@ -8,7 +8,7 @@
 
 ## Mevcut aşama
 
-**Ana iş hatları tamamlandı: V1.0–V1.4 ve V1.4 sonrası arayüz iyileştirmeleri. Sunum öncesi preflight ve uçtan uca demo provası geçti; blocker veya high bulgu yok. Açık iş hattı yok; yeni feature henüz seçilmedi.**
+**Ana iş hatları tamamlandı: V1.0–V1.4 ve V1.4 sonrası arayüz iyileştirmeleri. Sunum öncesi preflight ve uçtan uca demo provası geçti; blocker veya high bulgu yok. Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur; aynı anda yalnız bir yeni workstream açılır. İlk geliştirme adayı Human Validation + Routing Correction ("Sıradaki geliştirme hedefleri").**
 
 - **Sunum hazırlığı** (2026-10-04): Preflight ve demo provası gerçek PostgreSQL ve Gemini ile geçti. Kapsam: tek belge, OCR (taranmış PDF ve görüntü), `needs_review` dahil çoklu yükleme, Kayıtlar, yeniden başlatma sonrası kalıcılık.
   - Açık kontrol: PDF orijinal görünümü sunum tarayıcısında elle denenmeli; otomatik test tarayıcısında PDF görüntüleyici yok.
@@ -209,7 +209,25 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
 
 ## Sıradaki geliştirme hedefleri
 
-Açık iş hattı yok; ana iş hatları tamamlandı ve yeni feature henüz seçilmedi. Aşağıdakiler **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir:
+Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur: aynı anda yalnız bir yeni workstream açılır; açık feature tamamlanıp testleri ve demo provası geçmeden ikinci feature açılmaz. Aşağıdakilerin hiçbiri implement edilmedi ve **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir.
+
+### Aday roadmap
+
+Sıra: 1 → 2 → gerçek kullanıcı araştırması → yalnız araştırma doğrularsa 3.
+
+1. **Human Validation + Routing Correction** — GO. İlk geliştirme adayı.
+   - AI'ın `document_type` ve `institution_id` sonucu korunur; kullanıcının onayladığı değerler ayrı tutulur.
+   - Kullanıcı sonucu olduğu gibi onaylar veya değiştirir.
+   - Önce karar gerekir: bugün kalıcı kayıtlar değiştirilemez (D-019; `PROJECT_BRAIN.md` §12).
+2. **Evidence-backed Routing** — GO WITH CONSTRAINTS. İkinci aday; 1 tamamlanmadan açılmaz.
+   - Tercih: mevcut sınıflandırma çağrısında opsiyonel evidence üretimi; ayrı Gemini çağrısı planlanmıyor.
+   - Backend yalnız `extracted_text` içinde doğrulanan kaynak ifadeleri saklar; arayüzde "Belgedeki ilgili ifade" olarak gösterilir.
+3. **Structured Operational Extraction** — GO WITH CONSTRAINTS / USER VALIDATION REQUIRED.
+   - Teknik olarak uygulanabilir; gerçek kurum kullanıcısıyla doğrulamadan sonra değerlendirilir.
+   - Ana soru: "Sınıflandırmadan sonra personel belgeyi hangi 2–3 bilgi için tekrar açıyor?"
+   - Araştırma gerçek değer göstermeden alan şeması oluşturulmaz.
+
+### Diğer adaylar (sırasız)
 
 - Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi
 - Taranmış tablo ve form belgelerinde okuma dayanıklılığı
