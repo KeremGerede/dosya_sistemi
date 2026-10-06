@@ -24,5 +24,10 @@ class Document(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     sender_name: Mapped[str | None] = mapped_column(Text)
     sender_institution: Mapped[str | None] = mapped_column(Text)
+    # D-049: kullanıcının onayladığı yönlendirme; AI alanlarından ayrı tutulur, onaysız kayıtta null.
+    # validated_at doluysa validated_document_type da doludur; üçünü yalnız onay endpoint'i birlikte yazar.
+    validated_document_type: Mapped[str | None]
+    validated_institution_id: Mapped[str | None]
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

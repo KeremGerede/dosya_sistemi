@@ -4,7 +4,7 @@ Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki be
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR
 
-**Durum:** V1.0–V1.4 ve V1.4 sonrası arayüz iyileştirmeleri (Kayıtlar, çoklu analiz ve sonuç deneyimi) tamamlandı. Şu anda açık iş hattı yok.
+**Durum:** V1.0–V1.4, V1.4 sonrası arayüz iyileştirmeleri (Kayıtlar, çoklu analiz ve sonuç deneyimi) ve Human Validation + Routing Correction tamamlandı. Şu anda açık iş hattı yok.
 
 ## İçindekiler
 
@@ -105,6 +105,16 @@ Ayrıntılı dokümantasyon: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) (amaç, mima
 - Çoklu analiz: analizi biten satırda belge türü ve hedef kurum; satır düğmesi analizden sonra "Sonucu Gör" olur ve panel sonuç kartıyla başlar; masaüstünde analiz düğmesi ekranın altında sabit kalır
 - Sonuç kartı: "Analiz tamamlandı" başlığı ve dosya adı; birincil Belge Türü ve Hedef Kurum; AI Özeti; `needs_review`'da "Kontrol Öneriliyor" ve kontrol nedeni; Orijinal Belgeyi Gör / İndir. Önizleme formu ve çıkarılan metin analizden sonra varsayılan kapalıdır; kesinlik ya da doğruluk iddiası taşıyan ifade kullanılmaz
 
+### Human Validation + Routing Correction
+
+**Tamamlandı** (D-049). Teslim edilenler:
+
+- Sonuç kartında ve Kayıtlar detayında AI sonucunu olduğu gibi onaylama ("Sonucu Onayla") ya da belge türünü ve kurumu katalog içinden düzeltme ("Düzelt"); kurum "Belirlenemedi" olarak onaylanabilir, tekrar onay serbesttir
+- AI sonucu ve inceleme işareti değişmez; onaylanan değerler ayrı `validated_*` alanlarında saklanır
+- Arayüz onaylı kayıtta onaylanan değeri gösterir; AI önerisi yalnız farklıysa ikincil satırda görünür
+- Kayıtlar: "Onaylandı" durumu ve filtresi; İnceleme Gereken yalnız onaylanmamış kayıtları sayar
+- `GET /api/catalogs` ve `PUT /api/documents/{document_id}/validation`; ayrı geçici veritabanında gerçek tarayıcıyla uçtan uca doğrulama
+
 ## Projenin Amacı
 
 Kurumlara gelen belgeler tek tip değildir: dijital PDF, Word dosyası, taranmış evrak, telefonla çekilmiş fotoğraf, Word 97–2003'ten kalma legacy DOC ve birbirinden farklı sayfa düzenleri aynı gelen kutusunda bulunur.
@@ -135,6 +145,7 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 - En fazla 5 dosyalık çoklu yükleme ve iki adımlı akış: hazırla → önizle → sınıflandır (metin çıkarımı/OCR yalnız bir kez)
 - Sonuç kartı: belge türü ve hedef kurum birincil, AI özeti, inceleme gerekiyorsa "Kontrol Öneriliyor" ve kontrol nedeni, orijinal belgeyi görme/indirme
 - Kayıt listesi (belge türü ve kurumuyla), detay görüntüleme ve orijinal dosyayı indirme; dosya adında arama, tür/kurum/durum filtresi ve özet sayıları (tarayıcı tarafında)
+- Sonucu onaylama veya katalog içinden düzeltme (sonuç kartı ve Kayıtlar detayı); AI sonucu korunur, onaylanan tür ve kurum ayrı saklanır ve arayüzde öncelikli gösterilir
 - Gemini çağrısı için timeout ve geçici hatalarda sınırlı retry
 - Güvenli loglama: belge metni, API anahtarı ve ham model çıktısı loglanmaz
 
@@ -149,6 +160,7 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 - Belirsiz belgelerin `needs_review` olarak işaretlenmesi
 - Sonuçların ve çıkarılan metnin PostgreSQL'de, orijinal dosyanın dosya sisteminde saklanması
 - Kayıtların listelenmesi, detayının görüntülenmesi ve orijinal dosyanın indirilmesi
+- Sınıflandırma sonucunun kullanıcı tarafından onaylanması veya katalog içinden düzeltilmesi (AI sonucu korunur)
 - Tek sayfalık React arayüzü (yükleme, sonuç, kayıtlar)
 
 ### Şu Anda Kapsam Dışı
@@ -156,6 +168,7 @@ Bu prensibin ürün karşılığı `needs_review` alanıdır. Belgeyi sınıflan
 Aşağıdakiler bilinçli olarak kapsam dışındadır; gelecekte kesin yapılacak özellikler değildir:
 
 - Authentication / authorization
+- Onay geçmişi, onaylayan kişinin kaydı ve iş akışı / SLA
 - Admin paneli ve kurum kataloğunun arayüzden yönetimi
 - Agent sistemleri ve LangGraph
 - RAG
@@ -233,11 +246,11 @@ Bir grup bile 3 denemede tamamlanamazsa ya da normalize metni 10 karakterden kı
 
 | Bileşen | Sorumluluk |
 |---|---|
-| React + Vite frontend | Belge yükleme, sonuç gösterimi, kayıtlar görünümü |
+| React + Vite frontend | Belge yükleme, sonuç gösterimi ve onayı, kayıtlar görünümü |
 | FastAPI backend | HTTP sözleşmesi, akış sıralaması, durum belirleme |
 | Dosya işleme katmanı | Kabul kontrolü, storage, yerel metin çıkarımı, OCR gereksinimi kararı ve Tesseract yedeği |
 | Gemini katmanı | Transkripsiyon ve sınıflandırma çağrıları, structured output, çıktı doğrulama, retry politikası |
-| PostgreSQL | `documents` tablosu; sınıflandırma sonucu ve çıkarılan metin |
+| PostgreSQL | `documents` tablosu; sınıflandırma sonucu, kullanıcı onayı ve çıkarılan metin |
 | Dosya sistemi storage | Orijinal belgeler (`backend/storage/<uuid>.<uzantı>`) |
 
 Mimari bilinçli olarak sade tutulur:
@@ -281,10 +294,14 @@ Sürümler `backend/requirements.txt` ve `frontend/package.json` dosyalarında p
 | GET | `/api/documents` | Kayıtları en yeniden eskiye listeler |
 | GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metnin tamamını içerir |
 | GET | `/api/documents/{document_id}/download` | Orijinal belgeyi yüklendiği adla indirir |
+| PUT | `/api/documents/{document_id}/validation` | Sınıflandırılmış belgenin tür ve kurum sonucunu onaylar ya da katalog içinden düzeltir; AI sonucu değişmez. Gövde: `{"document_type": "...", "institution_id": "..." \| null}`. `prepared` / `failed` kayıtta `409`, katalog dışı değerde `422` |
+| GET | `/api/catalogs` | Belge türü ve kurum kataloglarını (`id`, `name`) döndürür; salt okunur |
 
-Kayıt endpoint'leri salt okunurdur: kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme, ayrıca arama, filtre, sayfalama ve authentication yoktur; arayüzdeki arama ve filtre yüklü liste üzerinde tarayıcıda çalışır. Henüz sınıflandırılmamış `prepared` kayıtlar listede görünmez. Sahipsiz kalanlar 24 saatten eskiyse bir sonraki prepare çağrısında temizlenir (zamanlayıcı yok). Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
+Liste, detay ve indirme endpoint'leri salt okunurdur. Kalıcı kayıtlar silinemez ve AI sonucu değiştirilemez; tek yazma yolu, yalnız kullanıcı onayı alanlarını yazan onay endpoint'idir. Arama, filtre, sayfalama ve authentication yoktur; arayüzdeki arama ve filtre yüklü liste üzerinde tarayıcıda çalışır. Henüz sınıflandırılmamış `prepared` kayıtlar listede görünmez. Sahipsiz kalanlar 24 saatten eskiyse bir sonraki prepare çağrısında temizlenir (zamanlayıcı yok). Dosyanın storage yolu (`file_reference`) hiçbir yanıtta dönmez.
 
-**Classify yanıtının alanları:** `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`).
+**Classify yanıtının alanları:** `document_id`, `file_name`, `file_type`, `document_type`, `document_type_name`, `institution_id`, `institution_name`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution`, `status` (`classified` | `needs_review` | `failed`); ayrıca kullanıcı onayı alanları `validated_document_type`, `validated_document_type_name`, `validated_institution_id`, `validated_institution_name`, `validated_at` (onaysız kayıtta `null`).
+
+`document_type` ve `institution_id` her zaman AI sonucudur; kullanıcının onayladığı değerler `validated_*` alanlarındadır. Arayüz onaylı kayıtta onaylanan değeri gösterir.
 
 `summary` başarılı sonuçlarda her zaman doludur. `sender_name` ve `sender_institution` yalnızca belgede açıkça yazıyorsa dolar; yazmıyorsa `null` kalır ve belgenin muhatabı olan müdürlük gönderen sayılmaz. Üç alan da sınıflandırmayla aynı Gemini çağrısından gelir. `document_type_name` ve `institution_name` katalog adlarıdır; ID `null` ise ilgili ad da `null` olur.
 
@@ -496,7 +513,7 @@ Repo kökünde:
 
 ### Otomatik Testler
 
-Doğrulanmış baseline: backend `pytest` **368 passed**, frontend `npm test` **42 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı, sahte sınıflandırma ve sahte transkripsiyon kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) ve Kayıtlar arama/filtre/özet yardımcılarının (`src/records.ts`) birim testleridir.
+Doğrulanmış baseline: backend `pytest` **387 passed**, frontend `npm test` **56 passed**. Testler gerçek Gemini API'sine veya Docker PostgreSQL'e ihtiyaç duymaz; endpoint testleri geçici SQLite veritabanı, sahte sınıflandırma ve sahte transkripsiyon kullanır. Frontend testleri önizleme alanı çıkarımının (`src/documentPreview.ts`) ve Kayıtlar arama/filtre/özet, effective yönlendirme ve gösterim durumu yardımcılarının (`src/records.ts`) birim testleridir.
 
 Kapsanan alanlar:
 
@@ -515,6 +532,7 @@ Kapsanan alanlar:
 - Gemini transkripsiyonu: retry/timeout, boş ve kısa yanıt, 3 sayfalık gruplar, Tesseract yedeğine düşüş ve `needs_review` işaretinin korunması
 - Önizleme alanlarının deterministik çıkarımı (konu, tarih, evrak no, gönderen; açıkça yazmayan alan boş kalır)
 - Kayıtlar arama/filtre/özet yardımcıları (Türkçe karakter duyarsız dosya adı araması, birlikte uygulanan filtreler, özet sayıları)
+- Kullanıcı onayı: katalog endpoint'i, değiştirmeden ve düzelterek onay, kurum `null`, tekrar onay, `404`/`409`/`422`, AI alanlarının ve inceleme işaretinin korunması; effective yönlendirme ve gösterim durumu
 
 ### Gerçek / Uçtan Uca Doğrulamalar
 
@@ -530,6 +548,7 @@ Kapsanan alanlar:
 - V1.4 çoklu yükleme ve önizleme akışının gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması
 - V1.3 Gemini transkripsiyonunun gerçek PostgreSQL, Gemini ve Tesseract ile uçtan uca doğrulaması. Kapsam: basılı kontrol seti, dijital belgeler, hybrid ve bozuk metin katmanlı PDF, zorlanmış 503 ile Tesseract yedeği, 3–21 sayfalık taranmış PDF'ler
 - Sunum öncesi preflight ve uçtan uca demo provası (gerçek PostgreSQL ve Gemini): tek belge akışı, taranmış PDF ve görüntü (OCR), `needs_review` dahil 3 dosyalık çoklu yükleme, Kayıtlar filtreleri/detay/indirme, backend ve PostgreSQL yeniden başlatıldıktan sonra kayıtların kalıcılığı
+- Human Validation + Routing Correction'ın ayrı, geçici bir veritabanında gerçek backend, frontend ve tarayıcıyla uçtan uca doğrulaması (onay, düzeltme, `needs_review`, Kayıtlar, kalıcılık, çoklu yükleme regresyonu; demo verisi kullanılmadı)
 
 Güncel test baseline'ı ve son doğrulama özeti: [`CURRENT_STATE.md`](CURRENT_STATE.md). Ayrıntılı geçmiş Git geçmişindedir.
 
@@ -543,11 +562,11 @@ Güncel test baseline'ı ve son doğrulama özeti: [`CURRENT_STATE.md`](CURRENT_
 - Gemini yalnızca metnin ilk 50.000 karakterini değerlendirir; belirleyici bilgi sonrasında yer alıyorsa sınıflandırma etkilenebilir.
 - DOC ve DOCX belgelerde header/footer metni çıkarılmaz.
 - DOC ve DOCX içindeki gömülü görüntüler OCR edilmez.
-- Authentication ve authorization yoktur.
+- Authentication ve authorization yoktur. Onayı kimin yaptığı ve onay geçmişi kaydedilmez; eşzamanlı onaylarda son yazan kazanır.
 - İşlem senkrondur; her Gemini çağrısı (her transkripsiyon grubu ve sınıflandırma) en kötü durumda retry'larla birlikte yaklaşık 93 saniye sürebilir. Uzun taranmış PDF'lerde gruplar sırayla okunduğu için süre sayfa sayısıyla artar; bir grup zaman aşımına uğrarsa belge yerel çıkarım + Tesseract yedek yolundan yeniden çıkarılır.
 - Kurum yönlendirmesi mevcut katalogla sınırlıdır; katalogda olmayan birimlere ait belgeler `needs_review` olur.
 - Tesseract yalnız yedektir; kurulu değilse ve Gemini transkripsiyonu da başarısız olursa taranmış PDF'ler ve görüntü belgeleri `failed` olur.
-- Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma) için 120 saniye zaman aşımı uygular (D-039); süre dolsa da backend işlemi tamamlamış olabilir.
+- Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma, onay ve katalog) için 120 saniye zaman aşımı uygular (D-039); süre dolsa da backend işlemi tamamlamış olabilir.
 - "Orijinal Belgeyi Gör" PDF'lerde tarayıcının yerleşik PDF görüntüleyicisini kullanır; görüntüleyicisi olmayan tarayıcılarda (çoğu mobil) yerine bilgi mesajı gösterilir. DOC/DOCX için orijinal görünüm yoktur.
 - Aynı makinede aynı projeden ikinci bir Docker Compose stack'i başlatmak container adı, port ve volume çakışmasına yol açar; temiz bir makinede tek klon sorunsuz çalışır.
 
@@ -555,12 +574,13 @@ Daha ayrıntılı teknik sınırlar ve edge-case listesi için: [`CURRENT_STATE.
 
 ## Yol Haritası
 
-Şu anda açık iş hattı yok. V1.3, V1.4 ve V1.4 sonrası arayüz iyileştirmeleri tamamlandı; teslim edilenler [Sürüm Geçmişi](#sürüm-geçmişi) bölümündedir.
+Şu anda açık iş hattı yok. V1.3, V1.4, V1.4 sonrası arayüz iyileştirmeleri ve Human Validation + Routing Correction tamamlandı; teslim edilenler [Sürüm Geçmişi](#sürüm-geçmişi) bölümündedir.
 
 ### Daha Sonra Değerlendirilebilecekler
 
 Aşağıdakiler taahhüt değildir; ihtiyaç doğarsa `DECISIONS.md` üzerinden karara bağlanır:
 
+- Evidence-backed Routing: yönlendirmeye dayanak olan belge ifadesinin gösterilmesi (sıradaki aday)
 - Authentication / authorization
 - Production deployment kararları
 - Kurum kataloğunun genişletilmesi ve açıklamalarının iyileştirilmesi

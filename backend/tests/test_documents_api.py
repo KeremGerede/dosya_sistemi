@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import docx
 import pymupdf
 import pytest
+from alembic.config import Config as AlembicConfig
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import OperationalError
@@ -29,10 +31,14 @@ CLASSIFY_URL = "/api/documents/classify"
 SECRET_MARKER = "GIZLI_BELGE_ICERIGI"  # loglarda görünmemesi gereken belge metni işareti
 PDF_TEXT = f"Sayin yetkili, sokagimizdaki copler toplanmiyor. {SECRET_MARKER}"
 DOCX_TEXT = f"Sayın yetkili, parktaki salıncak kırık. {SECRET_MARKER}"
+VALIDATION_FIELDS = {  # kullanıcı onayı (D-049); onaysız kayıtta null
+    "validated_document_type", "validated_document_type_name", "validated_institution_id", "validated_institution_name",
+    "validated_at",
+}
 RESPONSE_FIELDS = {
     "document_id", "file_name", "file_type", "document_type", "document_type_name", "institution_id", "institution_name",
     "needs_review", "review_reason", "summary", "sender_name", "sender_institution", "status",
-}
+} | VALIDATION_FIELDS
 SUMMARY = "Vatandaş sokaktaki çöplerin toplanmadığını bildirip gereğinin yapılmasını istiyor."
 SENDER_NAME = "Ayşe Yılmaz"
 SENDER_INSTITUTION = "Çiğdem Mahallesi Muhtarlığı"
@@ -200,6 +206,7 @@ def test_valid_document_is_classified(client, session_factory, storage_dir, fake
         "institution_id": INSTITUTION, "institution_name": INSTITUTION_NAME,
         "needs_review": False, "review_reason": None, "status": "classified",
         "summary": SUMMARY, "sender_name": SENDER_NAME, "sender_institution": SENDER_INSTITUTION,
+        **dict.fromkeys(VALIDATION_FIELDS),  # yeni sınıflandırılan belge onaysızdır (D-049)
     }
     [document] = all_documents(session_factory)
     assert str(document.id) == body["document_id"]
@@ -733,9 +740,13 @@ def test_old_record_without_summary_is_returned_with_null_fields(client, session
 
 def test_model_columns_match_migrated_schema():
     """Model ile Alembic şeması aynı kolonları taşımalı (D-030); alembic check bunu ayrıca doğrular."""
+    nullable_columns = (
+        "summary", "sender_name", "sender_institution",  # D-044
+        "validated_document_type", "validated_institution_id", "validated_at",  # D-049
+    )
     columns = set(Document.__table__.columns.keys())
-    assert {"summary", "sender_name", "sender_institution"} <= columns
-    for name in ("summary", "sender_name", "sender_institution"):
+    assert set(nullable_columns) <= columns
+    for name in nullable_columns:
         assert Document.__table__.columns[name].nullable is True
 
 
@@ -1865,3 +1876,217 @@ def test_pdf_that_cannot_be_split_falls_back_to_tesseract_without_500(
     assert response.status_code == 200
     assert (response.json()["status"], response.json()["review_reason"]) == ("needs_review", OCR_FALLBACK_REASON)
     assert transcription.calls == []
+
+
+# --- Human Validation + Routing Correction (D-049) ---
+
+CATALOGS_URL = "/api/catalogs"
+VALIDATION_NOT_ALLOWED_MESSAGE = "Yalnız sınıflandırılmış belgeler onaylanabilir."
+CORRECTED_TYPE = DOCUMENT_TYPES[1]  # AI sonucundan (DOCUMENT_TYPES[0]) farklı katalog değeri
+CORRECTED_INSTITUTION = INSTITUTIONS[1]
+NO_VALIDATION = (None, None, None)
+
+
+def validation_url(document_id) -> str:
+    return f"{LIST_URL}/{document_id}/validation"
+
+
+def validate(client: TestClient, document_id, document_type=DOCUMENT_TYPE, institution_id=INSTITUTION):
+    return client.put(validation_url(document_id), json={"document_type": document_type, "institution_id": institution_id})
+
+
+def stored(session_factory, document_id) -> Document:
+    with session_factory() as session:
+        return session.get(Document, document_id)
+
+
+def validation_of(document: Document) -> tuple:
+    return document.validated_document_type, document.validated_institution_id, document.validated_at
+
+
+def test_catalogs_return_ids_and_names_in_catalog_order(client):
+    response = client.get(CATALOGS_URL)
+
+    assert response.status_code == 200
+    # Kaynak backend katalogları; kurum açıklaması dönmez.
+    assert response.json() == {
+        "document_types": [{"id": item["id"], "name": item["name"]} for item in DOCUMENT_TYPES],
+        "institutions": [{"id": item["id"], "name": item["name"]} for item in INSTITUTIONS],
+    }
+
+
+def test_unchanged_approval_copies_ai_result_and_sets_validated_at(client, session_factory):
+    document = insert_document(session_factory)
+
+    response = validate(client, document.id)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS | {"created_at"}
+    assert (body["validated_document_type"], body["validated_document_type_name"]) == (DOCUMENT_TYPE, DOCUMENT_TYPE_NAME)
+    assert (body["validated_institution_id"], body["validated_institution_name"]) == (INSTITUTION, INSTITUTION_NAME)
+    assert body["validated_at"] is not None
+    saved = stored(session_factory, document.id)
+    assert (saved.validated_document_type, saved.validated_institution_id) == (DOCUMENT_TYPE, INSTITUTION)
+    assert saved.validated_at is not None
+
+
+def test_corrected_approval_keeps_ai_result(client, session_factory):
+    document = insert_document(session_factory)
+
+    body = validate(client, document.id, CORRECTED_TYPE["id"], CORRECTED_INSTITUTION["id"]).json()
+
+    assert (body["validated_document_type"], body["validated_document_type_name"]) == (CORRECTED_TYPE["id"], CORRECTED_TYPE["name"])
+    assert (body["validated_institution_id"], body["validated_institution_name"]) == (
+        CORRECTED_INSTITUTION["id"], CORRECTED_INSTITUTION["name"],
+    )
+    # AI sonucu üzerine yazılmaz.
+    assert (body["document_type"], body["institution_id"]) == (DOCUMENT_TYPE, INSTITUTION)
+    saved = stored(session_factory, document.id)
+    assert (saved.document_type, saved.institution_id) == (DOCUMENT_TYPE, INSTITUTION)
+    assert (saved.validated_document_type, saved.validated_institution_id) == (CORRECTED_TYPE["id"], CORRECTED_INSTITUTION["id"])
+
+
+def test_approval_with_null_institution(client, session_factory):
+    document = insert_document(session_factory)
+
+    response = validate(client, document.id, institution_id=None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["validated_document_type"] == DOCUMENT_TYPE
+    assert (body["validated_institution_id"], body["validated_institution_name"]) == (None, None)
+    assert body["validated_at"] is not None
+    saved = stored(session_factory, document.id)
+    assert saved.validated_institution_id is None
+    assert saved.validated_at is not None
+    assert saved.institution_id == INSTITUTION  # AI kurumu korunur
+
+
+def test_repeated_validation_keeps_last_values(client, session_factory):
+    document = insert_document(session_factory)
+    first = validate(client, document.id).json()
+
+    second = validate(client, document.id, CORRECTED_TYPE["id"], None).json()
+
+    assert (second["validated_document_type"], second["validated_institution_id"]) == (CORRECTED_TYPE["id"], None)
+    assert datetime.fromisoformat(second["validated_at"]) >= datetime.fromisoformat(first["validated_at"])
+    [saved] = all_documents(session_factory)
+    assert (saved.validated_document_type, saved.validated_institution_id) == (CORRECTED_TYPE["id"], None)
+
+
+def test_validated_at_and_validated_document_type_are_written_together(client, session_factory):
+    document = insert_document(session_factory)
+    assert validation_of(stored(session_factory, document.id)) == NO_VALIDATION
+
+    for document_type, institution_id in ((DOCUMENT_TYPE, None), (CORRECTED_TYPE["id"], CORRECTED_INSTITUTION["id"])):
+        assert validate(client, document.id, document_type, institution_id).status_code == 200
+        saved_type, saved_institution, saved_at = validation_of(stored(session_factory, document.id))
+        assert saved_at is not None
+        assert (saved_type, saved_institution) == (document_type, institution_id)
+
+
+def test_validation_returns_404_for_unknown_document(client):
+    response = validate(client, uuid.uuid4())
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"status": "prepared", "document_type": None, "institution_id": None},
+        {"status": "failed", "document_type": None, "institution_id": None, "extracted_text": None},
+    ],
+    ids=["prepared", "failed"],
+)
+def test_prepared_and_failed_documents_cannot_be_validated(client, session_factory, overrides):
+    document = insert_document(session_factory, **overrides)
+
+    response = validate(client, document.id)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": VALIDATION_NOT_ALLOWED_MESSAGE}
+    saved = stored(session_factory, document.id)
+    assert validation_of(saved) == NO_VALIDATION
+    assert saved.status == overrides["status"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"document_type": "katalogda_olmayan_tur", "institution_id": INSTITUTION},
+        {"document_type": DOCUMENT_TYPE, "institution_id": "katalogda_olmayan_kurum"},
+        {"document_type": DOCUMENT_TYPE},
+        {"document_type": DOCUMENT_TYPE, "institution_id": INSTITUTION, "status": "classified"},
+        {"document_type": None, "institution_id": INSTITUTION},
+    ],
+    ids=["invalid-document-type", "invalid-institution", "missing-institution-id", "extra-field", "null-document-type"],
+)
+def test_invalid_validation_body_returns_422_without_change(client, session_factory, payload):
+    document = insert_document(session_factory)
+
+    response = client.put(validation_url(document.id), json=payload)
+
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)  # FastAPI'nin standart istek doğrulama gövdesi
+    assert validation_of(stored(session_factory, document.id)) == NO_VALIDATION
+
+
+def test_validation_keeps_ai_result_review_flag_and_status(client, session_factory):
+    ai_fields = {
+        "document_type": "other", "institution_id": None, "needs_review": True, "review_reason": "Kurum belirsiz.",
+        "status": "needs_review", "summary": SUMMARY, "sender_name": SENDER_NAME, "sender_institution": SENDER_INSTITUTION,
+    }
+    document = insert_document(session_factory, **ai_fields)
+
+    body = validate(client, document.id, CORRECTED_TYPE["id"], CORRECTED_INSTITUTION["id"]).json()
+
+    assert {key: body[key] for key in ai_fields} == ai_fields
+    saved = stored(session_factory, document.id)
+    assert {key: getattr(saved, key) for key in ai_fields} == ai_fields
+    assert saved.extracted_text == document.extracted_text
+
+
+def test_validation_does_not_call_gemini(client, fake_classify, transcription):
+    calls = fake_classify(classification())
+    document_id = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+    assert len(calls) == 1
+
+    response = validate(client, document_id, CORRECTED_TYPE["id"], None)
+
+    assert response.status_code == 200
+    assert len(calls) == 1  # onay yeni bir sınıflandırma çağrısı yapmaz
+    assert transcription.calls == []
+
+
+def test_list_and_detail_return_validation_fields(client, session_factory):
+    document = insert_document(session_factory)
+    validate(client, document.id, CORRECTED_TYPE["id"], None)
+
+    item = client.get(LIST_URL).json()[0]
+    detail = client.get(f"{LIST_URL}/{document.id}").json()
+
+    for body in (item, detail):
+        assert (body["validated_document_type"], body["validated_document_type_name"]) == (CORRECTED_TYPE["id"], CORRECTED_TYPE["name"])
+        assert (body["validated_institution_id"], body["validated_institution_name"]) == (None, None)
+        assert body["validated_at"] is not None
+        assert (body["document_type"], body["institution_id"]) == (DOCUMENT_TYPE, INSTITUTION)
+
+
+def test_unvalidated_records_return_null_validation_fields(client, session_factory):
+    document = insert_document(session_factory)
+
+    item = client.get(LIST_URL).json()[0]
+    detail = client.get(f"{LIST_URL}/{document.id}").json()
+
+    for body in (item, detail):
+        assert {field: body[field] for field in VALIDATION_FIELDS} == dict.fromkeys(VALIDATION_FIELDS)
+
+
+def test_validation_migration_follows_previous_head():
+    script = ScriptDirectory.from_config(AlembicConfig(str(pathlib.Path(__file__).resolve().parents[1] / "alembic.ini")))
+
+    assert script.get_revision("c32c5dc8f72e").down_revision == "cedf33674167"
+    assert len(script.get_heads()) == 1

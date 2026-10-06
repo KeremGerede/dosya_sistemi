@@ -365,6 +365,89 @@ dl.result-primary {
   margin-bottom: 0.75rem;
 }
 
+/* Kullanıcı onayı (D-049): sonuç kartında ve Kayıtlar detayında aynı kontroller */
+
+.validation {
+  margin-top: 1rem;
+}
+
+.validation .status {
+  margin: 0.5rem 0 0;
+}
+
+.validation .status:empty {
+  margin: 0;
+}
+
+.validation-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.validation-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.validation-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.75rem;
+}
+
+.validation-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.validation-form select {
+  max-width: 100%;
+  padding: 0.45rem 0.65rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.validation-error {
+  margin: 0.5rem 0 0;
+  color: var(--err-text);
+  font-size: 0.85rem;
+}
+
+/* Onaylanan değer AI'dan farklıysa AI önerisi ikincil satırda */
+.ai-suggestion {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.result-primary dd.ai-suggestion {
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* Onaydan sonra AI inceleme nedeni uyarı değil, soluk not */
+.review-note {
+  margin: 0.5rem 0 0;
+  color: var(--text-subtle);
+  font-size: 0.85rem;
+}
+
 /* Kayıtlar */
 
 .records-head {
@@ -630,6 +713,13 @@ tr.open .chevron {
   background-color: var(--err-bg);
   border-color: var(--err-border);
   color: var(--err-text);
+}
+
+/* Kullanıcı onayı (D-049); AI sonucunun yeşil/sarı renklerinden ayrı */
+.badge.validated {
+  background-color: #eef4fe;
+  border-color: var(--accent-disabled);
+  color: var(--accent-hover);
 }
 
 .download {

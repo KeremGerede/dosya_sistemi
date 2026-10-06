@@ -204,7 +204,7 @@
 ## Veri ve depolama
 
 ### D-013 — Tek `documents` tablosu
-- **Karar:** Başlangıçta yalnızca `documents` tablosu kullanılır. Alanlar: `id`, `file_name`, `file_type`, `file_reference`, `extracted_text`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution` (son üçü D-044), `status`, `created_at`.
+- **Karar:** Başlangıçta yalnızca `documents` tablosu kullanılır. Alanlar: `id`, `file_name`, `file_type`, `file_reference`, `extracted_text`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution` (son üçü D-044), `validated_document_type`, `validated_institution_id`, `validated_at` (kullanıcı onayı, D-049), `status`, `created_at`.
 - **Gerekçe:** MVP akışı için yeterli; kataloglar dosyada olduğundan ek tabloya gerek yok.
 
 ### D-029 — `documents.id` UUID
@@ -239,9 +239,9 @@
     - `POST /api/documents/classify` — legacy / tek-adımlı sınıflandırma: kabul, metin çıkarımı, Gemini sınıflandırması ve kayıt tek istekte yapılır. Geriye dönük uyumluluk için korunur.
     - `POST /api/documents/prepare` — V1.4 iki adımlı akışın ilk adımı; kaydı `prepared` olarak oluşturur, Gemini sınıflandırması çağırmaz (D-045; OCR gereken belgede yalnız transkripsiyon, D-047).
   - Yalnızca `prepared` kayda uygulanabilen iki geçiş vardır (D-046): `POST /api/documents/{document_id}/classify` (sınıflandırma sonucunu yazar) ve `DELETE /api/documents/{document_id}/prepared` (kaydı ve dosyasını siler).
-  - Kalıcı kayıtlar (`classified`, `needs_review`, `failed`) için güncelleme ve silme endpoint'i yoktur.
+  - Kalıcı kayıtlar (`classified`, `needs_review`, `failed`) silinemez ve AI sonucu değiştirilemez. Tek istisna `PUT /api/documents/{document_id}/validation`'dır: yalnız `classified` ve `needs_review` kayıtta kullanıcı onayı alanlarını yazar (D-049).
   - Kayıtları görüntülemeye yönelik salt okunur endpoint'ler D-043'te tanımlıdır. Bunlara ek olarak iş mantığı içermeyen operasyonel `GET /health` bulunur ve `{"status": "ok"}` döner. FastAPI'nin otomatik dokümantasyon sayfaları (`/docs`, `/openapi.json`) varsayılan haliyle açıktır.
-- **Gerekçe:** Tek-adımlı endpoint mevcut entegrasyon sözleşmesi olarak kalır. İki adımlı akış, kullanıcının belgeyi analizden önce görebilmesini sağlar. Yazma yüzeyi yalnızca `prepared` durumuyla sınırlı dar geçişlerle genişler; kalıcı sonuçlar değiştirilemez ve silinemez. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
+- **Gerekçe:** Tek-adımlı endpoint mevcut entegrasyon sözleşmesi olarak kalır. İki adımlı akış, kullanıcının belgeyi analizden önce görebilmesini sağlar. Yazma yüzeyi `prepared` durumuyla sınırlı dar geçişlerle ve AI sonucundan ayrı tutulan kullanıcı onayıyla (D-049) sınırlıdır; kalıcı AI sonuçları değiştirilemez ve silinemez. Health check, uygulamanın ayakta olduğunun basitçe kontrol edilebilmesini sağlar.
 
 ### D-043 — Salt okunur kayıt endpoint'leri (V1.2)
 - **Karar:** Kayıtların görüntülenebilmesi için üç salt okunur endpoint eklenir:
@@ -249,7 +249,7 @@
   - `GET /api/documents/{document_id}` — aynı alanlar + `extracted_text`; `prepared` dahil her durumdaki kayıt ID ile okunabilir. Kayıt yoksa `404`.
   - `GET /api/documents/{document_id}/download` — orijinal dosya, kullanıcının yüklediği `file_name` ile ve `file_type`'a karşılık gelen media type ile döner; kayıt ya da fiziksel dosya yoksa ayrıntısız `404`.
   - `file_reference` ve storage yolu hiçbir yanıtta dönmez; indirilecek yol yalnızca veritabanındaki kayıttan türetilir ve storage klasörü dışına çıkan bir yol kabul edilmez.
-  - Endpoint'lerde arama, filtre, sayfalama, silme, düzenleme ve authentication yoktur; Kayıtlar görünümündeki arama ve filtre istemci tarafındadır (D-048).
+  - Bu endpoint'lerde arama, filtre, sayfalama, silme, düzenleme ve authentication yoktur; kullanıcı onayı ayrı endpoint'tedir (D-049). Kayıtlar görünümündeki arama ve filtre istemci tarafındadır (D-048).
 - **Gerekçe:** Sınıflandırma sonuçlarının ve orijinal belgenin görülebilmesi modülün ilk gerçek kullanım ihtiyacı. Endpoint'ler salt okunur olduğu için yeni tablo, migration veya yazma yüzeyi gerekmez; `file_reference`'ın gizli kalması iç depolama düzenini dışarı sızdırmaz.
 
 ### D-032 — Classify yanıt alanları
@@ -291,8 +291,8 @@
   - Arayüz:
     - Çoklu seçim ve sürükle-bırak; listede en fazla 5 dosya (D-040).
     - Her dosyada ad, format, boyut, önizleme, kaldırma ve analiz seçimi.
-    - Analizi biten satırda belge türü ve kurum kısa bir satırda görünür; satır düğmesi "Sonucu Gör" olur ve panel sonuç kartıyla başlar. Masaüstünde analiz düğmesi ekranın altında sabit kalır.
-    - Sonuç kartı: "Analiz tamamlandı" başlığı ve dosya adı; birincil belge türü ve hedef kurum; AI özeti; orijinal belgeyi görme/indirme. `needs_review`'da "Kontrol Öneriliyor" ve kontrol nedeni gösterilir. Anlamsal kalite kapısı olmadığından kesinlik ya da doğruluk iddiası taşıyan ifade kullanılmaz. Analizden sonra önizleme formu ve çıkarılan metin varsayılan kapalı bir bölüme iner.
+    - Analizi biten satırda belge türü ve kurum (effective değer; onaylıysa "Onaylandı" rozeti — D-049) kısa bir satırda görünür; satır düğmesi "Sonucu Gör" olur ve panel sonuç kartıyla başlar. Masaüstünde analiz düğmesi ekranın altında sabit kalır.
+    - Sonuç kartı: "Analiz tamamlandı" başlığı ve dosya adı; birincil belge türü ve hedef kurum (effective değer — D-049); onay kontrolleri (D-049); AI özeti; orijinal belgeyi görme/indirme. Onaysız `needs_review`'da "Kontrol Öneriliyor" ve kontrol nedeni gösterilir; onaylı sonuçta "Onaylandı" rozeti görünür, kontrol nedeni uyarı olarak gösterilmez. Anlamsal kalite kapısı olmadığından kesinlik ya da doğruluk iddiası taşıyan ifade kullanılmaz. Analizden sonra önizleme formu ve çıkarılan metin varsayılan kapalı bir bölüme iner.
     - Önizleme içerik merkezlidir. Varsayılan görünüm, çıkarılan metinden tarayıcıda deterministik olarak oluşturulan yapılandırılmış "Belge Önizlemesi" formudur: dosya adı, hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Açıkça bulunamayan alan boş (`—`) kalır; tahmin edilmez. Önizleme alanları saklanmaz; yeni endpoint veya DB alanı eklenmez.
     - Orijinal belge (PDF ve JPG/JPEG/PNG) ile ham çıkarılan metin yardımcı görünümlerdir. Orijinal belge kullanıcının tarayıcısındaki dosyadan ayrı bir pencerede gösterilir ve yalnızca backend imza doğrulamasından geçmiş dosyalarda açılır; sunucuda ayrı bir önizleme endpoint'i yoktur.
     - DOC/DOCX'te yapılandırılmış önizleme ve çıkarılan metin gösterilir; Word render'ı, dönüştürücü veya yeni bağımlılık eklenmez.
@@ -319,6 +319,33 @@
     - Temizlik hatası prepare isteğini düşürmez.
   - **Kapsam dışı:** Terminal kayıtlar (`classified`, `needs_review`, `failed`) ne bu temizliğin ne de `DELETE` endpoint'inin kapsamındadır.
 - **Gerekçe:** Yanlışlıkla yüklenen dosya, kullanıcı kaldırdığında hemen ve tamamen silinmelidir; tekrarlanan "hazırla + kaldır" döngüleri sunucuda birikmemelidir. Sekme kapanması, ağ kopması veya tarayıcı çökmesi gibi anormal çıkışlarda kalan kayıtları zamanlayıcı kurmadan sınırlamanın en basit yolu, temizliği hazırlık isteğinde yapmaktır. Dosyanın kayıttan önce silinmesi, yarım kalan her işlemde geride TTL'in bulabileceği bir kayıt bırakır; ters sırada kaydı olmayan ve hiçbir temizliğin göremeyeceği bir dosya kalabilirdi. Silme endpoint'i dar tutulur: kalıcı kayıtları silmek kapsam dışıdır. Orijinal dosya kontrolü, indirilemeyen bir belgenin sınıflandırılmış kayıt olarak kalıcılaşmasını önler.
+
+### D-049 — Human Validation + Routing Correction: kullanıcı onayı AI sonucundan ayrı tutulur
+- **Durum:** Tamamlandı (2026-10-06). Backend (veri modeli, migration, API) ve arayüz uygulandı; ayrı, geçici bir E2E veritabanında gerçek backend, frontend ve tarayıcıyla doğrulandı (blocker/high yok).
+- **Karar:**
+  - **Veri:** `documents` tablosunda 3 nullable kolon: `validated_document_type`, `validated_institution_id`, `validated_at`. AI alanları (`document_type`, `institution_id`) üzerine yazılmaz.
+    - `validated_at` doluysa `validated_document_type` da doludur; tersi de geçerlidir. `validated_institution_id` `null` olabilir.
+    - Bu kural DB CHECK ile değil, tek yazma yolu olan onay endpoint'inde korunur: üç alan birlikte yazılır.
+    - Mevcut kayıtlar onaysızdır (`null`); veri taşıma yoktur. Onaylayan kişi ve onay geçmişi tutulmaz.
+  - **Effective yönlendirme:** `validated_at` doluysa onaylanan çift, değilse AI çifti (`document_type`, `institution_id`) geçerlidir.
+  - **`PUT /api/documents/{document_id}/validation`** — gövde `{"document_type": "<katalog id>", "institution_id": "<katalog id>" | null}`:
+    - İki alan zorunludur; ek alan kabul edilmez. İzinli ID'ler kataloglardan üretilir (D-009). Katalog dışı, eksik ya da fazla alan FastAPI'nin standart `422` gövdesini döndürür.
+    - Kayıt yoksa `404`. Yalnız `classified` ve `needs_review` kayıtlar onaylanır; `prepared` ve `failed` kayıtta `409` döner, kayıt değişmez.
+    - Başarıda `200` ve liste öğesi biçimi (`DocumentSummary`). Yalnız üç onay alanı yazılır; `validated_at` sunucu zamanıdır (UTC).
+    - AI sonucu, `needs_review`, `review_reason`, `status`, `summary` ve gönderen alanları değişmez; Gemini çağrılmaz.
+    - Tekrar onay serbesttir; son onay geçerlidir.
+  - **Yanıt alanları:** Classify, prepare, liste, detay ve onay yanıtları `validated_document_type`, `validated_document_type_name`, `validated_institution_id`, `validated_institution_name` ve `validated_at` alanlarını da içerir; onaysız kayıtta `null`. Adlar D-032'deki gibi katalogdan çözülür, saklanmaz.
+  - **`GET /api/catalogs`:** Salt okunur. Belge türü ve kurum kataloglarını (`id`, `name`) katalog dosyasındaki sırayla döndürür; kurum açıklaması dönmez. Kaynak, sınıflandırmanın kullandığı bellekteki kataloglardır (D-012). Frontend katalog kopyası tutmaz; katalog yönetimi yoktur.
+  - **Arayüz:** Onay ve düzeltme sonuç kartında ve Kayıtlar detayında aynı bileşenle yapılır; yeni sayfa ya da modal yoktur.
+    - Onaysız kayıtta "Sonucu Onayla" (AI değerlerini gönderir) ve "Düzelt"; "Düzelt" kart/detay içinde tür ve kurum seçimlerini açar ("Kaydet ve Onayla", "Vazgeç"). Kurumda "Belirlenemedi" `null` gönderir. Onaylı kayıtta "Onaylandı" rozeti ve "Son onay" zamanı görünür; "Düzelt" tekrar kullanılabilir.
+    - Katalog yalnız "Düzelt" ilk açıldığında istenir ve sayfa açık kaldıkça yeniden kullanılır; başarısız istek sonraki denemede tekrarlanır.
+    - Effective değer (`effectiveRouting`) sonuç kartında, analiz satırı özetinde, Kayıtlar listesi/detayında ve tür/kurum filtrelerinde aynıdır. AI önerisi yalnız değeri onaylanandan farklı olan alanda ikincil satırda gösterilir.
+    - Onaylı kayıtta aktif inceleme uyarısı kalkar; AI inceleme nedeni yalnız Kayıtlar detayında soluk not olarak kalır.
+    - "İnceleme Gereken" sayısı yalnız onaylanmamış `needs_review` kayıtlarını sayar. Kayıtlar'daki Durum ve Durum filtresi yalnız arayüzde türetilen bir gösterimdir (`recordDisplayState`): `failed` → Başarısız, onaylı → Onaylandı, `needs_review` → İnceleme gerekli, `classified` → Sınıflandırıldı. Bu bir business status değildir; DB'ye yazılmaz.
+    - Onay yanıtı yalnız ilgili kaydı yerelde günceller; aynı belge analiz listesinde de açıksa orada da güncellenir. Liste yeniden istenmez.
+    - Onay hatalarında (404, 409, 422, ağ, zaman aşımı) kısa Türkçe mesaj gösterilir; FastAPI'nin 422 ayrıntısı gösterilmez, formdaki seçimler korunur.
+  - **Kapsam dışı:** Authentication/RBAC, onaylayan kişinin kaydı, onay geçmişi veya ek tablo, workflow, SLA, business status, toplu onay, onayı geri alma.
+- **Gerekçe:** Kullanıcı düzeltmesi AI çıktısını silmez; iki sonuç karşılaştırılabildiği için AI doğruluğu ölçülebilir kalır. Tek tablo kuralı (D-013) korunur; nullable kolonlar mevcut kayıtları ve API sözleşmesini bozmaz. Authentication olmadığından (D-025) onaylayan kişi bilinemez; geçmiş tutmak MVP için gereksiz karmaşıklıktır. `needs_review` ve `status`, AI işleme sonucunun kaydı olarak kalır (D-014, D-016).
 
 ### D-020 — Senkron işleme
 - **Karar:**
@@ -359,7 +386,7 @@
 - **Gerekçe:** Tarayıcı için istekler aynı origin'den gider, bu yüzden CORS gerekmez ve backend değişmeden kalır. Dağıtımda frontend ile backend ayrı origin'lerde sunulacaksa bu karar güncellenerek CORS ele alınır.
 
 ### D-039 — Frontend istek zaman aşımı: 120 saniye
-- **Karar:** Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma) için ayrı ayrı 120 saniye zaman aşımı uygular. Süre dolarsa istek iptal edilir ve kullanıcıya genel bir hata mesajı gösterilir.
+- **Karar:** Frontend her backend isteği (hazırlama, sınıflandırma, kaldırma, onay ve katalog — D-049) için ayrı ayrı 120 saniye zaman aşımı uygular. Süre dolarsa istek iptal edilir ve kullanıcıya genel bir hata mesajı gösterilir.
 - **Gerekçe:** Sınıflandırma isteğinin en kötü durumu yaklaşık 93 saniyedir (D-033). OCR gereken belgede prepare'in en kötü durumu, başarılı transkripsiyon gruplarının süresine başarısız grubun ~93 sn'si ve Tesseract yedeğinin süresi eklenerek bulunur; 120 saniyeye yaklaşabilir (D-047). 120 saniye bu durumlara pay bırakırken asılı kalan isteği sınırsız beklemeyi önler. Zaman aşımı yalnızca istemci tarafındadır: backend işlemi tamamlayıp kaydı yazmış olabilir. Sınıflandırmada bu durum, D-046'daki `409` → detay okuma akışıyla kurtarılır.
 
 ### D-040 — Frontend'de dosya ön kontrolü ve en fazla 5 dosya; otorite backend'de
@@ -372,10 +399,10 @@
 
 ### D-048 — Kayıtlar görünümü: belge türü, istemci tarafı arama/filtre ve özet sayıları
 - **Karar:**
-  - Kayıtlar listesinde ve kayıt detayında belge türü (`document_type_name`; yoksa "Belirlenemedi") gösterilir.
+  - Kayıtlar listesinde ve kayıt detayında effective belge türü gösterilir (D-049: onaylıysa onaylanan, değilse AI türü; yoksa "Belirlenemedi").
   - Arama ve filtre yalnız istemci tarafındadır ve `GET /api/documents`'ın döndürdüğü kayıtlar üzerinde çalışır:
     - Dosya adında arama büyük/küçük harfe duyarsızdır; Türkçe karakterler sade eşleriyle eşleşir (ş/s, ğ/g, ü/u, ö/o, ç/c, ı/i; önizlemedeki katlamayla aynı). Bulanık arama yoktur.
-    - Belge türü, hedef kurum ve durum (`classified` / `needs_review` / `failed`) filtreleri birlikte uygulanır. Tür ve kurum seçenekleri yüklü kayıtlardan türetilir; türü ya da kurumu olmayan kayıtlar "Belirlenemedi" seçeneğinde toplanır.
-  - Üç özet sayısı gösterilir: Toplam Kayıt, İnceleme Gereken (`needs_review`), Başarısız (`failed`). Sayılar tüm yüklü kayıtlardandır; filtreden etkilenmez.
+    - Belge türü, hedef kurum ve durum filtreleri birlikte uygulanır. Tür ve kurum effective değerle, durum türetilmiş gösterim durumuyla (Sınıflandırıldı / İnceleme gerekli / Onaylandı / Başarısız; D-049) filtrelenir. Tür ve kurum seçenekleri yüklü kayıtların effective değerlerinden türetilir; türü ya da kurumu olmayan kayıtlar "Belirlenemedi" seçeneğinde toplanır.
+  - Üç özet sayısı gösterilir: Toplam Kayıt, İnceleme Gereken (onaylanmamış `needs_review`: `needs_review` doğru ve `validated_at` boş — D-049), Başarısız (`failed`). Sayılar tüm yüklü kayıtlardandır; filtreden etkilenmez.
   - Backend, API, şema ve veritabanı değişmez. Endpoint'lerde arama, filtre ve sayfalama yoktur (D-043); kayıt sayısı istemcide işlenemeyecek kadar büyürse sunucu tarafı filtre/sayfalama ayrı bir karardır.
 - **Gerekçe:** Liste endpoint'i gereken bütün alanları sayfalamasız döndürdüğü için yeni endpoint, sorgu katmanı veya analytics altyapısı gerekmez (D-024). "Sınıflandırıldı" sayısı gösterilmez: `needs_review` belgeler de sınıflandırılmıştır; seçilen üç sayı birbiriyle çakışmaz ve aksiyon gerektiren kayıtları öne çıkarır. Saf yardımcılar `node:test` ile test edilir (D-037).

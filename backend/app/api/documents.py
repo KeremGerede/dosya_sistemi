@@ -4,6 +4,7 @@
   metin yoksa Gemini transkripsiyonu, gerekirse Tesseract yedeği; D-047) → Gemini sınıflandırması → veritabanı.
 - V1.4 iki adımlı akış (D-045, D-046): POST /prepare (kabul → storage → metin çıkarımı → prepared kaydı),
   POST /{id}/classify (kayıttaki metinle Gemini) ve DELETE /{id}/prepared (hazırlanmış kaydı ve dosyasını siler).
+- PUT /{id}/validation: kullanıcı onayı (D-049); AI sonucu ve status değişmez, Gemini çağrılmaz.
 - Salt okunur kayıt endpoint'leri (D-043).
 
 Endpoint'ler bilinçli olarak senkron (def): metin çıkarımı, Gemini çağrısı ve veritabanı erişimi bloklayıcıdır ve
@@ -14,11 +15,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from app.schemas.classification import (
     DocumentDetail,
     DocumentSummary,
     FailedClassifyResponse,
+    RoutingValidationRequest,
     ValidationErrorResponse,
 )
 from app.services import classification_service, file_service
@@ -45,9 +47,20 @@ OCR_FALLBACK_REVIEW_REASON = "Belge metni yedek OCR ile okundu; okuma hataları 
 DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."
 ALREADY_PROCESSED_MESSAGE = "Belge zaten işlenmiş."
 SOURCE_FILE_MISSING_MESSAGE = "Belgenin orijinal dosyasına ulaşılamadı; belgeyi kaldırıp yeniden yükleyin."
+VALIDATION_NOT_ALLOWED_MESSAGE = "Yalnız sınıflandırılmış belgeler onaylanabilir."
 
 PREPARED_STATUS = "prepared"  # metni çıkarılmış, henüz sınıflandırılmamış belge (D-046)
 PREPARED_TTL = timedelta(hours=24)  # sahipsiz prepared kayıtlar bundan eskiyse sonraki prepare'de temizlenir (D-046)
+VALIDATABLE_STATUSES = ("classified", "needs_review")  # prepared ve failed onaylanamaz (D-049)
+
+# Onay gövdesi: izinli ID'ler kataloglardan gelir (D-009, D-049). Katalog dışı, eksik ya da fazla alan FastAPI'nin
+# standart 422 gövdesini döndürür; yeni bir 422 biçimi eklenmez.
+VALIDATION_REQUEST_MODEL = create_model(
+    "CatalogRoutingValidationRequest",
+    __base__=RoutingValidationRequest,
+    document_type=(Literal[tuple(classification_service.DOCUMENT_TYPE_NAMES)], ...),
+    institution_id=(Literal[tuple(classification_service.INSTITUTION_NAMES)] | None, ...),
+)
 
 # Yükleme yapan endpoint'lerin ortak red yanıtları (OpenAPI).
 UPLOAD_ERROR_RESPONSES = {
@@ -331,6 +344,39 @@ def _discard_prepared(document: Document, db: Session) -> None:
     db.delete(document)
 
 
+@router.put(
+    "/{document_id}/validation",
+    response_model=DocumentSummary,
+    responses={
+        404: {"description": DOCUMENT_NOT_FOUND_MESSAGE},
+        409: {"description": f"{VALIDATION_NOT_ALLOWED_MESSAGE} prepared ve failed kayıtlar onaylanamaz; kayıt değişmez."},
+    },
+    summary="Belge türü ve kurum sonucunu kullanıcı adına onaylar veya düzeltir",
+)
+def validate_document(
+    document_id: uuid.UUID, body: VALIDATION_REQUEST_MODEL, db: Annotated[Session, Depends(get_db)]
+) -> DocumentSummary:
+    """Kullanıcı onayı (D-049): yalnız validated_* alanları yazılır.
+
+    AI sonucu, needs_review, review_reason ve status değişmez; Gemini çağrılmaz. Tekrar onay serbesttir, son onay geçerlidir.
+    """
+    document = _get_or_404(document_id, db)
+    if document.status not in VALIDATABLE_STATUSES:
+        raise HTTPException(status_code=409, detail=VALIDATION_NOT_ALLOWED_MESSAGE)
+    # Üç alan birlikte yazılır: validated_at doluysa validated_document_type da doludur (D-049).
+    document.validated_document_type = body.document_type
+    document.validated_institution_id = body.institution_id
+    document.validated_at = datetime.now(timezone.utc)
+    try:
+        db.commit()
+    except Exception as exc:
+        logger.error("Belge %s: onay kaydedilemedi (%s); işlem geri alınıyor.", document_id, type(exc).__name__)
+        db.rollback()
+        raise
+    logger.info("Belge %s onaylandı.", document_id)
+    return DocumentSummary(**_record_fields(document))
+
+
 @router.get(
     "",
     response_model=list[DocumentSummary],
@@ -413,6 +459,12 @@ def _classify_fields(document: Document) -> dict:
         "sender_name": document.sender_name,
         "sender_institution": document.sender_institution,
         "status": document.status,
+        # Kullanıcı onayı (D-049): AI alanlarından ayrıdır; adlar yine kataloglardan çözülür.
+        "validated_document_type": document.validated_document_type,
+        "validated_document_type_name": classification_service.DOCUMENT_TYPE_NAMES.get(document.validated_document_type),
+        "validated_institution_id": document.validated_institution_id,
+        "validated_institution_name": classification_service.INSTITUTION_NAMES.get(document.validated_institution_id),
+        "validated_at": document.validated_at,
     }
 
 

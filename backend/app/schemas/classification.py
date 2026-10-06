@@ -56,6 +56,12 @@ class ClassifyResponse(BaseModel):
     sender_name: str | None
     sender_institution: str | None
     status: str
+    # D-049: kullanıcı onayı; onaysız kayıtta null. Adlar ID'den kataloglardan çözülür, veritabanında saklanmaz.
+    validated_document_type: str | None
+    validated_document_type_name: str | None
+    validated_institution_id: str | None
+    validated_institution_name: str | None
+    validated_at: datetime | None
 
 
 class FailedClassifyResponse(ClassifyResponse):
@@ -79,6 +85,31 @@ class DocumentDetail(DocumentSummary):
     """GET /api/documents/{document_id} (D-043): özet alanları + çıkarılan metnin tamamı."""
 
     extracted_text: str | None
+
+
+class RoutingValidationRequest(BaseModel):
+    """PUT /api/documents/{document_id}/validation gövdesi (D-049).
+
+    İki alan da zorunlu; institution_id null olabilir, ek alan kabul edilmez.
+    İzinli ID'ler api/documents.py'de kataloglardan Literal olarak eklenir (build_output_model emsali).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    document_type: str
+    institution_id: str | None
+
+
+class CatalogItem(BaseModel):
+    id: str
+    name: str
+
+
+class CatalogsResponse(BaseModel):
+    """GET /api/catalogs (D-049): düzeltme seçenekleri, katalog dosyasındaki sırayla. Kurum açıklaması dönmez."""
+
+    document_types: list[CatalogItem]
+    institutions: list[CatalogItem]
 
 
 class ValidationErrorResponse(BaseModel):

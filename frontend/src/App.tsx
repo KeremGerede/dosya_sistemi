@@ -1,7 +1,16 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 import { buildDocumentPreview } from './documentPreview'
-import { NO_FILTERS, countRecords, filterOptions, filterRecords } from './records'
+import {
+  NO_FILTERS,
+  RECORD_DISPLAY_LABELS,
+  UNDETERMINED,
+  countRecords,
+  effectiveRouting,
+  filterOptions,
+  filterRecords,
+  recordDisplayState,
+} from './records'
 import type { RecordFilters } from './records'
 import './App.css'
 
@@ -38,12 +47,11 @@ const EXPIRED_MESSAGE = 'Belge bulunamadı veya süresi doldu; dosyayı yeniden 
 const DISCARD_FAILED_MESSAGE = 'Dosya kaldırılamadı. Lütfen tekrar deneyin.'
 const ALREADY_PROCESSED_DISCARD_MESSAGE = "Belge zaten işlenmiş olduğu için sunucudan silinmedi; Kayıtlar'da görünür."
 const PDF_UNSUPPORTED_MESSAGE = 'Bu tarayıcı PDF görüntülemeyi desteklemiyor; belgeyi "Çıkarılan Metni Gör" ile kontrol edebilirsiniz.'
-
-const STATUS_LABELS: Record<DocumentStatus, string> = {
-  classified: 'Sınıflandırıldı',
-  needs_review: 'İnceleme gerekli',
-  failed: 'Başarısız',
-}
+const CATALOGS_FAILED_MESSAGE = 'Seçenekler yüklenemedi. Lütfen tekrar deneyin.'
+const VALIDATION_NOT_FOUND_MESSAGE = 'Belge bulunamadı; onay kaydedilemedi.'
+const VALIDATION_CONFLICT_MESSAGE = 'Bu belge onaylanamaz; yalnız sınıflandırılmış belgeler onaylanabilir.'
+const VALIDATION_INVALID_MESSAGE = 'Seçilen değer geçerli değil.'
+const VALIDATION_FAILED_MESSAGE = 'Onay kaydedilemedi. Lütfen tekrar deneyin.'
 
 type DocumentStatus = 'classified' | 'needs_review' | 'failed'
 
@@ -62,6 +70,12 @@ type ClassifyResponse = {
   sender_name: string | null
   sender_institution: string | null
   status: DocumentStatus
+  // D-049: kullanıcı onayı; onaysız kayıtta null. Adlar backend'de katalogdan çözülür.
+  validated_document_type: string | null
+  validated_document_type_name: string | null
+  validated_institution_id: string | null
+  validated_institution_name: string | null
+  validated_at: string | null
   message?: string
 }
 
@@ -102,6 +116,13 @@ type Notice = { kind: 'error' | 'info'; messages: string[] }
 type ViewerState = { key: number; name: string; fileType: string; url: string }
 
 type RequestResult = { status: number | null; body: unknown; timedOut: boolean }
+
+// GET /api/catalogs (D-049): düzeltme seçenekleri; frontend'de katalog kopyası yoktur.
+type CatalogItem = { id: string; name: string }
+type Catalogs = { document_types: CatalogItem[]; institutions: CatalogItem[] }
+
+// Düzelt formu; kurumda UNDETERMINED "Belirlenemedi" (null) demektir.
+type ValidationDraft = { documentType: string; institution: string }
 
 const BATCH_LABELS: Record<BatchState, string> = {
   queued: 'Hazırlanıyor',
@@ -194,6 +215,51 @@ function requestProblem(result: RequestResult): string {
   return errorMessage(result.status, result.body)
 }
 
+// Onay hatası (D-049): kısa Türkçe mesaj; FastAPI'nin 422 ayrıntısı gösterilmez.
+function validationProblem(result: RequestResult): string {
+  if (result.status === null) {
+    return result.timedOut ? TIMEOUT_MESSAGE : NETWORK_MESSAGE
+  }
+  switch (result.status) {
+    case 404:
+      return VALIDATION_NOT_FOUND_MESSAGE
+    case 409:
+      return VALIDATION_CONFLICT_MESSAGE
+    case 422:
+      return VALIDATION_INVALID_MESSAGE
+    default:
+      return VALIDATION_FAILED_MESSAGE
+  }
+}
+
+function isCatalogsBody(body: unknown): body is Catalogs {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'document_types' in body &&
+    Array.isArray(body.document_types) &&
+    'institutions' in body &&
+    Array.isArray(body.institutions)
+  )
+}
+
+// Kataloglar ilk "Düzelt"te istenir ve sayfa açık kaldıkça yeniden kullanılır.
+// Başarısız istek saklanmaz: sonraki "Düzelt" yeniden ister.
+let catalogsRequest: Promise<Catalogs | null> | null = null
+
+function loadCatalogs(): Promise<Catalogs | null> {
+  if (catalogsRequest === null) {
+    catalogsRequest = request('/api/catalogs').then((result) => {
+      if (result.status === 200 && isCatalogsBody(result.body)) {
+        return result.body
+      }
+      catalogsRequest = null
+      return null
+    })
+  }
+  return catalogsRequest
+}
+
 function formatSize(bytes: number): string {
   const megabytes = bytes / (1024 * 1024)
   if (megabytes >= 1) {
@@ -225,7 +291,7 @@ function FileTypeIcon({ fileType }: { fileType: string }) {
   )
 }
 
-function RecordsView() {
+function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) => void }) {
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
@@ -280,16 +346,30 @@ function RecordsView() {
     }
   }
 
+  // Onay yanıtı yalnız ilgili kaydı değiştirir; liste, sayaçlar, filtre ve detay yeniden istek atmadan güncellenir.
+  function applyValidation(updated: DocumentSummary) {
+    setDocuments((current) =>
+      current === null ? current : current.map((item) => (item.document_id === updated.document_id ? updated : item)),
+    )
+    onValidated(updated)
+  }
+
   if (documents === null && message === null) {
     return <p className="status" role="status">Kayıtlar yükleniyor...</p>
   }
 
   const records = documents ?? []
-  const visible = filterRecords(records, filters)
+  // Tür, kurum ve durum tek kuraldan gelir: effective yönlendirme ve gösterim durumu (D-049).
+  const rows = filterRecords(records, filters).map((item) => ({
+    item,
+    routing: effectiveRouting(item),
+    state: recordDisplayState(item),
+  }))
   const counts = countRecords(records)
-  const typeOptions = filterOptions(records.map((item) => ({ id: item.document_type, name: item.document_type_name })))
+  const routings = records.map((item) => effectiveRouting(item))
+  const typeOptions = filterOptions(routings.map((routing) => ({ id: routing.documentTypeId, name: routing.documentTypeName })))
   const institutionOptions = filterOptions(
-    records.map((item) => ({ id: item.institution_id, name: item.institution_name })),
+    routings.map((routing) => ({ id: routing.institutionId, name: routing.institutionName })),
   )
   const filtering = Object.values(filters).some((value) => value.trim() !== '')
 
@@ -375,7 +455,7 @@ function RecordsView() {
               onChange={(event) => setFilters({ ...filters, status: event.target.value })}
             >
               <option value="">Tüm durumlar</option>
-              {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              {Object.entries(RECORD_DISPLAY_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>
@@ -383,11 +463,11 @@ function RecordsView() {
             </select>
           </div>
 
-          {visible.length === 0 && <p className="empty">Filtrelerle eşleşen kayıt yok.</p>}
+          {rows.length === 0 && <p className="empty">Filtrelerle eşleşen kayıt yok.</p>}
         </>
       )}
 
-      {visible.length > 0 && (
+      {rows.length > 0 && (
         <table className="records-table">
           <thead>
             <tr>
@@ -400,7 +480,7 @@ function RecordsView() {
             </tr>
           </thead>
           <tbody>
-            {visible.map((item) => (
+            {rows.map(({ item, routing, state }) => (
               <Fragment key={item.document_id}>
                 <tr className={openId === item.document_id ? 'open' : undefined}>
                   <td data-label="Belge Adı">
@@ -419,13 +499,13 @@ function RecordsView() {
                     </button>
                   </td>
                   <td data-label="Belge Türü" className="col-type">
-                    {item.document_type_name ?? 'Belirlenemedi'}
+                    {routing.documentTypeName ?? 'Belirlenemedi'}
                   </td>
                   <td data-label="Gideceği Kurum" className="col-institution">
-                    {item.institution_name ?? 'Belirlenemedi'}
+                    {routing.institutionName ?? 'Belirlenemedi'}
                   </td>
                   <td data-label="Durum">
-                    <span className={`badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
+                    <span className={`badge ${state}`}>{RECORD_DISPLAY_LABELS[state]}</span>
                   </td>
                   <td data-label="Tarih" className="record-date">
                     {formatDate(item.created_at)}
@@ -449,7 +529,16 @@ function RecordsView() {
                         {item.summary !== null && <p className="record-summary">{item.summary}</p>}
 
                         <p className="record-type">
-                          <strong>Belge Türü:</strong> {item.document_type_name ?? 'Belirlenemedi'}
+                          <strong>Belge Türü:</strong> {routing.documentTypeName ?? 'Belirlenemedi'}
+                          {routing.typeChanged && (
+                            <span className="ai-suggestion">AI önerisi: {item.document_type_name ?? 'Belirlenemedi'}</span>
+                          )}
+                        </p>
+                        <p className="record-type">
+                          <strong>Hedef Kurum:</strong> {routing.institutionName ?? 'Belirlenemedi'}
+                          {routing.institutionChanged && (
+                            <span className="ai-suggestion">AI önerisi: {item.institution_name ?? 'Belirlenemedi'}</span>
+                          )}
                         </p>
 
                         {(item.sender_name !== null || item.sender_institution !== null) && (
@@ -459,11 +548,17 @@ function RecordsView() {
                           </p>
                         )}
 
-                        {item.status === 'needs_review' && item.review_reason !== null && (
+                        {state === 'needs_review' && item.review_reason !== null && (
                           <p className="review-reason">
                             <strong>İnceleme nedeni:</strong> {item.review_reason}
                           </p>
                         )}
+                        {/* Onaydan sonra AI'ın inceleme nedeni uyarı değil, soluk bir not olarak kalır (D-049). */}
+                        {state === 'validated' && item.review_reason !== null && (
+                          <p className="review-note">AI inceleme nedeni: {item.review_reason}</p>
+                        )}
+
+                        {item.status !== 'failed' && <ValidationControls record={item} onValidated={applyValidation} />}
 
                         {detailLoading && (
                           <p className="status" role="status">
@@ -491,33 +586,190 @@ function RecordsView() {
   )
 }
 
-// Analiz sonucu (D-045). Anlamsal kalite kapısı olmadığından kesinlik iddiası yoktur: başlık her durumda
-// "Analiz tamamlandı"dır; needs_review'da "Kontrol Öneriliyor" gösterilir. Tür ve kurum birincil sonuçtur.
-function ResultCard({ result, onViewOriginal }: { result: ClassifyResponse; onViewOriginal: (() => void) | null }) {
+// Kullanıcı onayı (D-049): sonuç kartında ve Kayıtlar detayında aynı bileşen. AI sonucu değişmez; onay ayrı alanlara yazılır.
+function ValidationControls({
+  record,
+  onValidated,
+}: {
+  record: ClassifyResponse
+  onValidated: (updated: DocumentSummary) => void
+}) {
+  const [draft, setDraft] = useState<ValidationDraft | null>(null)
+  const [catalogs, setCatalogs] = useState<Catalogs | null>(null)
+  const [busy, setBusy] = useState<'catalogs' | 'saving' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const aiDocumentType = record.document_type
+  if (aiDocumentType === null) {
+    return null // failed kayıt onaylanamaz
+  }
+
+  async function save(documentType: string, institutionId: string | null) {
+    setBusy('saving')
+    setError(null)
+    const result = await request(`/api/documents/${record.document_id}/validation`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document_type: documentType, institution_id: institutionId }),
+    })
+    setBusy(null)
+    if (result.status === 200) {
+      setDraft(null)
+      onValidated(result.body as DocumentSummary)
+    } else {
+      setError(validationProblem(result)) // form açık kalır, seçimler korunur
+    }
+  }
+
+  async function startEdit() {
+    setBusy('catalogs')
+    setError(null)
+    const loaded = await loadCatalogs()
+    setBusy(null)
+    if (loaded === null) {
+      setError(CATALOGS_FAILED_MESSAGE)
+      return
+    }
+    // Form effective değerlerle açılır: onaylıysa onaylanan, değilse AI sonucu.
+    const routing = effectiveRouting(record)
+    setCatalogs(loaded)
+    setDraft({ documentType: routing.documentTypeId ?? '', institution: routing.institutionId ?? UNDETERMINED })
+  }
+
+  const saving = busy === 'saving'
+
   return (
-    <section className={result.needs_review ? 'notice result review' : 'notice result'} aria-label="Analiz sonucu">
+    <div className="validation">
+      {draft === null || catalogs === null ? (
+        <div className="validation-row">
+          {record.validated_at !== null ? (
+            <p className="validation-note">Son onay: {formatDate(record.validated_at)}</p>
+          ) : (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => void save(aiDocumentType, record.institution_id)}
+              disabled={busy !== null}
+            >
+              Sonucu Onayla
+            </button>
+          )}
+          <button type="button" className="secondary" onClick={() => void startEdit()} disabled={busy !== null}>
+            Düzelt
+          </button>
+        </div>
+      ) : (
+        <div className="validation-form">
+          <label>
+            Belge Türü
+            <select
+              value={draft.documentType}
+              onChange={(event) => setDraft({ ...draft, documentType: event.target.value })}
+              disabled={saving}
+              autoFocus
+            >
+              {catalogs.document_types.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Hedef Kurum
+            <select
+              value={draft.institution}
+              onChange={(event) => setDraft({ ...draft, institution: event.target.value })}
+              disabled={saving}
+            >
+              {catalogs.institutions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+              <option value={UNDETERMINED}>Belirlenemedi</option>
+            </select>
+          </label>
+          <div className="validation-row">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                void save(draft.documentType, draft.institution === UNDETERMINED ? null : draft.institution)
+              }
+              disabled={saving}
+            >
+              Kaydet ve Onayla
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setDraft(null)
+                setError(null)
+              }}
+              disabled={saving}
+            >
+              Vazgeç
+            </button>
+          </div>
+        </div>
+      )}
+      {error !== null && (
+        <p className="validation-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="status" role="status">
+        {busy === 'saving' ? 'Kaydediliyor...' : busy === 'catalogs' ? 'Seçenekler yükleniyor...' : ''}
+      </p>
+    </div>
+  )
+}
+
+// Analiz sonucu (D-045). Anlamsal kalite kapısı olmadığından kesinlik iddiası yoktur: başlık her durumda
+// "Analiz tamamlandı"dır; onaysız needs_review'da "Kontrol Öneriliyor" gösterilir. Tür ve kurum birincil sonuçtur:
+// onaylıysa onaylanan değer, AI önerisi yalnız farklıysa ikincil satırda (D-049).
+function ResultCard({
+  result,
+  onViewOriginal,
+  onValidated,
+}: {
+  result: ClassifyResponse
+  onViewOriginal: (() => void) | null
+  onValidated: (updated: DocumentSummary) => void
+}) {
+  const routing = effectiveRouting(result)
+  const activeReview = result.needs_review && !routing.validated
+  return (
+    <section className={activeReview ? 'notice result review' : 'notice result'} aria-label="Analiz sonucu">
       <div className="result-head">
         <div>
           <h2>Analiz tamamlandı</h2>
           <p className="result-file">{result.file_name}</p>
         </div>
-        <span className={result.needs_review ? 'badge needs_review' : 'badge neutral'}>
-          {result.needs_review ? 'Kontrol Öneriliyor' : 'Sınıflandırıldı'}
+        <span className={routing.validated ? 'badge validated' : activeReview ? 'badge needs_review' : 'badge neutral'}>
+          {routing.validated ? 'Onaylandı' : activeReview ? 'Kontrol Öneriliyor' : 'Sınıflandırıldı'}
         </span>
       </div>
 
       <dl className="result-primary">
         <div>
           <dt>Belge Türü</dt>
-          <dd>{result.document_type_name ?? 'Belirlenemedi'}</dd>
+          <dd>{routing.documentTypeName ?? 'Belirlenemedi'}</dd>
+          {routing.typeChanged && (
+            <dd className="ai-suggestion">AI önerisi: {result.document_type_name ?? 'Belirlenemedi'}</dd>
+          )}
         </div>
         <div>
           <dt>Hedef Kurum</dt>
-          <dd>{result.institution_name ?? 'Belirlenemedi'}</dd>
+          <dd>{routing.institutionName ?? 'Belirlenemedi'}</dd>
+          {routing.institutionChanged && (
+            <dd className="ai-suggestion">AI önerisi: {result.institution_name ?? 'Belirlenemedi'}</dd>
+          )}
         </div>
       </dl>
 
-      {result.needs_review && (
+      {activeReview && (
         <p className="review-reason">
           {result.review_reason !== null ? (
             <>
@@ -528,6 +780,8 @@ function ResultCard({ result, onViewOriginal }: { result: ClassifyResponse; onVi
           )}
         </p>
       )}
+
+      <ValidationControls record={result} onValidated={onValidated} />
 
       {result.summary !== null && (
         <div className="result-summary">
@@ -580,6 +834,7 @@ function PreviewPanel({
   onToggleText,
   onViewOriginal,
   onSelect,
+  onValidated,
 }: {
   id: string
   item: BatchItem
@@ -587,6 +842,7 @@ function PreviewPanel({
   onToggleText: () => void
   onViewOriginal: () => void
   onSelect: (selected: boolean) => void
+  onValidated: (updated: DocumentSummary) => void
 }) {
   const fileType = serverFileType(item)
   const text = item.prepared?.extracted_text ?? null
@@ -684,7 +940,7 @@ function PreviewPanel({
         previewSection
       ) : (
         <>
-          <ResultCard result={result} onViewOriginal={canViewOriginal ? onViewOriginal : null} />
+          <ResultCard result={result} onViewOriginal={canViewOriginal ? onViewOriginal : null} onValidated={onValidated} />
           <details className="result-details">
             <summary>Belge önizlemesi ve çıkarılan metin</summary>
             {previewSection}
@@ -786,6 +1042,14 @@ function App() {
 
   function patch(key: number, changes: Partial<BatchItem>) {
     commit(itemsRef.current.map((item) => (item.key === key ? { ...item, ...changes } : item)))
+  }
+
+  // Onay yanıtı (D-049) yalnız aynı belgeyi gösteren satırın sonucunu değiştirir. Kayıtlar'da yapılan onay da buraya
+  // yansır; analiz listesinde eski sonuç kalıp yeni bir "Sonucu Onayla" ile düzeltmenin üzerine yazılmasın.
+  function applyValidation(updated: DocumentSummary) {
+    commit(
+      itemsRef.current.map((item) => (item.result?.document_id === updated.document_id ? { ...item, result: updated } : item)),
+    )
   }
 
   // Önceki object URL, yerine yenisi geçtiğinde ya da pencere kapandığında serbest bırakılır.
@@ -1045,7 +1309,7 @@ function App() {
       </nav>
 
       {view === 'records' ? (
-        <RecordsView />
+        <RecordsView onValidated={applyValidation} />
       ) : (
         <>
           <section
@@ -1099,6 +1363,8 @@ function App() {
                   {items.map((item) => {
                     const isOpen = openKey === item.key
                     const panelId = `preview-${item.key}`
+                    const routing = item.result !== null ? effectiveRouting(item.result) : null
+                    const validated = routing !== null && routing.validated
                     return (
                       <Fragment key={item.key}>
                         <tr className={isOpen ? 'open' : undefined}>
@@ -1117,10 +1383,10 @@ function App() {
                               <span className="record-name">{item.file.name}</span>
                               {item.error !== null && <span className="row-error">{item.error}</span>}
                               {/* Analiz sonucu satırda özetlenir; ayrıntı "Sonucu Gör" panelindedir. */}
-                              {item.result !== null && (item.state === 'done' || item.state === 'review') && (
+                              {routing !== null && (item.state === 'done' || item.state === 'review') && (
                                 <span className="row-result">
-                                  <strong>Tür:</strong> {item.result.document_type_name ?? 'Belirlenemedi'} ·{' '}
-                                  <strong>Kurum:</strong> {item.result.institution_name ?? 'Belirlenemedi'}
+                                  <strong>Tür:</strong> {routing.documentTypeName ?? 'Belirlenemedi'} ·{' '}
+                                  <strong>Kurum:</strong> {routing.institutionName ?? 'Belirlenemedi'}
                                 </span>
                               )}
                             </div>
@@ -1130,8 +1396,8 @@ function App() {
                             <span className="file-size">{formatSize(item.file.size)}</span>
                           </td>
                           <td data-label="Durum">
-                            <span className={`badge batch-${item.state}`}>
-                              {item.removing ? 'Kaldırılıyor' : BATCH_LABELS[item.state]}
+                            <span className={validated ? 'badge validated' : `badge batch-${item.state}`}>
+                              {item.removing ? 'Kaldırılıyor' : validated ? 'Onaylandı' : BATCH_LABELS[item.state]}
                             </span>
                           </td>
                           <td data-label="İşlem" className="col-actions">
@@ -1166,6 +1432,7 @@ function App() {
                                 onToggleText={() => setTextOpen(!textOpen)}
                                 onViewOriginal={() => openViewer(item)}
                                 onSelect={(selected) => patch(item.key, { selected })}
+                                onValidated={applyValidation}
                               />
                             </td>
                           </tr>

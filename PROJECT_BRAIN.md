@@ -41,6 +41,12 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 - Kullanıcı vazgeçerse `DELETE /api/documents/{document_id}/prepared` kaydı ve dosyasını siler. Sahipsiz kalan `prepared` kayıtlar 24 saatten eskiyse sonraki prepare çağrısında temizlenir.
 - Arayüz en fazla 5 dosyayı listeler ve sırayla işler.
 
+**Kullanıcı onayı (D-049):**
+
+- Sınıflandırılmış (`classified` / `needs_review`) belgenin belge türü ve kurum sonucu, sonuç kartında veya Kayıtlar detayında olduğu gibi onaylanabilir ya da katalog içinden düzeltilebilir (`PUT /api/documents/{document_id}/validation`). Kurum "Belirlenemedi" (`null`) olarak onaylanabilir; tekrar onay serbesttir, son onay geçerlidir.
+- AI sonucu (`document_type`, `institution_id`), `needs_review`, `review_reason` ve `status` değişmez; onaylanan değerler ayrı `validated_*` alanlarında tutulur. Gemini çağrılmaz.
+- Arayüz onaylı kayıtta onaylanan değerleri gösterir (effective yönlendirme); AI önerisi yalnız farklıysa ikincil satırda görünür.
+
 İşlem senkrondur: her istek kendi işini tamamlayıp yanıt döner. Kuyruk veya arka plan işi yoktur.
 
 ## 3. Teknoloji yığını
@@ -83,16 +89,17 @@ backend/
     main.py                             # FastAPI uygulaması, router kaydı
     settings.py                         # ortam değişkenleri (backend/.env), require_env(); DATABASE_URL zorunlu
     database.py                         # engine, session
-    api/documents.py                    # classify (legacy), prepare, {id}/classify, {id}/prepared + salt okunur endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek) ve status
+    api/documents.py                    # classify (legacy), prepare, {id}/classify, {id}/prepared, {id}/validation (kullanıcı onayı) + salt okunur endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek) ve status
+    api/catalogs.py                     # salt okunur GET /api/catalogs: düzeltme seçenekleri (D-049)
     services/file_service.py            # kabul kontrolü, storage'a kaydetme, yerel metin çıkarımı, OCR gereksinimi kararı, Tesseract yedeği
     services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, transkripsiyon çağrısı, retry politikası (D-033)
     llm/gemini_client.py                # google-genai ince sarmalayıcısı: sınıflandırma ve transkripsiyon için tek istek, 30 sn timeout, SDK retry kapalı
-    schemas/classification.py           # LLM çıktı şeması + API yanıt şeması
+    schemas/classification.py           # LLM çıktı şeması + API yanıt şeması, onay isteği ve katalog yanıtı
     models/document.py                  # SQLAlchemy Document modeli
     config/document_types.json          # belge türü kataloğu
     config/institutions.json            # kurum kataloğu
   storage/                              # orijinal dosyalar: <document_id>.<uzanti> (git'e girmez)
-frontend/                               # React + Vite: en fazla 5 dosya → önizle → seçilenleri sınıflandır; kayıtlar (tek sayfa)
+frontend/                               # React + Vite: en fazla 5 dosya → önizle → seçilenleri sınıflandır → sonucu onayla/düzelt; kayıtlar (tek sayfa)
 ```
 
 Bu yapı yön gösterir, zorunlu değildir. Kurallar:
@@ -248,6 +255,9 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 | `summary` | text, null | Belge özeti (D-044); `failed` ise `null` |
 | `sender_name` | text, null | Gönderen kişi (D-044); belirtilmemişse veya `failed` ise `null` |
 | `sender_institution` | text, null | Gönderen kurum (D-044); belirtilmemişse veya `failed` ise `null` |
+| `validated_document_type` | string, null | Kullanıcının onayladığı belge türü (katalog `id`, D-049); onaysız kayıtta `null` |
+| `validated_institution_id` | string, null | Kullanıcının onayladığı kurum (katalog `id`); onaylı kayıtta da `null` olabilir ("Belirlenemedi") |
+| `validated_at` | timestamp (tz), null | Son onay zamanı; doluysa `validated_document_type` da doludur |
 | `status` | string, not null | `classified` \| `needs_review` \| `failed` (kalıcı) · `prepared` (V1.4 ara durumu) |
 | `created_at` | timestamp (tz), not null | |
 
@@ -260,6 +270,8 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
   - Kayıt listesinde görünmez.
   - Yalnızca `/{document_id}/classify` ile sonuca geçer ya da `DELETE /{document_id}/prepared` ile silinir.
   - Sahipsiz kalırsa 24 saat sonra, sonraki prepare çağrısında temizlenir.
+
+Kullanıcı onayı (D-049) `status`, `needs_review` ve AI alanlarını değiştirmez; `status` AI işleme sonucunu gösterir. Onay alanları yalnız onay endpoint'iyle ve birlikte yazılır.
 
 Kabul edilmeyen dosyalar (desteklenmeyen tür, 50 MB üstü) için satır oluşturulmaz.
 
@@ -282,6 +294,13 @@ Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
 | **`GET /api/documents`** | Kalıcı kayıtlar `created_at` azalan sırada; aşağıdaki alanlar + `created_at`. `prepared` kayıtlar listelenmez; `extracted_text` ve `file_reference` dönmez |
 | **`GET /api/documents/{document_id}`** | Aynı alanlar + `extracted_text`; `prepared` dahil her durum. Kayıt yoksa `404` |
 | **`GET /api/documents/{document_id}/download`** | Orijinal dosya, kullanıcının yüklediği adla ve `file_type`'a uygun media type ile; kayıt ya da dosya yoksa ayrıntısız `404` |
+
+Kullanıcı onayı ve katalog (D-049):
+
+| Endpoint | Yanıt |
+|---|---|
+| **`PUT /api/documents/{document_id}/validation`** | Gövde `{"document_type": "<katalog id>", "institution_id": "<katalog id>" \| null}`; iki alan zorunlu, ek alan kabul edilmez. Yalnız `classified` / `needs_review` kayıtta üç onay alanını yazar; AI sonucu, `needs_review`, `review_reason` ve `status` değişmez, Gemini çağrılmaz. Tekrar onay serbest, son onay geçerli. `200` (liste öğesi biçimi) · `404` · `409` (`prepared` / `failed`; kayıt değişmez) · `422` (katalog dışı, eksik ya da fazla alan; FastAPI'nin standart gövdesi) |
+| **`GET /api/catalogs`** | Salt okunur: belge türü ve kurum kataloglarının `id` ve `name` değerleri, katalog dosyasındaki sırayla; kurum açıklaması dönmez |
 
 Ayrıca iş mantığı içermeyen operasyonel **`GET /health`** → `{"status": "ok"}`.
 
@@ -306,6 +325,8 @@ Başarılı yanıt en az şu alanları içerir:
 ```
 
 `document_type_name` ve `institution_name`, ID'ye karşılık gelen katalog `name` değerleridir; yanıt üretilirken kataloglardan okunur, veritabanında saklanmaz. `institution_id` `null` ise `institution_name` de `null` olur. İstemci gösterim için katalogları kopyalamaz (D-032).
+
+Yanıtlar ayrıca kullanıcı onayı alanlarını içerir: `validated_document_type`, `validated_document_type_name`, `validated_institution_id`, `validated_institution_name`, `validated_at`. Onaysız kayıtta hepsi `null`'dır; adlar aynı kuralla katalogdan çözülür (D-049). `document_type` ve `institution_id` her zaman AI sonucudur.
 
 `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında **dönmez**.
 
@@ -376,14 +397,14 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Aynı çağrıda belge özeti ve (varsa) gönderen kişi/kurum bilgisi (D-044)
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
-- Yazma endpoint'leri: legacy / tek-adımlı `POST /api/documents/classify` ve V1.4 iki adımlı akış (`prepare`, `/{document_id}/classify`, `DELETE /{document_id}/prepared` — D-019, D-045, D-046). Kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043) ve operasyonel `GET /health`
+- Yazma endpoint'leri: legacy / tek-adımlı `POST /api/documents/classify` ve V1.4 iki adımlı akış (`prepare`, `/{document_id}/classify`, `DELETE /{document_id}/prepared` — D-019, D-045, D-046) ve kullanıcı onayı (`PUT /{document_id}/validation` — D-049). Kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043), salt okunur `GET /api/catalogs` ve operasyonel `GET /health`
 - Basit React + Vite + TypeScript arayüz (Vite proxy ile `/api`, istek başına 120 sn zaman aşımı):
-  - Sınıflandırma ekranı: en fazla 5 dosyayı çoklu seçim veya sürükle-bırakla ekleme, analizden önce içerik merkezli önizleme (varsayılan: çıkarılan metinden oluşturulan yapılandırılmış belge formu; yardımcı: orijinal belge ve çıkarılan metin; önizleme formu Gemini kullanmaz, sınıflandırma onaydan sonra), seçilen dosyaları sırayla sınıflandırma ve dosya başına durum/sonuç.
-  - Kayıtlar görünümü: kayıtları belge türü ve kurumuyla listeler, orijinal belgeyi indirir; dosya adında arama, tür/kurum/durum filtresi ve üç özet sayısı istemci tarafındadır (D-048).
+  - Sınıflandırma ekranı: en fazla 5 dosyayı çoklu seçim veya sürükle-bırakla ekleme, analizden önce içerik merkezli önizleme (varsayılan: çıkarılan metinden oluşturulan yapılandırılmış belge formu; yardımcı: orijinal belge ve çıkarılan metin; önizleme formu Gemini kullanmaz, sınıflandırma onaydan sonra), seçilen dosyaları sırayla sınıflandırma ve dosya başına durum/sonuç; sonuç kartında sonucu onaylama veya katalog içinden düzeltme (D-049).
+  - Kayıtlar görünümü: kayıtları effective belge türü ve kurumuyla (onaylıysa onaylanan değer) listeler, orijinal belgeyi indirir, detayda onay/düzeltme sunar; dosya adında arama, tür/kurum/durum filtresi ve üç özet sayısı istemci tarafındadır (D-048, D-049).
 
 ## 12. Açıkça kapsam dışı
 
-DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · el yazısı dedektörü veya belge türüne göre OCR motoru seçimi · Tesseract çıktısının Gemini ile düzeltilmesi · ek OCR modeli · transkripsiyon ile sınıflandırmanın tek çağrıda birleştirilmesi · dinamik veya gelişmiş chunking ve karmaşık uzun belge işleme (sınıflandırmada ilk 50.000 karakter kuralı, D-027; transkripsiyonda yalnız OCR gereken PDF'ler için 3 sayfalık sabit gruplar, D-047) · transkripsiyon gruplarının paralel gönderilmesi · 50 MB üstü dosyalar · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtlar için güncelleme/silme endpoint'leri (yalnızca `prepared` kayda özgü geçişler vardır — D-046) · kayıtlar için sunucu tarafı arama, filtre ve sayfalama (Kayıtlar görünümünde yalnız istemci tarafı arama/filtre vardır — D-048) · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
+DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · el yazısı dedektörü veya belge türüne göre OCR motoru seçimi · Tesseract çıktısının Gemini ile düzeltilmesi · ek OCR modeli · transkripsiyon ile sınıflandırmanın tek çağrıda birleştirilmesi · dinamik veya gelişmiş chunking ve karmaşık uzun belge işleme (sınıflandırmada ilk 50.000 karakter kuralı, D-027; transkripsiyonda yalnız OCR gereken PDF'ler için 3 sayfalık sabit gruplar, D-047) · transkripsiyon gruplarının paralel gönderilmesi · 50 MB üstü dosyalar · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtların silinmesi ve AI sonucunun değiştirilmesi (yalnız `prepared` kayda özgü geçişler ve kullanıcı onayı alanlarını yazan onay endpoint'i vardır — D-046, D-049) · onay geçmişi, onaylayan kişinin kaydı, iş akışı / SLA ve business status · kayıtlar için sunucu tarafı arama, filtre ve sayfalama (Kayıtlar görünümünde yalnız istemci tarafı arama/filtre vardır — D-048) · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 
@@ -394,6 +415,5 @@ Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenme
 - Gerçek ihtiyaç görülürse 50.000 karakteri aşan uzun belgeler için daha kapsamlı işleme
 - Belge türü ve kurum kataloglarının genişletilmesi; gerekirse veritabanına taşınıp yönetim arayüzü eklenmesi
 - Başka sistemlerle entegrasyon
-- `needs_review` belgeleri için manuel inceleme / düzeltme akışı
 - Gerekirse dosya sisteminden nesne depolamaya geçiş
 - Entegrasyon gerektirdiğinde authentication

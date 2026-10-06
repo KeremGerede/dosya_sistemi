@@ -8,9 +8,16 @@
 
 ## Mevcut aşama
 
-**Ana iş hatları tamamlandı: V1.0–V1.4 ve V1.4 sonrası arayüz iyileştirmeleri. Sunum öncesi preflight ve uçtan uca demo provası geçti; blocker veya high bulgu yok. Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur; aynı anda yalnız bir yeni workstream açılır. İlk geliştirme adayı Human Validation + Routing Correction ("Sıradaki geliştirme hedefleri").**
+**Ana iş hatları tamamlandı: V1.0–V1.4, V1.4 sonrası arayüz iyileştirmeleri ve Human Validation + Routing Correction (D-049). Blocker veya high bulgu yok. Açık iş hattı yok; sunuma kadar kapsam kontrollü tutulur ve aynı anda yalnız bir yeni workstream açılır.**
+
+- **Human Validation + Routing Correction** (D-049): **tamamlandı**.
+  - Kullanıcı AI'ın belge türü ve kurum sonucunu sonuç kartında veya Kayıtlar detayında onaylar ya da katalog içinden düzeltir. AI sonucu, `needs_review`, `review_reason` ve `status` değişmez; onaylanan değerler ayrı `validated_*` alanlarında tutulur.
+  - Backend: 3 nullable kolon (migration `c32c5dc8f72e`), `GET /api/catalogs`, `PUT /api/documents/{document_id}/validation`. Frontend: `effectiveRouting`, `recordDisplayState`; "İnceleme Gereken" yalnız onaylanmamış `needs_review` kayıtlarını sayar.
+  - Doğrulama (2026-10-06): ayrı, geçici bir E2E veritabanında gerçek backend, frontend ve tarayıcıyla geçti; blocker/high yok. Demo DB ve demo storage E2E'den etkilenmedi.
 
 - **Sunum hazırlığı** (2026-10-04): Preflight ve demo provası gerçek PostgreSQL ve Gemini ile geçti. Kapsam: tek belge, OCR (taranmış PDF ve görüntü), `needs_review` dahil çoklu yükleme, Kayıtlar, yeniden başlatma sonrası kalıcılık.
+  - Demo DB (2026-10-06): 11 kayıt (9 `classified`, 2 `needs_review`), onaylı kayıt yok; migration head `c32c5dc8f72e`.
+  - Açık: D-049 dahil son sunum provası henüz yapılmadı.
   - Açık kontrol: PDF orijinal görünümü sunum tarayıcısında elle denenmeli; otomatik test tarayıcısında PDF görüntüleyici yok.
 
 - **Kayıtlar deneyimi** (frontend; D-048): **tamamlandı**.
@@ -62,27 +69,30 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 - Legacy, tek adımlı `POST /api/documents/classify`.
 - V1.4 iki adımlı akış: `prepare` → `/{id}/classify`; vazgeçmek için `DELETE /{id}/prepared`.
 - Salt okunur liste, detay ve indirme; ayrıca `GET /health`.
+- Kullanıcı onayı: `PUT /{id}/validation` yalnız onay alanlarını yazar; düzeltme seçenekleri salt okunur `GET /api/catalogs`'tan gelir (D-049).
 
 **Bilinçli olarak yok:**
 - El yazısı dedektörü, Tesseract → Gemini düzeltme zinciri, ek OCR motoru.
 - 3 sayfalık sabit gruplar dışında dinamik/gelişmiş chunking; grupların paralel gönderilmesi.
 - Agent/RAG/vector DB, kuyruk/worker, authentication.
+- Onay geçmişi, onaylayan kişinin kaydı, iş akışı/SLA ve business status (D-049).
 
 ## Repo ve geliştirme ortamı
 
 **Backend** (`backend/app/`):
-- `api/documents.py` — endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek) ve `status`.
+- `api/documents.py` — endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek), `status` ve kullanıcı onayı (D-049).
+- `api/catalogs.py` — salt okunur katalog endpoint'i (D-049).
 - `services/file_service.py` — kabul kontrolü, storage, yerel metin çıkarımı, OCR gereksinimi kararı (`needs_ocr`), PDF grupları (`transcription_parts`), Tesseract yedeği.
 - `services/classification_service.py` — sınıflandırma ve transkripsiyon çağrıları, prompt'lar, çıktı doğrulama, retry politikası.
 - `llm/gemini_client.py` — google-genai ince sarmalayıcısı (`generate_json`, `transcribe`).
 - `schemas/`, `models/`, `config/` (belge türü ve kurum katalogları), `alembic/`.
 
-**Veritabanı:** Tek `documents` tablosu. Alembic head `cedf33674167` (iki migration).
+**Veritabanı:** Tek `documents` tablosu. Alembic head `c32c5dc8f72e` (üç migration; sonuncusu D-049 onay kolonları).
 
 **Frontend** (`frontend/`): React + Vite + TypeScript, tek sayfa.
-- `src/App.tsx` — sınıflandırma ve kayıtlar görünümleri.
+- `src/App.tsx` — sınıflandırma ve kayıtlar görünümleri; ortak onay bileşeni `ValidationControls` (D-049).
 - `src/documentPreview.ts` — önizleme alanlarının deterministik çıkarımı.
-- `src/records.ts` — Kayıtlar arama, filtre ve özet sayıları için saf yardımcılar (D-048).
+- `src/records.ts` — Kayıtlar arama, filtre ve özet sayıları; effective yönlendirme ve gösterim durumu için saf yardımcılar (D-048, D-049).
 
 **Geliştirme ortamı** (D-036):
 - PostgreSQL 18 Docker Compose ile `127.0.0.1:5433`'te çalışır.
@@ -97,8 +107,8 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 
 ## Test baseline
 
-- **Backend:** `pytest` **368 passed** (Starlette/anyio kaynaklı 2 bilinen deprecation uyarısıyla); `pip check` temiz.
-- **Frontend:** `npm test` **42 passed**; `npm run build` ve `npm run lint` temiz.
+- **Backend:** `pytest` **387 passed** (Starlette/anyio kaynaklı 2 bilinen deprecation uyarısıyla); `pip check` temiz.
+- **Frontend:** `npm test` **56 passed**; `npm run build` ve `npm run lint` temiz.
 - **Otomatik testler** gerçek Gemini API'si veya Docker PostgreSQL gerektirmez:
   - Endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır.
   - Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
@@ -110,6 +120,11 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 - **OCR gereken 3–21 sayfalık taranmış PDF'ler:** Tüm sayfalar okundu; 21 sayfa = 7 grup çağrısı, ~36 sn.
 - **Zorlanmış 503:** Yedek yol çalıştı ve sonuç `needs_review` oldu. Bir grup başarısız olduğunda kısmi Gemini metni kullanılmadı.
 - **Loglar:** Belge metni, API anahtarı ve storage yolu yok.
+
+**D-049 gerçek ortam doğrulaması** (2026-10-06; ayrı geçici PostgreSQL DB + Gemini + headless tarayıcı):
+- Onay, düzeltme, tekrar onay ve kurum `null`; Kayıtlar filtreleri ve sayaçları; `needs_review` onayı; yenileme ve backend yeniden başlatma sonrası kalıcılık; 3 dosyalık çoklu yükleme regresyonu.
+- Migration zinciri E2E DB'de upgrade → downgrade → upgrade ile doğrulandı; `alembic check` temiz. `409` (prepared/failed) ve `422` canlı API'de doğrulandı.
+- Loglarda 5xx, belge metni ve API anahtarı yok. Demo DB ve demo storage etkilenmedi (storage SHA-256 baseline aynı); E2E DB test sonunda kaldırıldı.
 
 ## Bilinen problemler ve riskler
 
@@ -187,6 +202,14 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
 
 - **İstemci tarafı filtre:** Liste sayfalamasız tek istekte gelir; arama, filtre ve özet sayıları yüklü liste üzerinde çalışır. Tür/kurum seçenekleri yalnız mevcut kayıtlardakilerdir. Kayıt sayısı çok artarsa sunucu tarafı sayfalama/filtre ayrı karar gerektirir (D-048).
 
+**Kullanıcı onayı (D-049)**
+
+- **Yetki ve geçmiş yok (D-025):** Arayüze erişen herkes onaylayabilir; onaylayan kişi ve onay geçmişi tutulmaz. Eşzamanlı onaylarda son yazan kazanır; başka sekmede açık kalan eski kart yenilenmez.
+- **Dış entegrasyon:** `document_type` ve `institution_id` her zaman AI sonucudur; kullanıcı düzeltmesi `validated_*` alanlarındadır.
+- **Filtreli liste:** Onaylanan kayıt mevcut filtreden (ör. "İnceleme gerekli") hemen çıkabilir; beklenen davranıştır.
+- **Katalog:** Katalogdan çıkarılan bir ID'nin adı "Belirlenemedi" görünür. Arayüz kataloğu sayfa yenilenene kadar saklar; katalog değişirse onay `422` alır.
+- **Terim farkı:** Kayıtlar listesi "Gideceği Kurum", sonuç kartı ve Kayıtlar detayı "Hedef Kurum" der.
+
 **Geliştirme ortamı**
 
 - **Port ve adres:** Bu makinede 5432'yi yerel bir Windows PostgreSQL servisi kullanıyor; Docker PostgreSQL `127.0.0.1:5433`'te. `DATABASE_URL`'de `localhost` değil `127.0.0.1` kullanılmalı (IPv6 `::1` bağlantısı asılı kalıyor).
@@ -209,17 +232,16 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
 
 ## Sıradaki geliştirme hedefleri
 
-Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur: aynı anda yalnız bir yeni workstream açılır; açık feature tamamlanıp testleri ve demo provası geçmeden ikinci feature açılmaz. Aşağıdakilerin hiçbiri implement edilmedi ve **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir.
+Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur: aynı anda yalnız bir yeni workstream açılır; açık feature tamamlanıp testleri ve demo provası geçmeden ikinci feature açılmaz. Aday 2 ve 3 implement edilmedi ve **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir.
 
 ### Aday roadmap
 
-Sıra: 1 → 2 → gerçek kullanıcı araştırması → yalnız araştırma doğrularsa 3.
+Sıra: 1 (tamamlandı) → 2 → gerçek kullanıcı araştırması → yalnız araştırma doğrularsa 3.
 
-1. **Human Validation + Routing Correction** — GO. İlk geliştirme adayı.
+1. **Human Validation + Routing Correction** — **TAMAMLANDI** (D-049, 2026-10-06).
    - AI'ın `document_type` ve `institution_id` sonucu korunur; kullanıcının onayladığı değerler ayrı tutulur.
    - Kullanıcı sonucu olduğu gibi onaylar veya değiştirir.
-   - Önce karar gerekir: bugün kalıcı kayıtlar değiştirilemez (D-019; `PROJECT_BRAIN.md` §12).
-2. **Evidence-backed Routing** — GO WITH CONSTRAINTS. İkinci aday; 1 tamamlanmadan açılmaz.
+2. **Evidence-backed Routing** — GO WITH CONSTRAINTS. **Sıradaki aday**; henüz açılmadı.
    - Tercih: mevcut sınıflandırma çağrısında opsiyonel evidence üretimi; ayrı Gemini çağrısı planlanmıyor.
    - Backend yalnız `extracted_text` içinde doğrulanan kaynak ifadeleri saklar; arayüzde "Belgedeki ilgili ifade" olarak gösterilir.
 3. **Structured Operational Extraction** — GO WITH CONSTRAINTS / USER VALIDATION REQUIRED.
