@@ -2,7 +2,7 @@
 
 > **Son güncelleme:** 2026-10-07
 >
-> Projenin güncel durumu (snapshot). Geliştirme günlüğü değildir: yalnız güncel durum, aktif riskler ve sıradaki adımlar tutulur. Geçmiş ayrıntılar Git geçmişinde, sürüm özetleri `README.md` "Sürüm Geçmişi" bölümündedir.
+> Projenin güncel durumu (snapshot). Geliştirme günlüğü değildir: yalnız güncel durum, aktif riskler ve sıradaki adımlar tutulur. Geçmiş ayrıntılar Git geçmişindedir.
 >
 > Temel bilgiler → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 
@@ -105,7 +105,7 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 **Geliştirme ortamı** (D-036):
 - PostgreSQL 18 Docker Compose ile `127.0.0.1:5433`'te çalışır.
 - Backend (`uvicorn`) ve frontend (Vite; `/api` proxy → `127.0.0.1:8000`) yerelde çalışır, containerize edilmez.
-- Kurulum ve günlük komutlar: `README.md` "Kurulum" ve "Çalıştırma".
+- Kurulum ve çalıştırma: `README.md` "Kurulum".
 
 **Ortam değişkenleri:**
 - Zorunlu: `GEMINI_API_KEY`, `GEMINI_MODEL` (`gemini-3.5-flash-lite`), `DATABASE_URL`.
