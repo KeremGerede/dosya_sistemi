@@ -10,8 +10,9 @@ import {
   filterOptions,
   filterRecords,
   recordDisplayState,
+  routingEvidenceSection,
 } from './records'
-import type { RecordFilters } from './records'
+import type { RecordFilters, RoutingEvidence } from './records'
 import './App.css'
 
 // Kullanıcı deneyimi için ön kontroller; kabul kararı backend'e aittir (D-040).
@@ -69,6 +70,8 @@ type ClassifyResponse = {
   summary: string | null
   sender_name: string | null
   sender_institution: string | null
+  // D-050: backend'in kaynakta birebir doğruladığı ifadeler; [] = doğrulanan ifade yok, prepared/failed/eski kayıtta null.
+  routing_evidence: RoutingEvidence[] | null
   status: DocumentStatus
   // D-049: kullanıcı onayı; onaysız kayıtta null. Adlar backend'de katalogdan çözülür.
   validated_document_type: string | null
@@ -559,6 +562,7 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
                         )}
 
                         {item.status !== 'failed' && <ValidationControls record={item} onValidated={applyValidation} />}
+                        <RoutingEvidenceSection record={item} />
 
                         {detailLoading && (
                           <p className="status" role="status">
@@ -726,6 +730,26 @@ function ValidationControls({
   )
 }
 
+// Belgedeki ilgili ifade (D-050): sonuç kartında ve Kayıtlar detayında aynı bölüm. İfadeler AI önerisine aittir ve
+// backend'den geldiği gibi gösterilir; supports gösterilmez. Kullanıcı türü veya kurumu değiştirdiyse küçük not eklenir.
+function RoutingEvidenceSection({ record }: { record: ClassifyResponse }) {
+  const section = routingEvidenceSection(record)
+  if (section === null) {
+    return null // null veya []: bölüm ve boş durum mesajı yok
+  }
+  return (
+    <div className="routing-evidence">
+      <h3>Belgedeki ilgili ifade</h3>
+      {section.aiBasis && <p className="routing-evidence-note">AI önerisinin dayanağı</p>}
+      {section.quotes.map((quote, index) => (
+        <blockquote key={index} className="evidence-quote">
+          {quote}
+        </blockquote>
+      ))}
+    </div>
+  )
+}
+
 // Analiz sonucu (D-045). Anlamsal kalite kapısı olmadığından kesinlik iddiası yoktur: başlık her durumda
 // "Analiz tamamlandı"dır; onaysız needs_review'da "Kontrol Öneriliyor" gösterilir. Tür ve kurum birincil sonuçtur:
 // onaylıysa onaylanan değer, AI önerisi yalnız farklıysa ikincil satırda (D-049).
@@ -740,8 +764,25 @@ function ResultCard({
 }) {
   const routing = effectiveRouting(result)
   const activeReview = result.needs_review && !routing.validated
+  const cardRef = useRef<HTMLElement>(null)
+
+  // Kart açıldığında onay satırı sabit analiz çubuğunun altında kalıyorsa satır görünüme kaydırılır; html'deki
+  // scroll-padding-bottom satırı çubuğun üstünde durdurur. Çubuk satırı örtmüyorsa (geniş ekran, dar ekranda akıştaki
+  // çubuk) kaydırma yapılmaz.
+  useEffect(() => {
+    const row = cardRef.current?.querySelector('.validation')
+    const bar = document.querySelector('.batch-actions')
+    if (row && bar && row.getBoundingClientRect().bottom > bar.getBoundingClientRect().top) {
+      row.scrollIntoView({ block: 'nearest' })
+    }
+  }, [])
+
   return (
-    <section className={activeReview ? 'notice result review' : 'notice result'} aria-label="Analiz sonucu">
+    <section
+      ref={cardRef}
+      className={activeReview ? 'notice result review' : 'notice result'}
+      aria-label="Analiz sonucu"
+    >
       <div className="result-head">
         <div>
           <h2>Analiz tamamlandı</h2>
@@ -782,6 +823,9 @@ function ResultCard({
       )}
 
       <ValidationControls record={result} onValidated={onValidated} />
+
+      {/* Onay kontrollerinin altında: "Sonucu Onayla" yerinde kalır (D-050). */}
+      <RoutingEvidenceSection record={result} />
 
       {result.summary !== null && (
         <div className="result-summary">

@@ -260,6 +260,8 @@ def _classify_into(document: Document) -> tuple[int, str] | None:
     document.summary = result.summary
     document.sender_name = result.sender_name
     document.sender_institution = result.sender_institution
+    # D-050: yalnız kaynakta doğrulanmış ifadeler; doğrulanan yoksa [] yazılır. Evidence status'u ve needs_review'u etkilemez.
+    document.routing_evidence = [item.model_dump() for item in result.routing_evidence]
     document.status = "needs_review" if document.needs_review else "classified"
     logger.info("Belge %s sınıflandırıldı: status=%s.", document.id, document.status)
     return None
@@ -458,6 +460,7 @@ def _classify_fields(document: Document) -> dict:
         "summary": document.summary,
         "sender_name": document.sender_name,
         "sender_institution": document.sender_institution,
+        "routing_evidence": document.routing_evidence,  # D-050: prepared/failed/eski kayıtta null
         "status": document.status,
         # Kullanıcı onayı (D-049): AI alanlarından ayrıdır; adlar yine kataloglardan çözülür.
         "validated_document_type": document.validated_document_type,

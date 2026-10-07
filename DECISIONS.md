@@ -151,15 +151,16 @@
 
 ### D-008 — Belge başına tek sınıflandırma çağrısı; transkripsiyon ayrı çağrıdır
 - **Karar:**
-  - Belge türü, kurum, özet ve gönderen bilgisi tek bir Gemini sınıflandırma çağrısında belirlenir.
+  - Belge türü, kurum, özet, gönderen bilgisi ve yönlendirmeyle ilgili belge ifadeleri (`routing_evidence`, D-050) tek bir Gemini sınıflandırma çağrısında belirlenir.
   - OCR gereken belgelerde (D-047) bundan önce ayrı transkripsiyon çağrısı yapılır: görüntüde ve 1–3 sayfalık PDF'te bir, 4+ sayfalık PDF'te 3 sayfalık grup başına bir çağrı. Sınıflandırma birleşik metinle yine bir kez çalışır.
   - Transkripsiyon ve sınıflandırma birleştirilmez: transkripsiyon yalnız metni okur, sınıflandırma yalnız çıkarılan metinle çalışır.
   - Retry (D-033) aynı çağrının tekrarıdır, ek adım sayılmaz.
 - **Gerekçe:** Düşük gecikme ve maliyet; çok adımlı akışın getireceği karmaşıklıktan kaçınma. Transkripsiyonun ayrı kalması, çıkarılan metnin sınıflandırmadan önce önizlenip saklanmasını (D-045) ve sınıflandırma şemasının değişmemesini sağlar. Birleşik bir çağrı, ölçülmüş transkripsiyon davranışını da değiştirirdi.
 
 ### D-009 — Pydantic ile structured output
-- **Karar:** Model `document_type`, `institution_id`, `needs_review`, `review_reason` alanlarını ve D-044'teki `summary`, `sender_name`, `sender_institution` alanlarını Pydantic şemasına uygun döndürür.
+- **Karar:** Model `document_type`, `institution_id`, `needs_review`, `review_reason` alanlarını, D-044'teki `summary`, `sender_name`, `sender_institution` alanlarını ve D-050'deki `routing_evidence` alanını Pydantic şemasına uygun döndürür.
   - Temel şema `app/schemas/classification.py` içindedir ve `needs_review` tutarlılık kurallarını doğrular.
+  - İstisna: `routing_evidence` toleranslı doğrulanır. Eksik, `null`, yanlış tipli ya da bozuk evidence ve geçersiz öğeler doğrulamadan önce ayıklanır; yanıtın geri kalanı bu yüzden geçersiz sayılmaz (D-050).
   - İzinli `document_type` / `institution_id` değerleri çalışma zamanında katalog JSON'larından (`Literal`) üretilir; katalog ID'leri kodda ayrıca yazılmaz.
   - Aynı model hem Gemini'ye `response_schema` olarak verilir hem de backend'de yanıtı doğrular.
 - **Gerekçe:** Serbest metin ayrıştırma yok; çıktı tipli ve doğrulanabilir. Kataloglar tek kaynak olarak kalır; şema ile doğrulama birbirinden ayrışamaz.
@@ -181,6 +182,7 @@
   - Her Gemini çağrısı için 30 saniye timeout; aynı istekle toplam en fazla 3 deneme. Politika sınıflandırma ve transkripsiyon (D-047) çağrılarına ayrı ayrı uygulanır; 4+ sayfalık PDF'te her grup çağrısı kendi 3 denemesine sahiptir.
   - Retry edilir: network hataları, timeout hataları, `429`, `5xx` ve geçersiz model çıktısı.
     - Sınıflandırmada structured output şemasına uymayan veya katalog dışı değer içeren yanıt geçici model hatası kabul edilir.
+    - İstisna: `routing_evidence` hataları geçersiz çıktı sayılmaz; retry, `failed` veya `502` üretmez (D-050).
     - Transkripsiyonda boş yanıt geçersiz çıktı sayılır.
   - Retry edilmez: `400`, `401`, `403` gibi kalıcı istemci/yapılandırma hataları.
   - Bekleme: 1. başarısız denemeden sonra 1 saniye, 2. başarısız denemeden sonra 2 saniye.
@@ -204,7 +206,7 @@
 ## Veri ve depolama
 
 ### D-013 — Tek `documents` tablosu
-- **Karar:** Başlangıçta yalnızca `documents` tablosu kullanılır. Alanlar: `id`, `file_name`, `file_type`, `file_reference`, `extracted_text`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution` (son üçü D-044), `validated_document_type`, `validated_institution_id`, `validated_at` (kullanıcı onayı, D-049), `status`, `created_at`.
+- **Karar:** Başlangıçta yalnızca `documents` tablosu kullanılır. Alanlar: `id`, `file_name`, `file_type`, `file_reference`, `extracted_text`, `document_type`, `institution_id`, `needs_review`, `review_reason`, `summary`, `sender_name`, `sender_institution` (son üçü D-044), `validated_document_type`, `validated_institution_id`, `validated_at` (kullanıcı onayı, D-049), `routing_evidence` (D-050), `status`, `created_at`.
 - **Gerekçe:** MVP akışı için yeterli; kataloglar dosyada olduğundan ek tabloya gerek yok.
 
 ### D-029 — `documents.id` UUID
@@ -346,6 +348,35 @@
     - Onay hatalarında (404, 409, 422, ağ, zaman aşımı) kısa Türkçe mesaj gösterilir; FastAPI'nin 422 ayrıntısı gösterilmez, formdaki seçimler korunur.
   - **Kapsam dışı:** Authentication/RBAC, onaylayan kişinin kaydı, onay geçmişi veya ek tablo, workflow, SLA, business status, toplu onay, onayı geri alma.
 - **Gerekçe:** Kullanıcı düzeltmesi AI çıktısını silmez; iki sonuç karşılaştırılabildiği için AI doğruluğu ölçülebilir kalır. Tek tablo kuralı (D-013) korunur; nullable kolonlar mevcut kayıtları ve API sözleşmesini bozmaz. Authentication olmadığından (D-025) onaylayan kişi bilinemez; geçmiş tutmak MVP için gereksiz karmaşıklıktır. `needs_review` ve `status`, AI işleme sonucunun kaydı olarak kalır (D-014, D-016).
+
+### D-050 — Evidence-backed Routing: kaynakta birebir doğrulanmış "belgedeki ilgili ifade"
+- **Durum:** Tamamlandı (2026-10-07). Sınıflandırma katmanı, prompt (v4, frozen), doğrulama, persistence, API alanı ve arayüz uygulandı; demo DB migrate edildi ve gerçek veriyle entegrasyon kontrolü geçti (blocker/high yok).
+- **Karar:**
+  - **Aynı çağrı:** Evidence mevcut sınıflandırma çağrısında üretilir (D-008). Ayrı Gemini çağrısı, ayrı çıkarım adımı, agent veya RAG yoktur.
+  - **Model output:** `routing_evidence: [{"quote": "...", "supports": "document_type" | "institution" | "both"}]`; boş liste geçerlidir. Alan şemadaki son alandır; sınıflandırma alanları evidence'tan önce üretilir.
+    - Prompt, belge türü veya hedef kurum açısından ayırt edici, belgeden birebir ve kesintisiz alınmış en fazla 2 ifade ister: tercihen en fazla 200, hiçbir zaman 300 karakterden uzun değil. Yeniden yazma, düzeltme, özetleme, "..." ile kısaltma ve farklı bölümleri birleştirme yasaktır. Selamlama, imza, tarih, standart kapanış ve tek başına anlam taşımayan genel ifadeler istenmez. Ayırt edici ifade yoksa boş liste beklenir.
+    - Evidence açıklama, gerekçe veya akıl yürütme değildir; yalnız kaynaktan alıntıdır.
+  - **Evidence sınıflandırmanın başarısını belirlemez:** Eksik, `null`, yanlış tipli veya bozuk `routing_evidence` ve geçersiz öğeler, nested doğrulamadan önce model düzeyinde ayıklanır; sonuç boş listedir. Bu durum retry, `failed` veya `502` üretmez (D-009 ve D-033 istisnası). Sınıflandırma alanlarının doğrulaması değişmez.
+  - **Kaynakta birebir doğrulama:** Modelin önerdiği ifade güvenilir kabul edilmez; backend doğrular, yalnız doğrulananlar kalır.
+    - Kaynak penceresi modelin gördüğü metindir: `extracted_text[:50_000]` (D-027).
+    - Kaynağa ve ifadeye Unicode NFC ve mevcut whitespace normalizasyonu uygulanır. İfadeden yalnız tek bir eşleşen dış tırnak çifti silinebilir.
+    - Boş ifade ve 300 karakteri aşan ifade atılır. Eşleşme büyük/küçük harfe duyarlı, birebir substring'dir.
+    - Yasak: lowercase/casefold, Türkçe karakter katlama (ş→s, ı→i), ASCII katlama, fuzzy eşleşme, edit distance, embedding, RAG ve yeni LLM çağrısı.
+    - Adaylar sırayla doğrulanır; ilk 2 geçerli ifadede durulur. Daha önce doğrulanmış bir ifadeyle aynı normalize ifade atılır.
+    - `institution_id` `null` iken `supports` değeri `institution` veya `both` olan ifade atılır.
+    - Backend anlamsal filtre veya boilerplate kara listesi uygulamaz; genel ifadelerden kaçınmak prompt'un sorumluluğudur.
+    - İfade metni belge metnidir ve loglanmaz; yalnız aday ve doğrulanan sayıları loglanır.
+  - **`needs_review`, `review_reason`, `status`:** Evidence bunları değiştirmez ve güven skoru değildir. Evidence bulunmaması tek başına `needs_review` sebebi değildir.
+  - **Persistence:** `documents.routing_evidence` nullable kolon, SQLAlchemy generic `JSON` (PostgreSQL'e özgü JSONB değil); migration `5ed883607e08`. Ayrı tablo, ifade başına kolon, server default, index, constraint ve backfill yoktur.
+    - `NULL`: evidence hiç üretilmedi (eski kayıt, `prepared` veya `failed`).
+    - `[]`: sınıflandırma başarıyla çalıştı, doğrulanan ifade yok.
+    - `[{"quote", "supports"}, ...]`: yalnız backend birebir doğrulamasından geçmiş ifadeler.
+    - Değer yalnız başarılı sınıflandırmada yazılır (D-045 akışında `/{id}/classify`, legacy classify). Onay endpoint'i (D-049) bu alana yazmaz.
+  - **API:** Classify (legacy ve `/{id}/classify`), prepare, liste, detay ve onay yanıtları `routing_evidence: [{"quote", "supports"}] | null` alanını içerir; `prepared`, `failed` ve eski kayıtlarda `null`. Ayrı evidence endpoint'i yoktur; `GET /api/catalogs` değişmez.
+  - **Human Validation (D-049):** Evidence AI önerisine aittir; kullanıcı düzenlemez, onay endpoint'i değiştirmez. Arayüz bölüm düzeyinde davranır: AI belge türü ve kurumu kullanıcı tarafından değiştirilmediyse yalnız "Belgedeki ilgili ifade" başlığı görünür; ikisinden biri değiştirildiyse başlık aynı kalır ve küçük ikincil "AI önerisinin dayanağı" etiketi eklenir. `supports` saklanır ama arayüzde öğe bazında gösterilmez.
+  - **Arayüz:** Başlık "Belgedeki ilgili ifade"; "Kanıt", "Gerekçe" gibi akıl yürütme çağrıştıran adlar kullanılmaz. Evidence yoksa bölüm görünmez. Sonuç kartında `ValidationControls` altında ve AI Özeti üstünde, Kayıtlar detayında da gösterilir. Yeni sayfa, modal veya liste kolonu yoktur. OCR kaynağına özel not yoktur.
+  - **Kapsam dışı:** Ayrı çıkarım çağrısı, RAG, vector DB, agent, güven skoru, evidence düzenleme veya kullanıcı tarafından evidence ekleme, hukuki değerlendirme, açıklama üretimi, tekrar tespiti, workflow/SLA, Structured Operational Extraction.
+- **Gerekçe:** Kullanıcı yönlendirme sonucunu belgenin kendi ifadesiyle hızlıca kontrol eder. Aynı çağrı ek gecikme ve maliyet getirmez (D-044 emsali). Birebir doğrulama, modelin uydurduğu veya değiştirdiği bir ifadenin belge ifadesi gibi gösterilmesini önler; uyuşmazlığın bedeli yalnız evidence kaybıdır. Toleranslı doğrulama, ikincil bir alanın sınıflandırma güvenilirliğini düşürmesini engeller.
 
 ### D-020 — Senkron işleme
 - **Karar:**

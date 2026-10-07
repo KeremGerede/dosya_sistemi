@@ -11,7 +11,8 @@ import pytest
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import JSON, create_engine, select
+from sqlalchemy import text as sql_text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -38,6 +39,7 @@ VALIDATION_FIELDS = {  # kullanıcı onayı (D-049); onaysız kayıtta null
 RESPONSE_FIELDS = {
     "document_id", "file_name", "file_type", "document_type", "document_type_name", "institution_id", "institution_name",
     "needs_review", "review_reason", "summary", "sender_name", "sender_institution", "status",
+    "routing_evidence",  # D-050
 } | VALIDATION_FIELDS
 SUMMARY = "Vatandaş sokaktaki çöplerin toplanmadığını bildirip gereğinin yapılmasını istiyor."
 SENDER_NAME = "Ayşe Yılmaz"
@@ -62,12 +64,16 @@ def make_docx(text: str) -> bytes:
     return buffer.getvalue()
 
 
-def classification(needs_review: bool = False, sender: bool = True) -> ClassificationResult:
-    """Sahte sınıflandırma sonucu. sender=False: belgede gönderen bilgisi yok (D-044)."""
+def classification(needs_review: bool = False, sender: bool = True, routing_evidence: list | None = None) -> ClassificationResult:
+    """Sahte sınıflandırma sonucu. sender=False: belgede gönderen bilgisi yok (D-044).
+
+    routing_evidence classify_text'in döndürdüğü, kaynakta doğrulanmış ifadelerdir (D-050); verilmezse [].
+    """
     extra = {
         "summary": SUMMARY,
         "sender_name": SENDER_NAME if sender else None,
         "sender_institution": SENDER_INSTITUTION if sender else None,
+        "routing_evidence": routing_evidence or [],
     }
     if needs_review:
         return ClassificationResult(document_type="other", institution_id=None, needs_review=True, review_reason="Kurum belirsiz.", **extra)
@@ -206,6 +212,7 @@ def test_valid_document_is_classified(client, session_factory, storage_dir, fake
         "institution_id": INSTITUTION, "institution_name": INSTITUTION_NAME,
         "needs_review": False, "review_reason": None, "status": "classified",
         "summary": SUMMARY, "sender_name": SENDER_NAME, "sender_institution": SENDER_INSTITUTION,
+        "routing_evidence": [],  # sınıflandırma çalıştı, doğrulanan ifade yok (D-050)
         **dict.fromkeys(VALIDATION_FIELDS),  # yeni sınıflandırılan belge onaysızdır (D-049)
     }
     [document] = all_documents(session_factory)
@@ -743,6 +750,7 @@ def test_model_columns_match_migrated_schema():
     nullable_columns = (
         "summary", "sender_name", "sender_institution",  # D-044
         "validated_document_type", "validated_institution_id", "validated_at",  # D-049
+        "routing_evidence",  # D-050
     )
     columns = set(Document.__table__.columns.keys())
     assert set(nullable_columns) <= columns
@@ -2090,3 +2098,151 @@ def test_validation_migration_follows_previous_head():
 
     assert script.get_revision("c32c5dc8f72e").down_revision == "cedf33674167"
     assert len(script.get_heads()) == 1
+
+
+# --- Routing evidence: persistence ve API alanı (D-050) ---
+
+EVIDENCE = [
+    {"quote": "sokagimizdaki copler toplanmiyor", "supports": "document_type"},
+    {"quote": "Sayin yetkili", "supports": "institution"},
+]
+
+
+def raw_evidence_rows(session_factory) -> list[tuple]:
+    """DB'deki ham değer: SQL NULL ile JSON değeri ([] veya JSON null) ayrı görünür."""
+    with session_factory() as session:
+        return [tuple(row) for row in session.execute(sql_text("SELECT routing_evidence IS NULL, routing_evidence FROM documents"))]
+
+
+def test_routing_evidence_column_is_nullable_generic_json_without_default():
+    column = Document.__table__.columns["routing_evidence"]
+
+    assert column.nullable is True
+    assert type(column.type) is JSON  # generic JSON; PostgreSQL'e özgü JSONB değil
+    assert column.default is None and column.server_default is None
+
+
+@pytest.mark.parametrize("overrides", [{}, {"routing_evidence": None}], ids=["unset", "explicit-none"])
+def test_new_document_stores_sql_null_evidence(session_factory, overrides):
+    insert_document(session_factory, **overrides)
+
+    assert raw_evidence_rows(session_factory) == [(1, None)]  # JSON "null" değil, SQL NULL
+
+
+def test_legacy_classify_persists_and_returns_verified_evidence(client, session_factory, storage_dir, fake_classify):
+    fake_classify(classification(routing_evidence=EVIDENCE))
+
+    response = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 200
+    assert response.json()["routing_evidence"] == EVIDENCE
+    [document] = all_documents(session_factory)
+    assert document.routing_evidence == EVIDENCE
+    assert (document.status, document.needs_review) == ("classified", False)
+
+
+def test_empty_evidence_is_persisted_as_empty_list_not_null(client, session_factory, storage_dir, fake_classify):
+    fake_classify(classification())  # doğrulanan ifade yok
+
+    body = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()
+
+    assert body["routing_evidence"] == []
+    assert raw_evidence_rows(session_factory) == [(0, "[]")]
+
+
+def test_prepared_record_has_null_evidence_until_classified(client, session_factory, storage_dir, fake_classify):
+    prepared = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()
+    document_id = prepared["document_id"]
+
+    assert prepared["routing_evidence"] is None
+    assert raw_evidence_rows(session_factory) == [(1, None)]
+    assert client.get(f"{LIST_URL}/{document_id}").json()["routing_evidence"] is None
+
+    fake_classify(classification(routing_evidence=EVIDENCE))
+    classified = client.post(classify_url(document_id)).json()
+
+    assert classified["routing_evidence"] == EVIDENCE
+    assert stored_document(session_factory, document_id).routing_evidence == EVIDENCE
+    assert client.get(f"{LIST_URL}/{document_id}").json()["routing_evidence"] == EVIDENCE
+    assert client.get(LIST_URL).json()[0]["routing_evidence"] == EVIDENCE
+
+
+@pytest.mark.parametrize("needs_review", [False, True], ids=["classified", "needs_review"])
+def test_evidence_does_not_change_status_needs_review_or_reason(client, session_factory, storage_dir, fake_classify, needs_review):
+    fake_classify(classification(needs_review=needs_review))
+    without_evidence = upload(client, "a.pdf", make_pdf(PDF_TEXT)).json()
+    evidence = [EVIDENCE[0]]  # document_type ifadesi: needs_review sonucunda kurum null olduğundan (D-050 kuralı)
+    fake_classify(classification(needs_review=needs_review, routing_evidence=evidence))
+    with_evidence = upload(client, "b.pdf", make_pdf(PDF_TEXT)).json()
+
+    assert with_evidence["routing_evidence"] == evidence
+    for field in ("status", "needs_review", "review_reason", "document_type", "institution_id"):
+        assert with_evidence[field] == without_evidence[field]
+
+
+def test_failed_classification_leaves_evidence_null(client, session_factory, storage_dir, fake_classify):
+    fake_classify(classification_error())
+
+    response = upload(client, "dilekce.pdf", make_pdf(PDF_TEXT))
+
+    assert response.status_code == 502
+    assert response.json()["routing_evidence"] is None
+    assert raw_evidence_rows(session_factory) == [(1, None)]
+
+
+def test_failed_prepared_classification_leaves_evidence_null(client, session_factory, storage_dir, fake_classify):
+    document_id = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT)).json()["document_id"]
+    fake_classify(classification_error())
+
+    response = client.post(classify_url(document_id))
+
+    assert response.status_code == 502
+    assert response.json()["routing_evidence"] is None
+    assert raw_evidence_rows(session_factory) == [(1, None)]
+
+
+@pytest.mark.parametrize("send", [upload, prepare], ids=["legacy", "prepare"])
+def test_text_extraction_failure_leaves_evidence_null(client, session_factory, storage_dir, send):
+    response = send(client, "kisa.docx", make_docx("Kısa"))
+
+    assert response.status_code == 422
+    assert response.json()["routing_evidence"] is None
+    assert raw_evidence_rows(session_factory) == [(1, None)]
+
+
+def test_old_record_without_evidence_returns_null_in_list_and_detail(client, session_factory):
+    document = insert_document(session_factory)  # migration öncesi kayıt gibi: kolon NULL
+
+    assert client.get(LIST_URL).json()[0]["routing_evidence"] is None
+    assert client.get(f"{LIST_URL}/{document.id}").json()["routing_evidence"] is None
+
+
+VALIDATIONS = {
+    "unchanged": [(DOCUMENT_TYPE, INSTITUTION)],
+    "corrected": [(CORRECTED_TYPE["id"], CORRECTED_INSTITUTION["id"])],
+    "institution-null": [(DOCUMENT_TYPE, None)],
+    "repeated": [(CORRECTED_TYPE["id"], None), (DOCUMENT_TYPE, INSTITUTION), (CORRECTED_TYPE["id"], CORRECTED_INSTITUTION["id"])],
+}
+
+
+@pytest.mark.parametrize("evidence", [EVIDENCE, [], None], ids=["evidence", "empty", "null"])
+@pytest.mark.parametrize("payloads", VALIDATIONS.values(), ids=VALIDATIONS.keys())
+def test_validation_never_changes_routing_evidence(client, session_factory, evidence, payloads):
+    document = insert_document(session_factory, routing_evidence=evidence)
+
+    for document_type, institution_id in payloads:
+        response = validate(client, document.id, document_type, institution_id)
+        assert response.status_code == 200
+        assert response.json()["routing_evidence"] == evidence
+
+    saved = stored(session_factory, document.id)
+    assert saved.routing_evidence == evidence
+    assert (saved.validated_document_type, saved.validated_institution_id) == payloads[-1]
+    assert raw_evidence_rows(session_factory)[0][0] == (evidence is None)
+
+
+def test_routing_evidence_migration_follows_validation_head():
+    script = ScriptDirectory.from_config(AlembicConfig(str(pathlib.Path(__file__).resolve().parents[1] / "alembic.ini")))
+
+    assert script.get_revision("5ed883607e08").down_revision == "c32c5dc8f72e"
+    assert script.get_heads() == ["5ed883607e08"]

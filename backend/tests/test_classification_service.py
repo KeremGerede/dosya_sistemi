@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import httpx
@@ -38,8 +39,9 @@ SAMPLE_SUMMARY = "Vatandaş çöp konteynerlerinin boşaltılmadığını bildir
 
 def model_output(
     document_type=VALID_DOCUMENT_TYPE, institution_id=VALID_INSTITUTION, needs_review=False, review_reason=None,
-    summary=SAMPLE_SUMMARY, sender_name=None, sender_institution=None,
+    summary=SAMPLE_SUMMARY, sender_name=None, sender_institution=None, **extra,
 ):
+    """extra: ör. routing_evidence (D-050); verilmezse alan yanıtta hiç yoktur."""
     return json.dumps(
         {
             "document_type": document_type,
@@ -49,6 +51,7 @@ def model_output(
             "summary": summary,
             "sender_name": sender_name,
             "sender_institution": sender_institution,
+            **extra,
         }
     )
 
@@ -518,6 +521,299 @@ def test_prompt_forbids_splitting_or_inventing_sender_name():
     assert "Kişinin adını parçalama ve yeni bir isim oluşturma" in prompt
     assert "belgede yazan adı soyadını olduğu gibi kullan" in prompt
     assert "Açıkça yazmıyorsa null ver" in prompt and "isim üretme" in prompt
+
+
+# --- Routing evidence: aynı çağrı, kaynakta birebir doğrulama (D-050) ---
+
+EVIDENCE_TEXT = (
+    "Sayın Yetkili, Fen İşleri Müdürlüğü'ne şikâyetimdir: Kaldırım taşları kırık ve yaya geçişi tehlikeli. "
+    "Gereğinin yapılmasını arz ederim. Ayşe Yılmaz"
+)
+TYPE_QUOTE = "Kaldırım taşları kırık ve yaya geçişi tehlikeli"
+INSTITUTION_QUOTE = "Fen İşleri Müdürlüğü'ne"
+BOTH_QUOTE = "Fen İşleri Müdürlüğü'ne şikâyetimdir"
+NEEDS_REVIEW_FIELDS = {"document_type": "other", "institution_id": None, "needs_review": True, "review_reason": "Kurum belirsiz."}
+
+
+def evidence(quote, supports="document_type"):
+    return {"quote": quote, "supports": supports}
+
+
+def classify_with_evidence(fake_gemini, items, text=EVIDENCE_TEXT, **fields):
+    fake = fake_gemini(model_output(routing_evidence=items, **fields))
+    result = classify_text(text)
+    assert len(fake.prompts) == 1  # evidence için ek çağrı yok
+    return [(item.quote, item.supports) for item in result.routing_evidence]
+
+
+def test_valid_exact_quote_is_returned(fake_gemini):
+    assert classify_with_evidence(fake_gemini, [evidence(TYPE_QUOTE)]) == [(TYPE_QUOTE, "document_type")]
+
+
+def test_empty_evidence_list_is_valid(fake_gemini):
+    assert classify_with_evidence(fake_gemini, []) == []
+
+
+@pytest.mark.parametrize("supports, quote", [("document_type", TYPE_QUOTE), ("institution", INSTITUTION_QUOTE), ("both", BOTH_QUOTE)])
+def test_single_evidence_keeps_its_supports_value(fake_gemini, supports, quote):
+    assert classify_with_evidence(fake_gemini, [evidence(quote, supports)]) == [(quote, supports)]
+
+
+def test_two_valid_evidence_are_returned_in_model_order(fake_gemini):
+    items = [evidence(INSTITUTION_QUOTE, "institution"), evidence(TYPE_QUOTE)]
+
+    assert classify_with_evidence(fake_gemini, items) == [(INSTITUTION_QUOTE, "institution"), (TYPE_QUOTE, "document_type")]
+
+
+def test_only_first_two_valid_evidence_are_kept(fake_gemini):
+    items = [evidence(TYPE_QUOTE), evidence(INSTITUTION_QUOTE, "institution"), evidence(BOTH_QUOTE, "both"), evidence("Sayın Yetkili")]
+
+    assert classify_with_evidence(fake_gemini, items) == [(TYPE_QUOTE, "document_type"), (INSTITUTION_QUOTE, "institution")]
+
+
+def test_invalid_first_candidates_do_not_hide_a_later_valid_one(fake_gemini):
+    items = [evidence("Belgede geçmeyen bir ifade"), evidence("x" * 301), evidence(TYPE_QUOTE)]
+
+    assert classify_with_evidence(fake_gemini, items) == [(TYPE_QUOTE, "document_type")]
+
+
+def test_quote_not_in_source_is_discarded(fake_gemini):
+    items = [evidence("Zabıta Müdürlüğü'ne", "institution"), evidence(TYPE_QUOTE)]
+
+    assert classify_with_evidence(fake_gemini, items) == [(TYPE_QUOTE, "document_type")]
+
+
+def test_quote_over_300_characters_is_discarded_and_300_is_kept(fake_gemini):
+    text = f"{EVIDENCE_TEXT} {'ab' * 300}"
+    items = [evidence("ab" * 150 + "a"), evidence("ab" * 150)]
+
+    assert classify_with_evidence(fake_gemini, items, text=text) == [("ab" * 150, "document_type")]
+
+
+def test_verified_generic_quote_is_not_filtered_semantically(fake_gemini):
+    """Boilerplate'ten kaçınmak prompt'un işidir; backend anlamsal kara liste uygulamaz (D-050)."""
+    generic = "Gereğinin yapılmasını arz ederim."
+
+    assert classify_with_evidence(fake_gemini, [evidence(generic)]) == [(generic, "document_type")]
+
+
+@pytest.mark.parametrize("empty_quote", ["", "   ", '""', "“ ”"])
+def test_empty_quote_is_discarded(fake_gemini, empty_quote):
+    assert classify_with_evidence(fake_gemini, [evidence(empty_quote), evidence(TYPE_QUOTE)]) == [(TYPE_QUOTE, "document_type")]
+
+
+def test_duplicate_normalized_quote_is_discarded(fake_gemini):
+    items = [
+        evidence(TYPE_QUOTE),
+        evidence("Kaldırım  taşları\nkırık ve yaya geçişi tehlikeli", "both"),  # normalize edilince aynı ifade
+        evidence(INSTITUTION_QUOTE, "institution"),
+    ]
+
+    assert classify_with_evidence(fake_gemini, items) == [(TYPE_QUOTE, "document_type"), (INSTITUTION_QUOTE, "institution")]
+
+
+def test_whitespace_is_normalized_in_quote_and_source(fake_gemini):
+    text = "Sayın Yetkili,\nFen  İşleri\tMüdürlüğü'ne şikâyetimdir:\n\nKaldırım taşları kırık ve yaya geçişi tehlikeli."
+    items = [evidence(" Kaldırım taşları\n kırık  ve yaya\tgeçişi tehlikeli "), evidence(INSTITUTION_QUOTE, "institution")]
+
+    assert classify_with_evidence(fake_gemini, items, text=text) == [(TYPE_QUOTE, "document_type"), (INSTITUTION_QUOTE, "institution")]
+
+
+@pytest.mark.parametrize("source_form, quote_form", [("NFD", "NFC"), ("NFC", "NFD")], ids=["decomposed-source", "decomposed-quote"])
+def test_nfc_canonical_equivalence_matches(fake_gemini, source_form, quote_form):
+    text = unicodedata.normalize(source_form, EVIDENCE_TEXT)
+    quote = unicodedata.normalize(quote_form, TYPE_QUOTE)
+    assert unicodedata.normalize("NFD", TYPE_QUOTE) != TYPE_QUOTE  # örnek gerçekten ayrışık biçim içeriyor
+
+    assert classify_with_evidence(fake_gemini, [evidence(quote)], text=text) == [(TYPE_QUOTE, "document_type")]
+
+
+@pytest.mark.parametrize("quoted", [f'"{INSTITUTION_QUOTE}"', f"'{INSTITUTION_QUOTE}'", f"“{INSTITUTION_QUOTE}”", f"‘{INSTITUTION_QUOTE}’", f"«{INSTITUTION_QUOTE}»"])
+def test_one_matching_outer_quote_pair_is_stripped(fake_gemini, quoted):
+    assert classify_with_evidence(fake_gemini, [evidence(quoted, "institution")]) == [(INSTITUTION_QUOTE, "institution")]
+
+
+@pytest.mark.parametrize("quoted", [f'""{INSTITUTION_QUOTE}""', f'“{INSTITUTION_QUOTE}"', f'"{INSTITUTION_QUOTE}'], ids=["two-pairs", "mismatched", "opening-only"])
+def test_only_a_single_matching_outer_pair_is_stripped(fake_gemini, quoted):
+    assert classify_with_evidence(fake_gemini, [evidence(quoted, "institution")]) == []
+
+
+@pytest.mark.parametrize(
+    "changed_quote",
+    [
+        "kaldırım taşları kırık ve yaya geçişi tehlikeli",  # büyük/küçük harf
+        "KALDIRIM TAŞLARI KIRIK VE YAYA GEÇİŞİ TEHLİKELİ",  # büyük/küçük harf
+        "Kaldırım tasları kırık ve yaya geçişi tehlikeli",  # ş → s
+        "Kaldirim taşları kirik ve yaya geçişi tehlikeli",  # ı → i
+        "Fen Işleri Müdürlüğü'ne",  # İ → I
+        "Fen İşleri Mudurlugu'ne",  # ü/ğ → u/g
+    ],
+    ids=["lowercase", "uppercase", "s-folding", "dotless-i-folding", "dotted-I-folding", "ascii-folding"],
+)
+def test_case_and_turkish_character_differences_are_discarded(fake_gemini, changed_quote):
+    assert classify_with_evidence(fake_gemini, [evidence(changed_quote)]) == []
+
+
+def test_quote_after_first_50000_characters_is_discarded(fake_gemini):
+    text = f"{EVIDENCE_TEXT} {'x' * MAX_GEMINI_TEXT_LENGTH} Sınır sonrası ifade"
+    items = [evidence("Sınır sonrası ifade"), evidence(TYPE_QUOTE)]
+
+    assert classify_with_evidence(fake_gemini, items, text=text) == [(TYPE_QUOTE, "document_type")]
+
+
+@pytest.mark.parametrize("supports, quote", [("institution", INSTITUTION_QUOTE), ("both", BOTH_QUOTE)])
+def test_institution_evidence_is_discarded_when_institution_is_null(fake_gemini, supports, quote):
+    items = [evidence(quote, supports), evidence(TYPE_QUOTE)]
+
+    assert classify_with_evidence(fake_gemini, items, **NEEDS_REVIEW_FIELDS) == [(TYPE_QUOTE, "document_type")]
+
+
+MALFORMED_EVIDENCE = {
+    "null": None,
+    "string": "bozuk",
+    "number": 5,
+    "object-instead-of-list": evidence(TYPE_QUOTE),
+    "non-object-items": [1, "x", None, [TYPE_QUOTE]],
+    "missing-quote": [{"supports": "document_type"}],
+    "missing-supports": [{"quote": TYPE_QUOTE}],
+    "non-string-quote": [{"quote": 3, "supports": "document_type"}],
+    "unknown-supports": [{"quote": TYPE_QUOTE, "supports": "yanlis"}],
+    "unhashable-supports": [{"quote": TYPE_QUOTE, "supports": ["document_type"]}],
+}
+
+
+@pytest.mark.parametrize("malformed", MALFORMED_EVIDENCE.values(), ids=MALFORMED_EVIDENCE.keys())
+def test_malformed_evidence_becomes_empty_list_without_retry(fake_gemini, sleeps, malformed):
+    fake = fake_gemini(model_output(routing_evidence=malformed))
+
+    result = classify_text(EVIDENCE_TEXT)
+
+    assert result.routing_evidence == []
+    assert (result.document_type, result.institution_id, result.needs_review) == (VALID_DOCUMENT_TYPE, VALID_INSTITUTION, False)
+    assert len(fake.prompts) == 1 and sleeps == []
+
+
+def test_missing_evidence_field_becomes_empty_list_without_retry(fake_gemini, sleeps):
+    fake = fake_gemini(model_output())  # routing_evidence alanı yok
+
+    assert classify_text(EVIDENCE_TEXT).routing_evidence == []
+    assert len(fake.prompts) == 1 and sleeps == []
+
+
+def test_invalid_item_is_dropped_and_valid_item_is_kept_without_retry(fake_gemini, sleeps):
+    items = [{"quote": TYPE_QUOTE, "supports": ["both"]}, evidence(INSTITUTION_QUOTE, "institution")]
+
+    assert classify_with_evidence(fake_gemini, items) == [(INSTITUTION_QUOTE, "institution")]
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("fields", [{}, NEEDS_REVIEW_FIELDS], ids=["classified", "needs-review"])
+def test_evidence_does_not_change_classification_fields(fake_gemini, fields):
+    fake_gemini(
+        model_output(**fields),
+        model_output(**fields, routing_evidence=[evidence(TYPE_QUOTE), evidence("Belgede geçmeyen ifade")]),
+    )
+
+    without_evidence = classify_text(EVIDENCE_TEXT)
+    with_evidence = classify_text(EVIDENCE_TEXT)
+
+    assert with_evidence.model_dump(exclude={"routing_evidence"}) == without_evidence.model_dump(exclude={"routing_evidence"})
+    assert (with_evidence.needs_review, with_evidence.review_reason) == (
+        fields.get("needs_review", False), fields.get("review_reason"),
+    )
+    assert [item.quote for item in with_evidence.routing_evidence] == [TYPE_QUOTE]
+
+
+def test_missing_verified_evidence_does_not_set_needs_review(fake_gemini):
+    fake_gemini(model_output(routing_evidence=[evidence("Belgede geçmeyen ifade")]))
+
+    result = classify_text(EVIDENCE_TEXT)
+
+    assert result.routing_evidence == []
+    assert (result.needs_review, result.review_reason) == (False, None)
+
+
+def test_evidence_quotes_are_not_logged(fake_gemini, sleeps, caplog):
+    verified_marker = "GIZLI_DOGRULANAN_IFADE"
+    discarded_marker = "GIZLI_DOGRULANMAYAN_IFADE"
+    fake_gemini(model_output(routing_evidence=[evidence(verified_marker), evidence(discarded_marker)]))
+
+    with caplog.at_level(logging.DEBUG):
+        result = classify_text(f"{EVIDENCE_TEXT} {verified_marker}")
+
+    assert [item.quote for item in result.routing_evidence] == [verified_marker]
+    assert verified_marker not in caplog.text and discarded_marker not in caplog.text
+    assert EVIDENCE_TEXT not in caplog.text
+    assert "2 aday, 1 doğrulandı" in caplog.text  # yalnız sayılar
+
+
+def test_prompt_requests_verbatim_short_distinctive_evidence():
+    prompt = classification_service.build_prompt(SAMPLE_TEXT)
+
+    assert "routing_evidence" in prompt and "en fazla 2 ifade" in prompt
+    assert "birebir ve kesintisiz" in prompt and '"..." ile kısaltma' in prompt and "farklı bölümlerini birleştirme" in prompt
+    assert "tercihen en fazla 200 karakter" in prompt and "300 karakterden uzun değil" in prompt
+    assert "gereğinin yapılmasını arz ederim" in prompt and "genel ifadeleri kullanma" in prompt
+    assert "institution_id null ise" in prompt and "boş liste ver" in prompt
+    assert "açıklama veya gerekçe değildir" in prompt
+
+
+def test_prompt_prefers_body_evidence_over_headers_and_closings():
+    """Kalite tercihi prompt'tadır; backend anlamsal filtre uygulamaz (D-050)."""
+    prompt = classification_service.build_prompt(SAMPLE_TEXT)
+
+    # Önce gövdedeki sorun/talep/amaç ifadesi; muhatap satırı yasak değil ama son tercih.
+    assert "önce sorunu, talebi veya başvurunun amacını doğrudan anlatan kısa bir gövde ifadesi" in prompt
+    assert "Muhatap satırını" in prompt and "yalnızca başka" in prompt
+    # Muhatap, "Konu:" ve gövde tek quote içinde birleştirilmez; yalnız etiket veya yalnız başlık seçilmez.
+    assert '"Konu:" kısmı ve gövde metni ayrı bölümlerdir' in prompt
+    assert 'Yalnızca "Konu:" etiketini veya yalnızca belge başlığını quote olarak seçme' in prompt
+    # Quote standart kapanış kalıbı içermez; kalıp içeren cümle yerine gövdedeki başka bir ifade seçilir.
+    assert "quote standart kapanış kalıbı içermemeli" in prompt and '"arz ederiz"' in prompt and '"saygılarımla"' in prompt
+    assert "Böyle bir kalıp içeren cümleyi seçme; gövdedeki başka bir sorun, talep veya amaç ifadesini seç" in prompt
+
+
+def test_output_schema_has_optional_routing_evidence_as_last_field():
+    schema = OUTPUT_MODEL.model_json_schema()
+
+    assert list(schema["properties"])[-1] == "routing_evidence"
+    assert "routing_evidence" not in schema["required"]
+    candidate = schema["$defs"]["RoutingEvidenceCandidate"]
+    assert candidate["required"] == ["quote", "supports"]
+    assert candidate["properties"]["supports"]["enum"] == ["document_type", "institution", "both"]
+
+
+def test_real_sdk_sends_routing_evidence_schema_last_without_additional_properties(monkeypatch, sleeps):
+    output = model_output(routing_evidence=[evidence(TYPE_QUOTE), evidence("Belgede geçmeyen ifade")])
+    requests = use_mock_transport(monkeypatch, lambda request: gemini_http_response(output))
+
+    result = classify_text(EVIDENCE_TEXT)
+
+    assert [item.quote for item in result.routing_evidence] == [TYPE_QUOTE] and len(requests) == 1
+    schema = json.loads(requests[0].content)["generationConfig"]["responseSchema"]
+    assert schema.get("propertyOrdering", schema.get("property_ordering"))[-1] == "routing_evidence"
+    assert "routing_evidence" not in schema["required"]
+    evidence_schema = schema["properties"]["routing_evidence"]
+    assert evidence_schema["type"] == "ARRAY" and evidence_schema["items"]["type"] == "OBJECT"
+    assert evidence_schema["items"]["required"] == ["quote", "supports"]
+    assert evidence_schema["items"]["properties"]["supports"]["enum"] == ["document_type", "institution", "both"]
+    serialized = json.dumps(schema)
+    assert "additionalProperties" not in serialized and "additional_properties" not in serialized
+
+
+@pytest.mark.parametrize(
+    "output",
+    [model_output(), model_output(routing_evidence=None), model_output(routing_evidence="bozuk"),
+     model_output(routing_evidence=[{"quote": TYPE_QUOTE, "supports": ["both"]}, 7])],
+    ids=["missing", "null", "string", "malformed-items"],
+)
+def test_real_sdk_tolerates_missing_or_malformed_evidence_without_retry(monkeypatch, sleeps, output):
+    requests = use_mock_transport(monkeypatch, lambda request: gemini_http_response(output))
+
+    result = classify_text(EVIDENCE_TEXT)
+
+    assert result.routing_evidence == [] and result.document_type == VALID_DOCUMENT_TYPE
+    assert len(requests) == 1 and sleeps == []
 
 
 # --- Gemini transkripsiyonu (V1.3, D-047) ---

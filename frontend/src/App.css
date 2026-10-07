@@ -798,6 +798,37 @@ tr.open .chevron {
   background-color: var(--warn-bg);
 }
 
+/* Belgedeki ilgili ifade (D-050): sonuç kartında ve Kayıtlar detayında aynı, sonuç ve onayla yarışmayan ikincil bölüm.
+   .record-detail h3'ten sonra gelir: başlık büyük harfe çevrilmeden, yazıldığı gibi görünür. */
+.routing-evidence {
+  margin-top: 1rem;
+}
+
+.routing-evidence h3 {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.routing-evidence-note {
+  margin: 0.1rem 0 0;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+}
+
+/* İfade birebir gösterilir: kesme veya satır sınırı yok, uzun ifade sarılır */
+.evidence-quote {
+  margin: 0.5rem 0 0;
+  padding: 0.1rem 0 0.1rem 0.75rem;
+  border-left: 3px solid var(--border-strong);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .extracted-text {
   margin: 0;
   max-height: 20rem;

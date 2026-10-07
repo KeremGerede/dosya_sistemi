@@ -1,8 +1,22 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, Field, model_validator
+
+RoutingEvidenceSupport = Literal["document_type", "institution", "both"]
+ROUTING_EVIDENCE_SUPPORTS = get_args(RoutingEvidenceSupport)
+
+
+class RoutingEvidenceCandidate(BaseModel):
+    """Belgedeki ilgili ifade (D-050): modelin önerisidir, kaynakta doğrulanmadan kullanılmaz."""
+
+    quote: str
+    supports: RoutingEvidenceSupport
+
+
+class RoutingEvidence(RoutingEvidenceCandidate):
+    """Yanıttaki belgedeki ilgili ifade (D-050): yalnız backend birebir doğrulamasından geçmiş ifadeler."""
 
 
 class ClassificationResult(BaseModel):
@@ -19,6 +33,32 @@ class ClassificationResult(BaseModel):
     summary: str
     sender_name: str | None
     sender_institution: str | None
+    # D-050: son alan; sınıflandırma alanları evidence'tan önce üretilir. Şemada zorunlu değildir, boş liste geçerlidir.
+    routing_evidence: list[RoutingEvidenceCandidate] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_invalid_routing_evidence(cls, data: Any) -> Any:
+        """Evidence sınıflandırmanın başarısını belirlemez (D-050): eksik, null, yanlış tipli veya bozuk evidence ve
+        geçersiz öğeler nested doğrulamadan önce ayıklanır; sınıflandırma alanları yine doğrulanır.
+
+        Hiçbir girdide hata yükseltmez: google-genai yanıtı aynı modelle parse eder ve ValidationError dışındaki
+        hatayı isteğe yansıtır.
+        """
+        if not isinstance(data, dict):
+            return data
+        items = data.get("routing_evidence")
+        return {
+            **data,
+            "routing_evidence": [
+                item
+                for item in (items if isinstance(items, list) else [])
+                if isinstance(item, dict)
+                and isinstance(item.get("quote"), str)
+                and isinstance(item.get("supports"), str)
+                and item["supports"] in ROUTING_EVIDENCE_SUPPORTS
+            ],
+        }
 
     @model_validator(mode="after")
     def check_summary_is_present(self) -> "ClassificationResult":
@@ -55,6 +95,8 @@ class ClassifyResponse(BaseModel):
     summary: str | None
     sender_name: str | None
     sender_institution: str | None
+    # D-050: kaynakta doğrulanmış ifadeler; [] = doğrulanan ifade yok. prepared, failed ve eski kayıtlarda null.
+    routing_evidence: list[RoutingEvidence] | None
     status: str
     # D-049: kullanıcı onayı; onaysız kayıtta null. Adlar ID'den kataloglardan çözülür, veritabanında saklanmaz.
     validated_document_type: str | None

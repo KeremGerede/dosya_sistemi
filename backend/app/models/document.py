@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Text, func
+from sqlalchemy import JSON, DateTime, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -29,5 +29,8 @@ class Document(Base):
     validated_document_type: Mapped[str | None]
     validated_institution_id: Mapped[str | None]
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # D-050: [{"quote", "supports"}] — yalnız kaynakta doğrulanmış ifadeler. NULL: evidence üretilmedi (eski, prepared,
+    # failed); []: sınıflandırma çalıştı, doğrulanan ifade yok. None her zaman SQL NULL olarak yazılır (JSON null değil).
+    routing_evidence: Mapped[list[dict] | None] = mapped_column(JSON(none_as_null=True))
     status: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

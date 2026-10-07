@@ -12,7 +12,9 @@ import {
   filterOptions,
   filterRecords,
   recordDisplayState,
+  routingEvidenceSection,
 } from '../src/records.ts'
+import type { RoutingEvidence } from '../src/records.ts'
 
 type TestRecord = {
   file_name: string
@@ -278,5 +280,113 @@ describe('filterRecords (effective değerler)', () => {
     ])
     assert.deepEqual(names(filterRecords(CORRECTED, { ...NO_FILTERS, status: 'needs_review' })), ['acik-inceleme.pdf'])
     assert.deepEqual(names(filterRecords(CORRECTED, { ...NO_FILTERS, status: 'classified' })), ['onaysiz.pdf'])
+  })
+})
+
+// Belgedeki ilgili ifade (D-050)
+
+const TYPE_EVIDENCE: RoutingEvidence = {
+  quote: 'Gül Sokak üzerindeki kaldırım taşları kırık ve yerinden çıkmış durumdadır.',
+  supports: 'document_type',
+}
+const INSTITUTION_EVIDENCE: RoutingEvidence = { quote: 'T.C. ÖRNEK BELEDİYESİ FEN İŞLERİ MÜDÜRLÜĞÜNE', supports: 'institution' }
+const BOTH_EVIDENCE: RoutingEvidence = { quote: 'Kaldırımın onarılmasını talep ediyorum.', supports: 'both' }
+
+// AI sonucu complaint / fen_isleri olan kayıt; evidence backend yanıtındaki gibi verilir.
+function withEvidence(routing_evidence: RoutingEvidence[] | null, fields: Partial<TestRecord> = {}) {
+  return { ...record({ file_name: 'a.pdf', ...AI_RESULT, ...fields }), routing_evidence }
+}
+
+describe('routingEvidenceSection', () => {
+  test('evidence null ise bölüm yoktur', () => {
+    assert.equal(routingEvidenceSection(withEvidence(null)), null)
+  })
+
+  test('evidence boş liste ise bölüm yoktur (boş durum mesajı üretilmez)', () => {
+    assert.equal(routingEvidenceSection(withEvidence([])), null)
+  })
+
+  test('başarısız kayıtta evidence null olduğu için bölüm yoktur', () => {
+    const failed = withEvidence(null, { status: 'failed', document_type: null, document_type_name: null, institution_id: null })
+    assert.equal(routingEvidenceSection(failed), null)
+  })
+
+  test('tek ifade birebir döner', () => {
+    assert.deepEqual(routingEvidenceSection(withEvidence([TYPE_EVIDENCE])), { quotes: [TYPE_EVIDENCE.quote], aiBasis: false })
+  })
+
+  test('iki ifade backend sırasıyla döner', () => {
+    assert.deepEqual(routingEvidenceSection(withEvidence([INSTITUTION_EVIDENCE, TYPE_EVIDENCE])), {
+      quotes: [INSTITUTION_EVIDENCE.quote, TYPE_EVIDENCE.quote],
+      aiBasis: false,
+    })
+  })
+
+  test('supports değeri kullanıcıya sızmaz: yalnız ifade metinleri döner', () => {
+    const section = routingEvidenceSection(withEvidence([TYPE_EVIDENCE, INSTITUTION_EVIDENCE, BOTH_EVIDENCE]))
+    assert.ok(section !== null)
+    assert.deepEqual(Object.keys(section), ['quotes', 'aiBasis'])
+    assert.deepEqual(section.quotes, [TYPE_EVIDENCE.quote, INSTITUTION_EVIDENCE.quote, BOTH_EVIDENCE.quote])
+    assert.doesNotMatch(JSON.stringify(section), /document_type|institution|both/)
+  })
+
+  test('uzun ifade kısaltılmadan ve değiştirilmeden döner', () => {
+    const long = `Mahallemizdeki Gülpınar Sokak ile Şehit Öğretmen Caddesi kesişiminde bulunan yaya kaldırımının yaklaşık on beş metrelik bölümü çökmüş, "parke" taşları yerinden çıkmıştır; ızgara kırıktır (İ/ı, Ş/ş, Ğ/ğ korunur) ${'ve '.repeat(20)}son.`
+    const section = routingEvidenceSection(withEvidence([{ quote: long, supports: 'both' }]))
+    assert.ok(section !== null)
+    assert.equal(section.quotes[0], long)
+    assert.equal(section.quotes[0].length, long.length)
+    assert.ok(!section.quotes[0].endsWith('…') && !section.quotes[0].endsWith('...'))
+  })
+
+  test('örtüşen veya kapsayan ifadeler tekilleştirilmez', () => {
+    const short = { quote: 'asfalt yenileme çalışmalarının listesi', supports: 'document_type' } as const
+    const containing = { quote: '2025 yılında yapılan asfalt yenileme çalışmalarının listesi', supports: 'institution' } as const
+    assert.deepEqual(routingEvidenceSection(withEvidence([short, containing]))?.quotes, [short.quote, containing.quote])
+  })
+
+  describe('Human Validation bağlamı (bölüm düzeyinde)', () => {
+    const aiBasis = (fields: Partial<TestRecord>) => routingEvidenceSection(withEvidence([TYPE_EVIDENCE], fields))?.aiBasis
+
+    test('onaysız kayıtta not yoktur', () => {
+      assert.equal(aiBasis({}), false)
+    })
+
+    test('AI sonucu değiştirilmeden onaylandıysa not yoktur', () => {
+      assert.equal(aiBasis(validatedAs('complaint', 'Şikayet', 'fen_isleri', 'Fen İşleri Müdürlüğü')), false)
+    })
+
+    test('belge türü düzeltildiyse "AI önerisinin dayanağı" notu gerekir', () => {
+      assert.equal(aiBasis(validatedAs('request', 'Talep Dilekçesi', 'fen_isleri', 'Fen İşleri Müdürlüğü')), true)
+    })
+
+    test('kurum düzeltildiyse not gerekir', () => {
+      assert.equal(aiBasis(validatedAs('complaint', 'Şikayet', 'zabita', 'Zabıta Müdürlüğü')), true)
+    })
+
+    test('tür ve kurum birlikte düzeltildiyse not gerekir', () => {
+      assert.equal(aiBasis(validatedAs('request', 'Talep Dilekçesi', 'zabita', 'Zabıta Müdürlüğü')), true)
+    })
+
+    test('kurum "Belirlenemedi" (null) olarak onaylandıysa not gerekir', () => {
+      assert.equal(aiBasis(validatedAs('complaint', 'Şikayet', null, null)), true)
+    })
+
+    test('AI kurumu null iken kurum yine null onaylandıysa not yoktur', () => {
+      const fields = { institution_id: null, institution_name: null, ...validatedAs('complaint', 'Şikayet', null, null) }
+      assert.equal(aiBasis(fields), false)
+    })
+
+    test('tekrar onayda son onay geçerlidir: düzeltme sonrası AI değerlerine dönülürse not kalkar', () => {
+      assert.equal(aiBasis(validatedAs('request', 'Talep Dilekçesi', 'zabita', 'Zabıta Müdürlüğü')), true)
+      assert.equal(aiBasis(validatedAs('complaint', 'Şikayet', 'fen_isleri', 'Fen İşleri Müdürlüğü')), false)
+    })
+
+    test('not ifadelerin metnini değiştirmez', () => {
+      const section = routingEvidenceSection(
+        withEvidence([TYPE_EVIDENCE], validatedAs('request', 'Talep Dilekçesi', 'fen_isleri', 'Fen İşleri Müdürlüğü')),
+      )
+      assert.deepEqual(section, { quotes: [TYPE_EVIDENCE.quote], aiBasis: true })
+    })
   })
 })

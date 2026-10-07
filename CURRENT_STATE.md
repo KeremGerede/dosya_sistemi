@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-10-06
+> **Son güncelleme:** 2026-10-07
 >
 > Projenin güncel durumu (snapshot). Geliştirme günlüğü değildir: yalnız güncel durum, aktif riskler ve sıradaki adımlar tutulur. Geçmiş ayrıntılar Git geçmişinde, sürüm özetleri `README.md` "Sürüm Geçmişi" bölümündedir.
 >
@@ -8,7 +8,13 @@
 
 ## Mevcut aşama
 
-**Ana iş hatları tamamlandı: V1.0–V1.4, V1.4 sonrası arayüz iyileştirmeleri ve Human Validation + Routing Correction (D-049). Blocker veya high bulgu yok. Açık iş hattı yok; sunuma kadar kapsam kontrollü tutulur ve aynı anda yalnız bir yeni workstream açılır.**
+**Ana iş hatları tamamlandı: V1.0–V1.4, V1.4 sonrası arayüz iyileştirmeleri, Human Validation + Routing Correction (D-049) ve Evidence-backed Routing (D-050). Blocker veya high bulgu yok. Açık iş hattı yok; sunuma kadar kapsam kontrollü tutulur ve aynı anda yalnız bir yeni workstream açılır.**
+
+- **Evidence-backed Routing** (D-050): **tamamlandı** (2026-10-07).
+  - Sınıflandırmayla aynı Gemini çağrısı, yönlendirmeyi destekleyen en fazla 2 ifade önerir (prompt v4, frozen). Backend yalnız `extracted_text[:50_000]` içinde birebir doğrulananları `documents.routing_evidence`'a (nullable JSON, migration `5ed883607e08`) yazar. Evidence hatası sınıflandırmayı retry'a veya `failed`'a düşürmez.
+  - Arayüz: sonuç kartında (onay kontrollerinin altında, AI özetinin üstünde) ve Kayıtlar detayında "Belgedeki ilgili ifade"; `null`/`[]` ise bölüm yok; düzeltilmiş onayda "AI önerisinin dayanağı" notu. Sonuç kartı açılırken onay satırı sabit analiz çubuğunun altında kalmaz (1366×768 overlap giderildi).
+  - Doğrulama: migration zinciri ayrı geçici DB'de; demo DB migration öncesi yedek ve restore kontrolü; gerçek backend + frontend + Gemini ile entegrasyon ve rehearsal; blocker/high yok.
+  - Kalan minor bulgular: zaman zaman genel bir kapanış ifadesi; kısmen örtüşen iki ifade görülebilir (okunur; anlamsal filtre veya dedupe yok).
 
 - **Human Validation + Routing Correction** (D-049): **tamamlandı**.
   - Kullanıcı AI'ın belge türü ve kurum sonucunu sonuç kartında veya Kayıtlar detayında onaylar ya da katalog içinden düzeltir. AI sonucu, `needs_review`, `review_reason` ve `status` değişmez; onaylanan değerler ayrı `validated_*` alanlarında tutulur.
@@ -16,9 +22,10 @@
   - Doğrulama (2026-10-06): ayrı, geçici bir E2E veritabanında gerçek backend, frontend ve tarayıcıyla geçti; blocker/high yok. Demo DB ve demo storage E2E'den etkilenmedi.
 
 - **Sunum hazırlığı** (2026-10-04): Preflight ve demo provası gerçek PostgreSQL ve Gemini ile geçti. Kapsam: tek belge, OCR (taranmış PDF ve görüntü), `needs_review` dahil çoklu yükleme, Kayıtlar, yeniden başlatma sonrası kalıcılık.
-  - Demo DB (2026-10-06): 11 kayıt (9 `classified`, 2 `needs_review`), onaylı kayıt yok; migration head `c32c5dc8f72e`.
-  - Açık: D-049 dahil son sunum provası henüz yapılmadı.
-  - Açık kontrol: PDF orijinal görünümü sunum tarayıcısında elle denenmeli; otomatik test tarayıcısında PDF görüntüleyici yok.
+  - Demo DB (2026-10-07): migration head `5ed883607e08`. 17 kayıt: 11 eski (değişmedi, evidence NULL) + 6 D-050 rehearsal kaydı (`rehearsal-d050-*`: 5 evidence dolu, 1 `[]`; 2 onaylı); failed/prepared yok. Rehearsal kayıtları ve 6 storage dosyası silinmedi; sunum öncesi tutma/kaldırma kararı açık.
+  - Migration öncesi yedek repo dışındaki yerel yedek klasöründe (`demo-db-20261007-pre-d050`): `--clean` dump, storage kopyası, SHA256SUMS; restore doğrulandı.
+  - D-049 final demo provası (2026-10-06): DEMO READY WITH MINOR FINDINGS; blocker/high yok.
+  - Açık kalan tek manuel kontrol: PDF orijinal görünümü gerçek Chrome/Edge tarayıcısında elle denenmeli; otomatik test tarayıcısında PDF görüntüleyici yok.
 
 - **Kayıtlar deneyimi** (frontend; D-048): **tamamlandı**.
   - Listede ve detayda belge türü; dosya adında arama (büyük/küçük harf ve Türkçe karakter duyarsız); tür/kurum/durum filtresi; Toplam Kayıt / İnceleme Gereken / Başarısız sayıları.
@@ -42,7 +49,7 @@
 
 ## Güncel mimari (özet)
 
-Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D-042, D-047.
+Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D-042, D-047, D-050.
 
 **Yerel çıkarım** — güvenilir dijital metin varsa:
 - PDF → PyMuPDF, DOC → legacy-doc, DOCX → python-docx.
@@ -59,7 +66,7 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 - PDF'te Tesseract (`tur`, 400 dpi) yalnız D-003 koşulunu sağlayan sayfalarda çalışır; diğer sayfaların güvenilir gömülü metni korunur.
 - Yedek metin yeterliyse sonuç `needs_review` olur; değilse `failed` + `422`.
 
-**Sınıflandırma:** Transkripsiyondan ayrı, tek bir Gemini çağrısıdır (structured output). Metnin ilk 50.000 karakterini kullanır; tür, kurum, özet ve gönderen aynı çağrıda belirlenir.
+**Sınıflandırma:** Transkripsiyondan ayrı, tek bir Gemini çağrısıdır (structured output). Metnin ilk 50.000 karakterini kullanır; tür, kurum, özet, gönderen ve yönlendirmeyi destekleyen ifadeler aynı çağrıda belirlenir. İfadeler backend'de birebir doğrulanır (D-050).
 
 **Gemini çağrıları:**
 - 30 sn timeout, SDK retry kapalı; çağrı başına en fazla 3 gerçek deneme (1 sn / 2 sn bekleme).
@@ -76,23 +83,24 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 - 3 sayfalık sabit gruplar dışında dinamik/gelişmiş chunking; grupların paralel gönderilmesi.
 - Agent/RAG/vector DB, kuyruk/worker, authentication.
 - Onay geçmişi, onaylayan kişinin kaydı, iş akışı/SLA ve business status (D-049).
+- Anlamsal evidence filtresi/tekilleştirme, evidence düzenleme, güven skoru ve OCR kaynağı etiketi (D-050).
 
 ## Repo ve geliştirme ortamı
 
 **Backend** (`backend/app/`):
-- `api/documents.py` — endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek), `status` ve kullanıcı onayı (D-049).
+- `api/documents.py` — endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek), `status`, evidence kaydı (D-050) ve kullanıcı onayı (D-049).
 - `api/catalogs.py` — salt okunur katalog endpoint'i (D-049).
 - `services/file_service.py` — kabul kontrolü, storage, yerel metin çıkarımı, OCR gereksinimi kararı (`needs_ocr`), PDF grupları (`transcription_parts`), Tesseract yedeği.
-- `services/classification_service.py` — sınıflandırma ve transkripsiyon çağrıları, prompt'lar, çıktı doğrulama, retry politikası.
+- `services/classification_service.py` — sınıflandırma ve transkripsiyon çağrıları, prompt'lar, çıktı doğrulama, routing evidence doğrulaması (D-050), retry politikası.
 - `llm/gemini_client.py` — google-genai ince sarmalayıcısı (`generate_json`, `transcribe`).
 - `schemas/`, `models/`, `config/` (belge türü ve kurum katalogları), `alembic/`.
 
-**Veritabanı:** Tek `documents` tablosu. Alembic head `c32c5dc8f72e` (üç migration; sonuncusu D-049 onay kolonları).
+**Veritabanı:** Tek `documents` tablosu. Alembic head `5ed883607e08` (dört migration; sonuncusu D-050 `routing_evidence`). Demo DB de bu head'dedir.
 
 **Frontend** (`frontend/`): React + Vite + TypeScript, tek sayfa.
-- `src/App.tsx` — sınıflandırma ve kayıtlar görünümleri; ortak onay bileşeni `ValidationControls` (D-049).
+- `src/App.tsx` — sınıflandırma ve kayıtlar görünümleri; ortak bileşenler `ValidationControls` (D-049) ve `RoutingEvidenceSection` (D-050).
 - `src/documentPreview.ts` — önizleme alanlarının deterministik çıkarımı.
-- `src/records.ts` — Kayıtlar arama, filtre ve özet sayıları; effective yönlendirme ve gösterim durumu için saf yardımcılar (D-048, D-049).
+- `src/records.ts` — Kayıtlar arama, filtre ve özet sayıları; effective yönlendirme, gösterim durumu ve "Belgedeki ilgili ifade" bölümü için saf yardımcılar (D-048, D-049, D-050).
 
 **Geliştirme ortamı** (D-036):
 - PostgreSQL 18 Docker Compose ile `127.0.0.1:5433`'te çalışır.
@@ -107,8 +115,8 @@ Ayrıntılar: `PROJECT_BRAIN.md` §2, §5, §7. Kararlar: D-003, D-008, D-033, D
 
 ## Test baseline
 
-- **Backend:** `pytest` **387 passed** (Starlette/anyio kaynaklı 2 bilinen deprecation uyarısıyla); `pip check` temiz.
-- **Frontend:** `npm test` **56 passed**; `npm run build` ve `npm run lint` temiz.
+- **Backend:** `pytest` **473 passed** (Starlette/anyio kaynaklı 2 bilinen deprecation uyarısıyla); `pip check` temiz.
+- **Frontend:** `npm test` **73 passed**; `npm run build` ve `npm run lint` temiz.
 - **Otomatik testler** gerçek Gemini API'si veya Docker PostgreSQL gerektirmez:
   - Endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır.
   - Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
@@ -232,18 +240,18 @@ Bilinen blocker yok. Aşağıdakiler kabul edilmiş sınırlar ve dikkat edilmes
 
 ## Sıradaki geliştirme hedefleri
 
-Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur: aynı anda yalnız bir yeni workstream açılır; açık feature tamamlanıp testleri ve demo provası geçmeden ikinci feature açılmaz. Aday 2 ve 3 implement edilmedi ve **açılmış iş değildir**. Biri ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir.
+Açık iş hattı yok. Sunuma kadar kapsam kontrollü tutulur: aynı anda yalnız bir yeni workstream açılır; açık feature tamamlanıp testleri ve demo provası geçmeden ikinci feature açılmaz. Aday 3 implement edilmedi ve **açılmış iş değildir**. Ele alınacaksa önce `DECISIONS.md` (gerekiyorsa `PROJECT_BRAIN.md`) güncellenir.
 
 ### Aday roadmap
 
-Sıra: 1 (tamamlandı) → 2 → gerçek kullanıcı araştırması → yalnız araştırma doğrularsa 3.
+Sıra: 1 (tamamlandı) → 2 (tamamlandı) → gerçek kullanıcı araştırması → yalnız araştırma doğrularsa 3.
 
 1. **Human Validation + Routing Correction** — **TAMAMLANDI** (D-049, 2026-10-06).
    - AI'ın `document_type` ve `institution_id` sonucu korunur; kullanıcının onayladığı değerler ayrı tutulur.
    - Kullanıcı sonucu olduğu gibi onaylar veya değiştirir.
-2. **Evidence-backed Routing** — GO WITH CONSTRAINTS. **Sıradaki aday**; henüz açılmadı.
-   - Tercih: mevcut sınıflandırma çağrısında opsiyonel evidence üretimi; ayrı Gemini çağrısı planlanmıyor.
-   - Backend yalnız `extracted_text` içinde doğrulanan kaynak ifadeleri saklar; arayüzde "Belgedeki ilgili ifade" olarak gösterilir.
+2. **Evidence-backed Routing** — **TAMAMLANDI** (D-050, 2026-10-07).
+   - Evidence mevcut sınıflandırma çağrısında üretilir; ayrı Gemini çağrısı yoktur.
+   - Backend yalnız `extracted_text` içinde birebir doğrulanan ifadeleri tutar; arayüzde "Belgedeki ilgili ifade" olarak gösterilir.
 3. **Structured Operational Extraction** — GO WITH CONSTRAINTS / USER VALIDATION REQUIRED.
    - Teknik olarak uygulanabilir; gerçek kurum kullanıcısıyla doğrulamadan sonra değerlendirilir.
    - Ana soru: "Sınıflandırmadan sonra personel belgeyi hangi 2–3 bilgi için tekrar açıyor?"

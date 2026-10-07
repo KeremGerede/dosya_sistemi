@@ -56,6 +56,27 @@ export function effectiveRouting(record: RoutingFields): EffectiveRouting {
   }
 }
 
+// Belgedeki ilgili ifade (D-050): backend'in kaynakta birebir doğruladığı ifade. supports arayüzde gösterilmez.
+export type RoutingEvidence = { quote: string; supports: 'document_type' | 'institution' | 'both' }
+
+export type EvidenceSection = {
+  quotes: string[]
+  aiBasis: boolean // kullanıcı türü veya kurumu AI önerisinden farklı onayladı: ifadeler AI önerisinin dayanağıdır
+}
+
+// Bölüm yalnız doğrulanmış ifade varsa görünür; null ve [] aynıdır, boş durum mesajı yoktur. İfadeler backend'in
+// sırasıyla ve birebir döner: kısaltma, tekilleştirme veya filtre yapılmaz. Bağlam bölüm düzeyindedir (D-050).
+export function routingEvidenceSection(
+  record: RoutingFields & { routing_evidence: RoutingEvidence[] | null },
+): EvidenceSection | null {
+  const evidence = record.routing_evidence ?? []
+  if (evidence.length === 0) {
+    return null
+  }
+  const routing = effectiveRouting(record)
+  return { quotes: evidence.map((item) => item.quote), aiBasis: routing.typeChanged || routing.institutionChanged }
+}
+
 export type RecordDisplayState = 'classified' | 'needs_review' | 'validated' | 'failed'
 
 // Durum filtresindeki sıra da budur.

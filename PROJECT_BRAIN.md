@@ -29,9 +29,9 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
      - Sayfa metinleri belge sırasıyla birleştirilir.
      - Yedeğin metni yeterliyse belge yedek OCR işaretiyle (`needs_review = true` + `review_reason`) devam eder.
    - Çıkarım hata verirse ya da nihai metin 10 karakterden kısaysa belge Gemini sınıflandırmasına gönderilmeden `failed` olarak kaydedilir.
-6. Metnin en fazla ilk 50.000 karakteri, belge türü ve kurum kataloglarıyla birlikte **tek bir** Gemini sınıflandırma çağrısına gönderilir; yanıt Pydantic şemasına uygun structured output olarak alınır. Geçici hatalarda (network, timeout, `429`, `5xx`, geçersiz model çıktısı) aynı çağrı toplam en fazla 3 kez denenir.
-7. Backend çıktıyı kataloglara karşı doğrular ve `status` değerini belirler; yedek OCR işareti varsa sonuç `needs_review` olur. Gemini sınıflandırması sonuç vermezse belge `failed` olur.
-8. Dosya referansı, çıkarılan metin ve sınıflandırma sonucu `documents` tablosuna yazılır.
+6. Metnin en fazla ilk 50.000 karakteri, belge türü ve kurum kataloglarıyla birlikte **tek bir** Gemini sınıflandırma çağrısına gönderilir; yanıt Pydantic şemasına uygun structured output olarak alınır. Aynı çağrı, yönlendirmeyi destekleyen en fazla 2 kısa belge ifadesi (`routing_evidence`, D-050) de önerir. Geçici hatalarda (network, timeout, `429`, `5xx`, geçersiz model çıktısı) aynı çağrı toplam en fazla 3 kez denenir.
+7. Backend çıktıyı kataloglara karşı doğrular ve `status` değerini belirler; yedek OCR işareti varsa sonuç `needs_review` olur. Önerilen ifadeleri modelin gördüğü metinde birebir doğrular ve doğrulanamayanları atar (§7); evidence hatası sınıflandırmayı başarısız yapmaz ve retry üretmez. Gemini sınıflandırması sonuç vermezse belge `failed` olur.
+8. Dosya referansı, çıkarılan metin, sınıflandırma sonucu ve doğrulanmış ifadeler `documents` tablosuna yazılır.
 9. API sonucu döndürür (`failed` durumunda `422` veya `502`). Teknik hata detayları istemciye gönderilmez, loglanır.
 
 **İki adımlı akış (V1.4; D-045, D-046):**
@@ -46,6 +46,11 @@ Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişl
 - Sınıflandırılmış (`classified` / `needs_review`) belgenin belge türü ve kurum sonucu, sonuç kartında veya Kayıtlar detayında olduğu gibi onaylanabilir ya da katalog içinden düzeltilebilir (`PUT /api/documents/{document_id}/validation`). Kurum "Belirlenemedi" (`null`) olarak onaylanabilir; tekrar onay serbesttir, son onay geçerlidir.
 - AI sonucu (`document_type`, `institution_id`), `needs_review`, `review_reason` ve `status` değişmez; onaylanan değerler ayrı `validated_*` alanlarında tutulur. Gemini çağrılmaz.
 - Arayüz onaylı kayıtta onaylanan değerleri gösterir (effective yönlendirme); AI önerisi yalnız farklıysa ikincil satırda görünür.
+
+**Belgedeki ilgili ifade (D-050):**
+
+- Doğrulanmış ifadeler sonuç kartında (onay kontrollerinin altında, AI özetinin üstünde) ve Kayıtlar detayında "Belgedeki ilgili ifade" başlığıyla, birebir gösterilir. Kayıtlar listesinde gösterilmez. Evidence `null` veya `[]` ise bölüm render edilmez; `supports` değeri kullanıcıya gösterilmez.
+- Evidence AI önerisine aittir: onay ve düzeltme onu değiştirmez, onaylanan yönlendirme için yeni ifade üretilmez. Kullanıcı AI belge türünü veya kurumunu değiştirdiyse bölümde küçük "AI önerisinin dayanağı" notu görünür.
 
 İşlem senkrondur: her istek kendi işini tamamlayıp yanıt döner. Kuyruk veya arka plan işi yoktur.
 
@@ -92,14 +97,14 @@ backend/
     api/documents.py                    # classify (legacy), prepare, {id}/classify, {id}/prepared, {id}/validation (kullanıcı onayı) + salt okunur endpoint'ler; metin çıkarım sırası (transkripsiyon → yedek) ve status
     api/catalogs.py                     # salt okunur GET /api/catalogs: düzeltme seçenekleri (D-049)
     services/file_service.py            # kabul kontrolü, storage'a kaydetme, yerel metin çıkarımı, OCR gereksinimi kararı, Tesseract yedeği
-    services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, transkripsiyon çağrısı, retry politikası (D-033)
+    services/classification_service.py  # katalog yükleme, prompt, çıktı doğrulama, routing evidence doğrulaması (D-050), transkripsiyon çağrısı, retry politikası (D-033)
     llm/gemini_client.py                # google-genai ince sarmalayıcısı: sınıflandırma ve transkripsiyon için tek istek, 30 sn timeout, SDK retry kapalı
     schemas/classification.py           # LLM çıktı şeması + API yanıt şeması, onay isteği ve katalog yanıtı
     models/document.py                  # SQLAlchemy Document modeli
     config/document_types.json          # belge türü kataloğu
     config/institutions.json            # kurum kataloğu
   storage/                              # orijinal dosyalar: <document_id>.<uzanti> (git'e girmez)
-frontend/                               # React + Vite: en fazla 5 dosya → önizle → seçilenleri sınıflandır → sonucu onayla/düzelt; kayıtlar (tek sayfa)
+frontend/                               # React + Vite: en fazla 5 dosya → önizle → seçilenleri sınıflandır → sonucu onayla/düzelt, belgedeki ilgili ifade; kayıtlar (tek sayfa)
 ```
 
 Bu yapı yön gösterir, zorunlu değildir. Kurallar:
@@ -198,7 +203,7 @@ Başlangıç kurum kataloğu (kod oluşturulduktan sonra tek kaynak `institution
 - **Timeout ve retry:** Retry aynı çağrının tekrarıdır, ek bir sınıflandırma adımı değildir.
   - Retry politikası yalnızca `classification_service`'te uygulanır; SDK'nın kendi retry'ı kapalıdır. Toplam gerçek API isteği 3'ü aşmaz.
   - Her Gemini çağrısı için 30 sn timeout; toplam en fazla 3 deneme.
-  - Retry edilir: network hataları, timeout, `429`, `5xx` ve geçersiz model çıktısı (structured output şemasına uymayan veya katalog dışı değer içeren yanıt — geçici model hatası sayılır).
+  - Retry edilir: network hataları, timeout, `429`, `5xx` ve geçersiz model çıktısı (structured output şemasına uymayan veya katalog dışı değer içeren yanıt — geçici model hatası sayılır). İstisna: `routing_evidence` hataları geçersiz çıktı sayılmaz (D-050).
   - Retry edilmez: `400`, `401`, `403` gibi kalıcı istemci/yapılandırma hataları. Belge hemen `failed` kaydedilir, `502` döner.
   - Bekleme: 1. başarısız denemeden sonra 1 sn, 2. başarısız denemeden sonra 2 sn. En kötü durumda her Gemini çağrısı (her transkripsiyon grubu ve sınıflandırma) yaklaşık 93 sn sürer.
   - Tüm denemeler başarısızsa (3. denemede de hata veya geçersiz çıktı) belge `failed` kaydedilir, `502` ile genel bir mesaj döner, teknik detaylar loglanır; ham Gemini/API hataları gösterilmez.
@@ -225,6 +230,7 @@ Structured output alanları:
 | `summary` | string | Her zaman dolu: belgenin amacını ve konusunu anlatan 1-3 kısa Türkçe cümle. Boş özet geçersiz çıktıdır (D-044) |
 | `sender_name` | string \| `null` | Gönderen/başvuran gerçek kişinin adı soyadı **açıkça yazıyorsa**; yoksa `null`. Tahmin edilmez |
 | `sender_institution` | string \| `null` | Belgeyi gönderen kurum/şirket **açıkça yazıyorsa**; yoksa `null`. Muhatap belediye/müdürlük gönderen sayılmaz |
+| `routing_evidence` | `[{quote, supports}]`; boş liste geçerli | Belge türü veya kurum sonucunu destekleyen en fazla 2 ifade; belgeden birebir ve kesintisiz, tercihen ≤ 200 karakter. `supports`: `document_type` \| `institution` \| `both`. Şemadaki son alandır. Toleranslı doğrulanır: eksik veya bozuk evidence boş listeye düşer, yanıtın geri kalanını geçersiz yapmaz (D-050) |
 
 `needs_review = true` olmalı:
 
@@ -236,6 +242,14 @@ Structured output alanları:
 Tutarlılık kuralı: `needs_review = false` ise `institution_id` dolu ve `review_reason` `null` olmalıdır.
 
 Model yalnızca katalogdan seçer; yeni belge türü veya kurum ID'si üretemez. Backend bunu yine de doğrular: şemaya uymayan veya katalog dışı değer içeren yanıt `classified` ya da `needs_review` olarak kaydedilmez, çağrı yukarıdaki retry kuralıyla yeniden denenir; 3 denemenin sonunda hâlâ geçersizse belge `failed` olur ve `502` döner.
+
+**Routing evidence doğrulaması (D-050):** Modelin önerdiği ifade güvenilir kabul edilmez; yalnız backend doğrulamasından geçenler saklanır.
+
+- Kaynak, modelin gördüğü metindir: `extracted_text[:50_000]`. Kaynağa ve ifadeye Unicode NFC ve mevcut whitespace normalizasyonu uygulanır; ifadeden yalnız tek bir eşleşen dış tırnak çifti silinir.
+- Boş ve 300 karakteri aşan ifade atılır. Eşleşme büyük/küçük harfe duyarlı, birebir substring'dir; Türkçe karakter veya ASCII katlama, fuzzy eşleşme, embedding ya da yeni LLM çağrısı yoktur.
+- Adaylar sırayla denenir ve ilk 2 geçerli ifadede durulur. Daha önce doğrulanmış ifadenin tekrarı atılır; `institution_id` `null` iken kurumu destekleyen (`institution` / `both`) ifade atılır.
+- Evidence `needs_review`, `review_reason` ve `status`'u değiştirmez ve güven skoru değildir. İfade metni loglanmaz.
+- Kabul edilmiş sınırlar: anlamsal filtre ve tekilleştirme yoktur; zaman zaman genel bir kapanış ifadesi ya da kısmen örtüşen iki ifade görülebilir. Doğrulama çıkarılan metne göredir; OCR/transkripsiyonla okunan belgede görüntünün doğru okunduğunu kanıtlamaz ve metin kaynağı arayüzde gösterilmez.
 
 ## 8. Veritabanı
 
@@ -258,6 +272,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 | `validated_document_type` | string, null | Kullanıcının onayladığı belge türü (katalog `id`, D-049); onaysız kayıtta `null` |
 | `validated_institution_id` | string, null | Kullanıcının onayladığı kurum (katalog `id`); onaylı kayıtta da `null` olabilir ("Belirlenemedi") |
 | `validated_at` | timestamp (tz), null | Son onay zamanı; doluysa `validated_document_type` da doludur |
+| `routing_evidence` | json, null | Kaynakta doğrulanmış ifadeler `[{quote, supports}]` (D-050). `NULL`: evidence üretilmedi (eski kayıt, `prepared`, `failed`); `[]`: sınıflandırma çalıştı, doğrulanan ifade yok. Yalnız başarılı sınıflandırma yazar |
 | `status` | string, not null | `classified` \| `needs_review` \| `failed` (kalıcı) · `prepared` (V1.4 ara durumu) |
 | `created_at` | timestamp (tz), not null | |
 
@@ -265,7 +280,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 
 - `classified` — sınıflandırma başarılı, `needs_review = false`
 - `needs_review` — sınıflandırma başarılı, `needs_review = true` (model işaretledi ya da metin Tesseract yedeğiyle çıkarıldı)
-- `failed` — kabul edilen belgede metin çıkarımı başarısız, normalize edilmiş metin 10 karakterden kısa, Gemini ile sınıflandırma tamamlanamadı (geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen kalıcı hata). Bu kayıtlarda `document_type`, `institution_id`, `review_reason`, `summary`, `sender_name` ve `sender_institution` `null`, `needs_review = false`.
+- `failed` — kabul edilen belgede metin çıkarımı başarısız, normalize edilmiş metin 10 karakterden kısa, Gemini ile sınıflandırma tamamlanamadı (geçici hata veya geçersiz çıktı nedeniyle 3 deneme tükendi ya da retry edilmeyen kalıcı hata). Bu kayıtlarda `document_type`, `institution_id`, `review_reason`, `summary`, `sender_name`, `sender_institution` ve `routing_evidence` `null`, `needs_review = false`.
 - `prepared` (V1.4; D-046) — metin çıkarıldı ve yeterli, ama belge henüz sınıflandırılmadı. Sınıflandırma alanları `null`, `created_at` hazırlık anıdır. `needs_review = false`; metin Tesseract yedeğiyle çıkarıldıysa `needs_review = true` ve `review_reason` doludur (D-047), sınıflandırma bu işareti korur.
   - Kayıt listesinde görünmez.
   - Yalnızca `/{document_id}/classify` ile sonuca geçer ya da `DELETE /{document_id}/prepared` ile silinir.
@@ -299,7 +314,7 @@ Kullanıcı onayı ve katalog (D-049):
 
 | Endpoint | Yanıt |
 |---|---|
-| **`PUT /api/documents/{document_id}/validation`** | Gövde `{"document_type": "<katalog id>", "institution_id": "<katalog id>" \| null}`; iki alan zorunlu, ek alan kabul edilmez. Yalnız `classified` / `needs_review` kayıtta üç onay alanını yazar; AI sonucu, `needs_review`, `review_reason` ve `status` değişmez, Gemini çağrılmaz. Tekrar onay serbest, son onay geçerli. `200` (liste öğesi biçimi) · `404` · `409` (`prepared` / `failed`; kayıt değişmez) · `422` (katalog dışı, eksik ya da fazla alan; FastAPI'nin standart gövdesi) |
+| **`PUT /api/documents/{document_id}/validation`** | Gövde `{"document_type": "<katalog id>", "institution_id": "<katalog id>" \| null}`; iki alan zorunlu, ek alan kabul edilmez. Yalnız `classified` / `needs_review` kayıtta üç onay alanını yazar; AI sonucu, `needs_review`, `review_reason`, `status` ve `routing_evidence` değişmez, Gemini çağrılmaz. Tekrar onay serbest, son onay geçerli. `200` (liste öğesi biçimi) · `404` · `409` (`prepared` / `failed`; kayıt değişmez) · `422` (katalog dışı, eksik ya da fazla alan; FastAPI'nin standart gövdesi) |
 | **`GET /api/catalogs`** | Salt okunur: belge türü ve kurum kataloglarının `id` ve `name` değerleri, katalog dosyasındaki sırayla; kurum açıklaması dönmez |
 
 Ayrıca iş mantığı içermeyen operasyonel **`GET /health`** → `{"status": "ok"}`.
@@ -327,6 +342,8 @@ Başarılı yanıt en az şu alanları içerir:
 `document_type_name` ve `institution_name`, ID'ye karşılık gelen katalog `name` değerleridir; yanıt üretilirken kataloglardan okunur, veritabanında saklanmaz. `institution_id` `null` ise `institution_name` de `null` olur. İstemci gösterim için katalogları kopyalamaz (D-032).
 
 Yanıtlar ayrıca kullanıcı onayı alanlarını içerir: `validated_document_type`, `validated_document_type_name`, `validated_institution_id`, `validated_institution_name`, `validated_at`. Onaysız kayıtta hepsi `null`'dır; adlar aynı kuralla katalogdan çözülür (D-049). `document_type` ve `institution_id` her zaman AI sonucudur.
+
+Yanıtlar ayrıca `routing_evidence` alanını içerir: `[{"quote": "...", "supports": "document_type" | "institution" | "both"}]`. Doğrulanan ifade yoksa `[]`; `prepared`, `failed` ve migration öncesi kayıtlarda `null` (D-050). Ayrı evidence endpoint'i yoktur.
 
 `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında **dönmez**.
 
@@ -374,7 +391,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 ## 10. Proje prensipleri
 
 1. **Önce basitlik.** En az dosya, en az katman. Soyutlama ancak somut ihtiyaç doğduğunda.
-2. **Tek sınıflandırma çağrısı.** Tür, kurum, özet ve gönderen aynı çağrıda belirlenir. OCR gereken belgede yalnız metni okuyan ayrı bir transkripsiyon çağrısı vardır; ikisi birleştirilmez. Zincir, agent veya çok adımlı akış yok. Retry yalnızca aynı çağrının tekrarıdır.
+2. **Tek sınıflandırma çağrısı.** Tür, kurum, özet, gönderen ve yönlendirmeyi destekleyen belge ifadeleri aynı çağrıda belirlenir. OCR gereken belgede yalnız metni okuyan ayrı bir transkripsiyon çağrısı vardır; ikisi birleştirilmez. Zincir, agent veya çok adımlı akış yok. Retry yalnızca aynı çağrının tekrarıdır.
 3. **Kapalı katalog.** Model seçer, üretmez; backend doğrular.
 4. **Emin değilsen incelemeye gönder.** Yanlış otomatik atama yerine `needs_review`.
 5. **Katalog veridir.** Genişletme JSON üzerinden, kod değişmeden.
@@ -395,6 +412,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Metnin ilk 50.000 karakteriyle tek Gemini sınıflandırma çağrısı; her Gemini çağrısında 30 sn timeout, geçici hatalarda toplam en fazla 3 deneme
 - Belge türü + kurum sınıflandırması (structured output), `needs_review` / `review_reason` üretimi
 - Aynı çağrıda belge özeti ve (varsa) gönderen kişi/kurum bilgisi (D-044)
+- Aynı çağrıda yönlendirmeyi destekleyen, kaynakta birebir doğrulanmış en fazla 2 ifade; sonuç kartında ve Kayıtlar detayında "Belgedeki ilgili ifade" olarak gösterilir (D-050)
 - JSON dosyalarında belge türü ve kurum katalogları
 - UUID birincil anahtarlı `documents` tablosu, Alembic migration'ları
 - Yazma endpoint'leri: legacy / tek-adımlı `POST /api/documents/classify` ve V1.4 iki adımlı akış (`prepare`, `/{document_id}/classify`, `DELETE /{document_id}/prepared` — D-019, D-045, D-046) ve kullanıcı onayı (`PUT /{document_id}/validation` — D-049). Kayıtları görmek için üç salt okunur endpoint (liste, detay, indirme — D-043), salt okunur `GET /api/catalogs` ve operasyonel `GET /health`
@@ -404,7 +422,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 ## 12. Açıkça kapsam dışı
 
-DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · el yazısı dedektörü veya belge türüne göre OCR motoru seçimi · Tesseract çıktısının Gemini ile düzeltilmesi · ek OCR modeli · transkripsiyon ile sınıflandırmanın tek çağrıda birleştirilmesi · dinamik veya gelişmiş chunking ve karmaşık uzun belge işleme (sınıflandırmada ilk 50.000 karakter kuralı, D-027; transkripsiyonda yalnız OCR gereken PDF'ler için 3 sayfalık sabit gruplar, D-047) · transkripsiyon gruplarının paralel gönderilmesi · 50 MB üstü dosyalar · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtların silinmesi ve AI sonucunun değiştirilmesi (yalnız `prepared` kayda özgü geçişler ve kullanıcı onayı alanlarını yazan onay endpoint'i vardır — D-046, D-049) · onay geçmişi, onaylayan kişinin kaydı, iş akışı / SLA ve business status · kayıtlar için sunucu tarafı arama, filtre ve sayfalama (Kayıtlar görünümünde yalnız istemci tarafı arama/filtre vardır — D-048) · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
+DOCX ve DOC için OCR · desteklenenler dışındaki dosya türleri (GIF, TIFF, BMP, WebP, HEIC) · DOC'ta gömülü görüntü, makro ve biçimlendirme · görüntüler için otomatik döndürme/OSD ve ön işleme · el yazısı dedektörü veya belge türüne göre OCR motoru seçimi · Tesseract çıktısının Gemini ile düzeltilmesi · ek OCR modeli · transkripsiyon ile sınıflandırmanın tek çağrıda birleştirilmesi · dinamik veya gelişmiş chunking ve karmaşık uzun belge işleme (sınıflandırmada ilk 50.000 karakter kuralı, D-027; transkripsiyonda yalnız OCR gereken PDF'ler için 3 sayfalık sabit gruplar, D-047) · transkripsiyon gruplarının paralel gönderilmesi · 50 MB üstü dosyalar · farklı Gemini modeline ya da başka LLM'e fallback · dosyaların veritabanında binary saklanması · LangGraph · agent sistemleri · RAG · vector database · fine-tuning · microservice mimarisi · repository pattern (gerçekten gerekmedikçe) · factory pattern · gereksiz service katmanları · karmaşık workflow engine · authentication / authorization · admin paneli · kurum yönetim paneli · kataloğun veritabanından yönetimi · kalıcı kayıtların silinmesi ve AI sonucunun değiştirilmesi (yalnız `prepared` kayda özgü geçişler ve kullanıcı onayı alanlarını yazan onay endpoint'i vardır — D-046, D-049) · onay geçmişi, onaylayan kişinin kaydı, iş akışı / SLA ve business status · ayrı evidence/çıkarım çağrısı, evidence düzenleme veya kullanıcı tarafından evidence ekleme, anlamsal evidence filtresi ve tekilleştirme, evidence güven skoru ve OCR kaynağı (provenance) etiketi (D-050) · kayıtlar için sunucu tarafı arama, filtre ve sayfalama (Kayıtlar görünümünde yalnız istemci tarafı arama/filtre vardır — D-048) · ek tablolar · kuyruk / arka plan işleri / worker / zamanlayıcı · WebSocket · klasör veya ZIP yükleme · 5'ten fazla dosyalık toplu yükleme · paralel belge işleme · Word belgelerinin tarayıcıda birebir render'ı · belge düzenleme ve PDF annotation · listede sürükle-bırakla sıralama · bulut nesne depolama
 
 Bunlardan birini eklemek için önce `DECISIONS.md`'de ilgili karar güncellenmelidir.
 
