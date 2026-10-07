@@ -1,4 +1,4 @@
-# dosya_sistemi
+# Dosya Sistemi
 
 Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü formatındaki belgeleri işleyen; içerikten metin çıkaran, taranmış, fotoğraflanmış ve el yazısı belgeleri Gemini ile okuyan; belge türünü ve ilgili kurumu Google Gemini ile belirleyen; belge özeti ile gönderen bilgilerini üreten ve sonuçları PostgreSQL üzerinde saklayan yapay zekâ destekli belge sınıflandırma modülü.
 
