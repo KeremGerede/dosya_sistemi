@@ -213,12 +213,12 @@ Son doğrulanmış baseline: backend **473 passed**, frontend **73 passed**; bui
 - "Belgedeki ilgili ifade" yalnız çıkarılan metinde doğrulanır; taranmış belgede görüntünün doğru okunduğunu kanıtlamaz. Zaman zaman genel bir kapanış ifadesi veya kısmen örtüşen iki ifade görünebilir.
 - PDF orijinal görünümü tarayıcının yerleşik PDF görüntüleyicisine bağlıdır (çoğu mobil tarayıcıda yoktur); DOC/DOCX için orijinal görünüm yoktur.
 
-Tüm teknik sınırlar ve riskler: [`CURRENT_STATE.md`](CURRENT_STATE.md).
+Güncel riskler ve önemli sınırlar: [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Dokümantasyon
 
 - [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) — ürün amacı, mimari, kapsam, LLM ve API sözleşmesi
 - [`DECISIONS.md`](DECISIONS.md) — aktif ürün ve teknik kararlar (D-xxx)
-- [`CURRENT_STATE.md`](CURRENT_STATE.md) — güncel durum, test baseline'ı, riskler ve sıradaki adaylar
+- [`CURRENT_STATE.md`](CURRENT_STATE.md) — güncel durum, test baseline'ı ve riskler
 
 Sürüm ve değişiklik geçmişi Git geçmişindedir.

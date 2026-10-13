@@ -323,7 +323,7 @@
 - **Gerekçe:** Yanlışlıkla yüklenen dosya, kullanıcı kaldırdığında hemen ve tamamen silinmelidir; tekrarlanan "hazırla + kaldır" döngüleri sunucuda birikmemelidir. Sekme kapanması, ağ kopması veya tarayıcı çökmesi gibi anormal çıkışlarda kalan kayıtları zamanlayıcı kurmadan sınırlamanın en basit yolu, temizliği hazırlık isteğinde yapmaktır. Dosyanın kayıttan önce silinmesi, yarım kalan her işlemde geride TTL'in bulabileceği bir kayıt bırakır; ters sırada kaydı olmayan ve hiçbir temizliğin göremeyeceği bir dosya kalabilirdi. Silme endpoint'i dar tutulur: kalıcı kayıtları silmek kapsam dışıdır. Orijinal dosya kontrolü, indirilemeyen bir belgenin sınıflandırılmış kayıt olarak kalıcılaşmasını önler.
 
 ### D-049 — Human Validation + Routing Correction: kullanıcı onayı AI sonucundan ayrı tutulur
-- **Durum:** Tamamlandı (2026-10-06). Backend (veri modeli, migration, API) ve arayüz uygulandı; ayrı, geçici bir E2E veritabanında gerçek backend, frontend ve tarayıcıyla doğrulandı (blocker/high yok).
+- **Durum:** Uygulandı (2026-10-06).
 - **Karar:**
   - **Veri:** `documents` tablosunda 3 nullable kolon: `validated_document_type`, `validated_institution_id`, `validated_at`. AI alanları (`document_type`, `institution_id`) üzerine yazılmaz.
     - `validated_at` doluysa `validated_document_type` da doludur; tersi de geçerlidir. `validated_institution_id` `null` olabilir.
@@ -350,7 +350,7 @@
 - **Gerekçe:** Kullanıcı düzeltmesi AI çıktısını silmez; iki sonuç karşılaştırılabildiği için AI doğruluğu ölçülebilir kalır. Tek tablo kuralı (D-013) korunur; nullable kolonlar mevcut kayıtları ve API sözleşmesini bozmaz. Authentication olmadığından (D-025) onaylayan kişi bilinemez; geçmiş tutmak MVP için gereksiz karmaşıklıktır. `needs_review` ve `status`, AI işleme sonucunun kaydı olarak kalır (D-014, D-016).
 
 ### D-050 — Evidence-backed Routing: kaynakta birebir doğrulanmış "belgedeki ilgili ifade"
-- **Durum:** Tamamlandı (2026-10-07). Sınıflandırma katmanı, prompt (v4, frozen), doğrulama, persistence, API alanı ve arayüz uygulandı; demo DB migrate edildi ve gerçek veriyle entegrasyon kontrolü geçti (blocker/high yok).
+- **Durum:** Uygulandı (2026-10-07). Prompt v4 sabittir (frozen); gerekmedikçe değiştirilmez.
 - **Karar:**
   - **Aynı çağrı:** Evidence mevcut sınıflandırma çağrısında üretilir (D-008). Ayrı Gemini çağrısı, ayrı çıkarım adımı, agent veya RAG yoktur.
   - **Model output:** `routing_evidence: [{"quote": "...", "supports": "document_type" | "institution" | "both"}]`; boş liste geçerlidir. Alan şemadaki son alandır; sınıflandırma alanları evidence'tan önce üretilir.

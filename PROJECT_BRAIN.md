@@ -1,7 +1,7 @@
 # PROJECT_BRAIN — Belge Sınıflandırma Modülü
 
 > Projenin kalıcı referansı. Yalnızca projenin temel amacı, mimarisi veya kapsamı gerçekten değiştiğinde güncellenir.
-> Güncel durum → `CURRENT_STATE.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
+> Güncel durum → `CURRENT_STATE.md` · Açık işler → `TODOS.md` · Aktif kararlar → `DECISIONS.md` · Çalışma kuralları → `CLAUDE.md`
 >
 > Bu dosyayla çelişen bir değişiklik gerekiyorsa önce `DECISIONS.md`'deki ilgili kararı güncelle, sonra bu dosyayı ona göre düzelt.
 
@@ -9,6 +9,10 @@
 
 Kullanıcının yüklediği bir **PDF, DOC, DOCX, JPG/JPEG veya PNG** belgesinin metnini çıkaran (güvenilir dijital metni olmayan belgelerde Gemini multimodal transkripsiyonuyla), bu metni **tek bir Gemini sınıflandırma çağrısıyla** belge türü ve ilgili kurum/birim açısından sınıflandıran; orijinal dosyayı, çıkarılan metni ve sonucu saklayan küçük bir modül.
 İleride başka sistemlerle entegre edilecek; bu yüzden API odaklı, bağımsız çalışabilen ve sade olmalı.
+
+**Hedef kullanıcı ve problem:** Kamu kurumları ve belediyeler. Gelen belgeleri okumak, türünü ve ilgili birimi belirlemek bugün elle yapılan, yavaş ve kişiden kişiye değişen bir iştir.
+
+**Ürün sınırı:** Sistem tam bir EBYS, CİMER veya CRM yerine geçmez. Mevcut kurumsal sistemlerin önünde veya yanında çalışan, AI destekli bir belge kabul ve belge anlama (document intake / document intelligence) katmanıdır.
 
 Ana hedefler: **basitlik · hızlı geliştirme · verimlilik · ileride genişletilebilirlik.**
 
