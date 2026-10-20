@@ -4,7 +4,7 @@ Kamu kurumlarına ve belediyelere gelen PDF, Word ve görüntü belgelerinin met
 
 Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR (yedek)
 
-**Durum:** V1.0–V1.4, arayüz iyileştirmeleri, Human Validation + Routing Correction ve Evidence-backed Routing tamamlandı. Açık iş hattı yok. Güncel durum: [`CURRENT_STATE.md`](CURRENT_STATE.md).
+**Durum:** Ürün durumu, test baseline'ı ve riskler [`CURRENT_STATE.md`](CURRENT_STATE.md) dosyasındadır.
 
 ## Ne Yapıyor?
 
@@ -17,17 +17,6 @@ Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR (yedek)
 - Kayıtları listeler, filtreler ve orijinal dosyayı indirmeye izin verir.
 
 > Amaç insan kararını kaldırmak değildir. Açık belgeler otomatik yönlendirilir; belirsiz belgeler insan incelemesine bırakılır.
-
-## Temel Özellikler
-
-- **Formatlar:** PDF, DOC, DOCX, JPG, JPEG, PNG; dosya başına en fazla 50 MB.
-- **OCR / transkripsiyon:** Gemini multimodal transkripsiyonu (el yazısı dahil). Yerel Tesseract yalnız yedektir.
-- **Sınıflandırma ve yönlendirme:** Tek Gemini çağrısı (structured output). Tür ve kurum kapalı katalogdan seçilir; backend sonucu tekrar doğrular.
-- **`needs_review`:** Belirsiz sonuçta veya Tesseract yedeği kullanıldığında arayüz "Kontrol Öneriliyor" gösterir.
-- **Human Validation:** Sonuç kartında ve Kayıtlar detayında "Sonucu Onayla" / "Düzelt". Onaylanan değerler ayrı saklanır ve arayüzde öncelikli gösterilir.
-- **Evidence-backed Routing:** "Belgedeki ilgili ifade" bölümü. Sınıflandırma çağrısı en fazla 2 ifade önerir; backend yalnız çıkarılan metinde birebir geçenleri saklar. Ayrı LLM çağrısı yoktur.
-- **Kayıtlar:** Liste, detay ve indirme. Dosya adında arama, tür/kurum/durum filtresi ve özet sayıları tarayıcıda çalışır.
-- **Çoklu yükleme ve önizleme:** En fazla 5 dosya (arayüz sınırı) ve sürükle-bırak. Akış: hazırla → önizle → sınıflandır. Metin çıkarımı ve OCR dosya başına bir kez yapılır.
 
 ## Desteklenen Dosyalar
 
@@ -50,28 +39,13 @@ Python 3.13 · FastAPI · React · PostgreSQL · Gemini · Tesseract OCR (yedek)
 Yükle → Hazırla (doğrula, sakla, metni çıkar) → Önizle → Sınıflandır → Gerekirse insan kontrolü → Kayıt
 ```
 
-Hazırlama adımı sınıflandırma yapmaz. Sınıflandırma kayıttaki metni kullanır ve dosyayı tekrar okumaz. Önizlemede kaldırılan dosya, kaydıyla birlikte silinir.
+Arayüzde en fazla 5 dosya seçilir ya da sürükle-bırakla eklenir ve sırayla işlenir. Hazırlama adımı sınıflandırma yapmaz. Sınıflandırma kayıttaki metni kullanır ve dosyayı tekrar okumaz. Önizlemede kaldırılan dosya, kaydıyla birlikte silinir.
 
-**Metin çıkarımı.** PDF'te OCR kararı sayfa sayfa verilir. Bir sayfanın gömülü metni 10 karakterden kısaysa ya da sayfanın en az yarısı görüntüyken metni 200 karakteri geçmiyorsa sayfa OCR gerektirir. Bir sayfa bile OCR gerektiriyorsa PDF'in tamamı Gemini ile okunur: 1–3 sayfa tek çağrıda, 4+ sayfa en fazla 3 sayfalık sıralı gruplarda. Görüntüler her zaman Gemini'ye gider. Dijital PDF, DOC ve DOCX Gemini transkripsiyonuna gönderilmez.
-
-**Tesseract yedeği.** Gemini transkripsiyonu başarısız olursa veya yetersiz metin döndürürse kısmi Gemini sonucu kullanılmaz. Belge yerel çıkarım + Tesseract (`tur`, 400 dpi) ile yeniden okunur ve sonuç `needs_review` olur. Yedek metin de yetersizse belge `failed` olur.
-
-**Sınıflandırma.** Normalize edilmiş metnin ilk 50.000 karakteri, iki katalogla birlikte tek bir Gemini çağrısına gider. Yanıt tür, kurum, inceleme işareti, özet, gönderen ve ilgili ifade adaylarını içerir. Geçici hata veya geçersiz çıktıda aynı çağrı en fazla 3 kez denenir. Sınıflandırma tamamlanamazsa kayıt `failed` olur. İlgili ifade hataları sınıflandırmayı başarısız yapmaz.
-
-İşleme senkrondur. Kuyruk, agent, RAG ve vector DB yoktur. Ayrıntılar: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) §2, §5 ve §7.
+İşleme senkrondur. Kuyruk, agent, RAG ve vector DB yoktur. Metin çıkarımı, OCR yedeği, sınıflandırma ve onay kuralları: [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) (F-01–F-06); akış: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) §2.
 
 ## Teknoloji
 
-| Katman | Teknoloji |
-|---|---|
-| Backend | Python 3.13, FastAPI, Pydantic |
-| Veritabanı | PostgreSQL 18 (Docker Compose), SQLAlchemy 2 + psycopg 3, Alembic |
-| AI / OCR | Google Gemini (`google-genai`); yedek OCR: Tesseract (PyMuPDF üzerinden) |
-| Belge işleme | PyMuPDF, python-docx, legacy-doc |
-| Frontend | React, TypeScript, Vite (düz CSS) |
-| Test ve kalite | pytest, Node yerleşik test çalıştırıcısı, oxlint |
-
-Sürümler [`backend/requirements.txt`](backend/requirements.txt) ve [`frontend/package.json`](frontend/package.json) dosyalarındadır.
+Yığın ve seçim gerekçeleri: [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) "Ortak teknoloji ve yapılandırma". Sürümler [`backend/requirements.txt`](backend/requirements.txt) ve [`frontend/package.json`](frontend/package.json) dosyalarındadır.
 
 ## Kurulum
 
@@ -185,7 +159,7 @@ Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde 
 
 Belge yanıtları AI sonucunu (`document_type`, `institution_id`), kullanıcı onayını (`validated_*`) ve doğrulanmış ifadeleri (`routing_evidence`) ayrı alanlarda döndürür.
 
-Başlıca hata kodları: `404` kayıt yok, `409` kaydın durumu işleme uygun değil, `413` boyut, `415` format veya imza, `422` içerik işlenemedi ya da istek geçersiz, `502` Gemini sınıflandırması tamamlanamadı. Yanıt alanları ve tam HTTP sözleşmesi: [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) §9.
+Başlıca hata kodları: `404` kayıt yok, `409` kaydın durumu işleme uygun değil, `413` boyut, `415` format veya imza, `422` içerik işlenemedi ya da istek geçersiz, `502` Gemini sınıflandırması tamamlanamadı. Yanıt alanları ve tam HTTP sözleşmesi: [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) F-08.
 
 ## Test ve Kalite
 
@@ -202,23 +176,18 @@ npm run lint
 
 Otomatik testler gerçek Gemini API'si veya Docker PostgreSQL gerektirmez; geçici SQLite ve sahte Gemini yanıtları kullanır. `alembic check` çalışan bir veritabanı ister.
 
-Son doğrulanmış baseline: backend **473 passed**, frontend **73 passed**; build ve lint temiz. Güncel değer [`CURRENT_STATE.md`](CURRENT_STATE.md) dosyasındadır.
+Son doğrulanmış baseline (tarih, commit, ortam ve sonuçlar): [`CURRENT_STATE.md`](CURRENT_STATE.md) → "Teknik baseline".
 
 ## Bilinen Sınırlar
 
-- Authentication ve yetkilendirme yoktur. Onaylayan kişi ve onay geçmişi tutulmaz.
-- İşleme senkron ve sıralıdır. Her Gemini çağrısı en kötü durumda ~93 sn sürebilir; uzun taranmış PDF'lerde süre sayfa sayısıyla artar. Frontend her istek için 120 sn zaman aşımı uygular. 5 dosya sınırı yalnız arayüzdedir.
-- Gemini'nin akıcı ama yanlış okumalarını yakalayan bir kalite kapısı yoktur. Tesseract yalnız yedektir ve döndürülmüş, gürültülü veya tablo içeren taramalarda zayıftır.
-- Yalnız metnin ilk 50.000 karakteri sınıflandırılır. Kurum yönlendirmesi mevcut katalogla sınırlıdır; katalog dışı belgeler `needs_review` olur.
-- "Belgedeki ilgili ifade" yalnız çıkarılan metinde doğrulanır; taranmış belgede görüntünün doğru okunduğunu kanıtlamaz. Zaman zaman genel bir kapanış ifadesi veya kısmen örtüşen iki ifade görünebilir.
-- PDF orijinal görünümü tarayıcının yerleşik PDF görüntüleyicisine bağlıdır (çoğu mobil tarayıcıda yoktur); DOC/DOCX için orijinal görünüm yoktur.
-
-Güncel riskler ve önemli sınırlar: [`CURRENT_STATE.md`](CURRENT_STATE.md).
+Her özelliğin sınırları [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) içinde ilgili kaydın "Sınırlar" bölümündedir. Dağıtım durumu (authentication, CORS, gövde sınırı) ve güncel riskler: [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
 ## Dokümantasyon
 
-- [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) — ürün amacı, mimari, kapsam, LLM ve API sözleşmesi
-- [`DECISIONS.md`](DECISIONS.md) — aktif ürün ve teknik kararlar (D-xxx)
+- [`PROJECT_BRAIN.md`](PROJECT_BRAIN.md) — ürün amacı, mimari, veri modeli, kritik değişmezler ve kapsam
+- [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) — özellik davranışı, kabul ölçütleri, sınırlar, LLM ve API sözleşmesi
+- [`DECISIONS.md`](DECISIONS.md) — ürün ve teknik kararlar (D-xxx)
 - [`CURRENT_STATE.md`](CURRENT_STATE.md) — güncel durum, test baseline'ı ve riskler
+- [`TODOS.md`](TODOS.md) — açık işler, araştırmalar ve adaylar
 
 Sürüm ve değişiklik geçmişi Git geçmişindedir.
