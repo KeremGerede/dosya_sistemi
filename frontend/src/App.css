@@ -829,6 +829,20 @@ tr.open .chevron {
   overflow-wrap: anywhere;
 }
 
+/* "Metinde göster" (F-04): ifadenin altında, girintisiyle hizalı */
+.evidence-show {
+  margin: 0.35rem 0 0 0.95rem;
+}
+
+/* Çıkarılan metinde seçilen ifadenin ilk birebir geçişi */
+.evidence-mark {
+  padding: 0.05rem 0;
+  border-radius: 2px;
+  background-color: var(--warn-bg);
+  box-shadow: 0 0 0 1px var(--warn-border);
+  color: var(--text);
+}
+
 .extracted-text {
   margin: 0;
   max-height: 20rem;

@@ -77,6 +77,26 @@ export function routingEvidenceSection(
   return { quotes: evidence.map((item) => item.quote), aiBasis: routing.typeChanged || routing.institutionChanged }
 }
 
+// Çıkarılan metinde ifadenin ilk birebir geçişi; parçalar metnin NFC biçimindendir ve birleşince onu verir.
+export type EvidenceMatch = { before: string; quote: string; after: string }
+
+// "Metinde göster" (F-04): backend doğrulamasıyla aynı kural (D-050). Yalnız NFC uygulanır; eşleşme büyük/küçük harfe
+// duyarlıdır. fold(), Türkçe/ASCII katlama, whitespace katlaması ve bulanık eşleşme yoktur: kayıttaki metin zaten
+// normalize edilmiştir. Metin yoksa, ifade boşsa veya bulunamazsa null döner.
+export function findEvidenceInText(text: string | null, quote: string): EvidenceMatch | null {
+  if (text === null || quote === '') {
+    return null
+  }
+  const source = text.normalize('NFC')
+  const target = quote.normalize('NFC')
+  const start = source.indexOf(target)
+  if (start === -1) {
+    return null
+  }
+  const end = start + target.length
+  return { before: source.slice(0, start), quote: source.slice(start, end), after: source.slice(end) }
+}
+
 export type RecordDisplayState = 'classified' | 'needs_review' | 'validated' | 'failed'
 
 // Durum filtresindeki sıra da budur.

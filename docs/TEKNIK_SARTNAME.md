@@ -235,6 +235,14 @@ Kodda ayrıca (`services/classification_service.py`, `PROMPT_TEMPLATE`): prompt,
 - Doğrulanmış ifadeler sonuç kartında (onay kontrollerinin altında, AI özetinin üstünde) ve Kayıtlar detayında "Belgedeki ilgili ifade" başlığıyla, birebir gösterilir. Kayıtlar listesinde gösterilmez. Evidence `null` veya `[]` ise bölüm render edilmez; `supports` değeri kullanıcıya gösterilmez.
 - Evidence AI önerisine aittir: onay ve düzeltme onu değiştirmez, onaylanan yönlendirme için yeni ifade üretilmez. Kullanıcı AI belge türünü veya kurumunu değiştirdiyse bölümde küçük "AI önerisinin dayanağı" notu görünür.
 
+**Metinde göster:**
+
+- Çıkarılan metinde birebir bulunan her ifadenin altında "Metinde göster" düğmesi görünür; sonuç kartında ve Kayıtlar detayında aynı davranış. İfade bulunamazsa veya metin henüz yüklenmediyse düğme görünmez; ifade yine gösterilir, hata mesajı yoktur.
+- Eşleşme backend doğrulamasıyla aynı kuraldır: metne ve ifadeye yalnız Unicode NFC uygulanır, büyük/küçük harfe duyarlı birebir substring aranır. Türkçe veya ASCII katlama, whitespace katlaması ve bulanık eşleşme yoktur.
+- Tıklanınca sonuç kartında kapalı "Belge önizlemesi ve çıkarılan metin" bölümü ve çıkarılan metin açılır. Seçilen ifadenin yalnız ilk geçişi vurgulanır, görünür alana kaydırılır ve odak oraya taşınır. Başka ifadeye tıklamak vurguyu oraya taşır; aynı ifadeye tekrar tıklamak yeniden kaydırır.
+- Seçim yokken metin değiştirilmeden gösterilir. Kayıt detayı veya önizleme paneli kapanınca ve sonuç kartında metin gizlenince seçim sıfırlanır.
+- Yeni API, DB alanı veya LLM çağrısı yoktur; ifade metni değişmez ve `supports` gösterilmez.
+
 **Kabul ölçütleri**
 
 - Yalnız kaynakta (ilk 50.000 karakter, NFC ve whitespace normalizasyonu sonrası) birebir geçen ifadeler, modelin sırasıyla ve en fazla 2 tane tutulur. Boş, 300 karakteri aşan, daha önce doğrulanmış olanla aynı ve büyük/küçük harf ya da Türkçe karakter farkı taşıyan ifade atılır — `llm::test_valid_exact_quote_is_returned`, `llm::test_only_first_two_valid_evidence_are_kept`, `llm::test_quote_over_300_characters_is_discarded_and_300_is_kept`, `llm::test_empty_quote_is_discarded`, `llm::test_duplicate_normalized_quote_is_discarded`, `llm::test_case_and_turkish_character_differences_are_discarded`, `llm::test_nfc_canonical_equivalence_matches`, `llm::test_quote_after_first_50000_characters_is_discarded`.
@@ -243,13 +251,15 @@ Kodda ayrıca (`services/classification_service.py`, `PROMPT_TEMPLATE`): prompt,
 - Başarılı sınıflandırma ifadeleri ya da `[]` yazar; `prepared`, `failed` ve eski kayıtta değer `NULL` kalır; onay evidence'ı değiştirmez — `api::test_empty_evidence_is_persisted_as_empty_list_not_null`, `api::test_prepared_record_has_null_evidence_until_classified`, `api::test_failed_classification_leaves_evidence_null`, `api::test_old_record_without_evidence_returns_null_in_list_and_detail`, `api::test_validation_never_changes_routing_evidence`.
 - İfade metni loglanmaz — `llm::test_evidence_quotes_are_not_logged`.
 - Arayüz: evidence `null` veya `[]` ise bölüm görünmez; ifadeler backend sırasıyla ve değiştirilmeden gösterilir; `supports` gösterilmez; AI türü veya kurumu değiştirilerek onaylandıysa "AI önerisinin dayanağı" notu görünür — `records:` "evidence null ise bölüm yoktur", "iki ifade backend sırasıyla döner", "supports değeri kullanıcıya sızmaz: yalnız ifade metinleri döner", "kurum düzeltildiyse not gerekir".
+- Metinde göster: yalnız ilk birebir geçiş bulunur; büyük/küçük harf, Türkçe karakter ve whitespace farkı eşleşmez; NFC kanonik eşdeğerlik eşleşir; metin yoksa veya ifade bulunamazsa sonuç yoktur (düğme görünmez) — `records:` "ilk birebir geçişi bulur; parçalar birleşince metnin kendisi olur", "ifade birden fazla geçiyorsa yalnız ilk geçiş döner", "büyük/küçük harf farkı eşleşmez", "Türkçe karakter farkı eşleşmez (katlama yok)", "whitespace farkı katlanmaz", "NFC kanonik eşdeğerlik eşleşir: NFD metin ve NFC ifade", "metinde geçmeyen ifade null döner". Açma, kaydırma, odak ve seçimin sıfırlanması otomatik testte değil, tarayıcıda doğrulanır (bileşen testi yok).
 
 **Sınırlar**
 
 - Kabul edilmiş sınırlar: anlamsal filtre ve tekilleştirme yoktur; zaman zaman genel bir kapanış ifadesi ya da kısmen örtüşen iki ifade görülebilir. Doğrulama çıkarılan metne göredir; OCR/transkripsiyonla okunan belgede görüntünün doğru okunduğunu kanıtlamaz ve metin kaynağı arayüzde gösterilmez.
+- "Metinde göster" çıkarılan metin üzerinde çalışır; orijinal belge görünümünde (PDF, görüntü) konum gösterilmez. Yalnız seçilen ifadenin ilk geçişi vurgulanır; sonraki geçişler vurgulanmaz.
 - Kapsam dışı öğeler (ayrı çıkarım çağrısı, güven skoru, evidence düzenleme, anlamsal filtre, OCR kaynağı etiketi): D-050 ve `PROJECT_BRAIN.md` §12.
 
-**Referanslar:** D-050, D-049 · Kod: `services/classification_service.py` (`verify_routing_evidence`), `schemas/classification.py` (`drop_invalid_routing_evidence`), `frontend/src/records.ts` (`routingEvidenceSection`), `frontend/src/App.tsx` (`RoutingEvidenceSection`)
+**Referanslar:** D-050, D-049 · Kod: `services/classification_service.py` (`verify_routing_evidence`), `schemas/classification.py` (`drop_invalid_routing_evidence`), `frontend/src/records.ts` (`routingEvidenceSection`, `findEvidenceInText`), `frontend/src/App.tsx` (`RoutingEvidenceSection`, `ExtractedText`)
 
 ## F-05 — Hazırla → önizle → sınıflandır
 

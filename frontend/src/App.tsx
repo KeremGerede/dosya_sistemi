@@ -9,6 +9,7 @@ import {
   effectiveRouting,
   filterOptions,
   filterRecords,
+  findEvidenceInText,
   recordDisplayState,
   routingEvidenceSection,
 } from './records'
@@ -299,6 +300,7 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
   const [openId, setOpenId] = useState<string | null>(null)
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   // Arama ve filtre yalnız istemci tarafındadır (D-048); Yenile'de korunur.
   const [filters, setFilters] = useState<RecordFilters>(NO_FILTERS)
@@ -326,6 +328,7 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
   }, [load])
 
   async function toggle(documentId: string) {
+    setEvidenceSelection(null)
     if (openId === documentId) {
       setOpenId(null)
       setDetail(null)
@@ -562,7 +565,11 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
                         )}
 
                         {item.status !== 'failed' && <ValidationControls record={item} onValidated={applyValidation} />}
-                        <RoutingEvidenceSection record={item} />
+                        <RoutingEvidenceSection
+                          record={item}
+                          text={detail?.extracted_text ?? null}
+                          onShowInText={(quote) => setEvidenceSelection({ quote })}
+                        />
 
                         {detailLoading && (
                           <p className="status" role="status">
@@ -572,9 +579,10 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
                         {detail !== null && (
                           <>
                             <h3>Çıkarılan metin</h3>
-                            <pre className="extracted-text">
-                              {detail.extracted_text ?? 'Bu belgeden metin çıkarılamadı.'}
-                            </pre>
+                            <ExtractedText
+                              text={detail.extracted_text ?? 'Bu belgeden metin çıkarılamadı.'}
+                              selection={evidenceSelection}
+                            />
                           </>
                         )}
                       </div>
@@ -732,7 +740,16 @@ function ValidationControls({
 
 // Belgedeki ilgili ifade (D-050): sonuç kartında ve Kayıtlar detayında aynı bölüm. İfadeler AI önerisine aittir ve
 // backend'den geldiği gibi gösterilir; supports gösterilmez. Kullanıcı türü veya kurumu değiştirdiyse küçük not eklenir.
-function RoutingEvidenceSection({ record }: { record: ClassifyResponse }) {
+// "Metinde göster" (F-04) yalnız çıkarılan metinde birebir bulunan ifadede görünür; metin henüz yoksa da görünmez.
+function RoutingEvidenceSection({
+  record,
+  text,
+  onShowInText,
+}: {
+  record: ClassifyResponse
+  text: string | null
+  onShowInText: (quote: string) => void
+}) {
   const section = routingEvidenceSection(record)
   if (section === null) {
     return null // null veya []: bölüm ve boş durum mesajı yok
@@ -742,11 +759,48 @@ function RoutingEvidenceSection({ record }: { record: ClassifyResponse }) {
       <h3>Belgedeki ilgili ifade</h3>
       {section.aiBasis && <p className="routing-evidence-note">AI önerisinin dayanağı</p>}
       {section.quotes.map((quote, index) => (
-        <blockquote key={index} className="evidence-quote">
-          {quote}
-        </blockquote>
+        <Fragment key={index}>
+          <blockquote className="evidence-quote">{quote}</blockquote>
+          {findEvidenceInText(text, quote) !== null && (
+            <button type="button" className="secondary small evidence-show" onClick={() => onShowInText(quote)}>
+              Metinde göster
+            </button>
+          )}
+        </Fragment>
       ))}
     </div>
+  )
+}
+
+// "Metinde göster" seçimi. Her tıklama yeni bir nesnedir: aynı ifadeye tekrar basmak da yeniden kaydırır.
+type EvidenceSelection = { quote: string }
+
+// Çıkarılan metin (F-04): seçilen ifadenin yalnız ilk birebir geçişi vurgulanır, görünür alana kaydırılır ve odak oraya
+// taşınır. Seçim yoksa veya ifade bulunamazsa metin bugünkü gibi, olduğu gibi gösterilir.
+function ExtractedText({ id, text, selection }: { id?: string; text: string; selection: EvidenceSelection | null }) {
+  const markRef = useRef<HTMLElement>(null)
+  const match = selection === null ? null : findEvidenceInText(text, selection.quote)
+
+  useEffect(() => {
+    // block: 'center' vurguyu hem metin kutusunda hem sayfada ortalar; sabit analiz çubuğunun altında kalmaz.
+    markRef.current?.scrollIntoView({ block: 'center' })
+    markRef.current?.focus({ preventScroll: true })
+  }, [selection])
+
+  return (
+    <pre className="extracted-text" id={id}>
+      {match === null ? (
+        text
+      ) : (
+        <>
+          {match.before}
+          <mark ref={markRef} className="evidence-mark" tabIndex={-1}>
+            {match.quote}
+          </mark>
+          {match.after}
+        </>
+      )}
+    </pre>
   )
 }
 
@@ -755,10 +809,14 @@ function RoutingEvidenceSection({ record }: { record: ClassifyResponse }) {
 // onaylıysa onaylanan değer, AI önerisi yalnız farklıysa ikincil satırda (D-049).
 function ResultCard({
   result,
+  text,
+  onShowInText,
   onViewOriginal,
   onValidated,
 }: {
   result: ClassifyResponse
+  text: string | null
+  onShowInText: (quote: string) => void
   onViewOriginal: (() => void) | null
   onValidated: (updated: DocumentSummary) => void
 }) {
@@ -825,7 +883,7 @@ function ResultCard({
       <ValidationControls record={result} onValidated={onValidated} />
 
       {/* Onay kontrollerinin altında: "Sonucu Onayla" yerinde kalır (D-050). */}
-      <RoutingEvidenceSection record={result} />
+      <RoutingEvidenceSection record={result} text={text} onShowInText={onShowInText} />
 
       {result.summary !== null && (
         <div className="result-summary">
@@ -896,6 +954,28 @@ function PreviewPanel({
   const canViewOriginal = fileType !== null && fileType in PREVIEW_MEDIA_TYPES
   const canSelect = item.state === 'ready' || item.state === 'waiting'
   const result = item.state === 'done' || item.state === 'review' ? item.result : null
+  const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null)
+  const detailsRef = useRef<HTMLDetailsElement>(null)
+
+  // "Metinde göster" (F-04): kapalı ikincil bölümü ve çıkarılan metni açar, sonra ifadeyi seçer. <details> React'e
+  // bağlı değildir; yalnız açılır, kullanıcının aç/kapa davranışı değişmez. Panel kapanınca seçim de sıfırlanır.
+  function showInText(quote: string) {
+    if (detailsRef.current !== null) {
+      detailsRef.current.open = true
+    }
+    if (!textOpen) {
+      onToggleText()
+    }
+    setEvidenceSelection({ quote })
+  }
+
+  // Metni gizlemek seçimi de bitirir: metin yeniden açıldığında bugünkü gibi düz gösterilir, sayfa kaydırılmaz.
+  function toggleText() {
+    if (textOpen) {
+      setEvidenceSelection(null)
+    }
+    onToggleText()
+  }
 
   const previewSection = (
     <section className="doc-preview" aria-labelledby={titleId}>
@@ -949,7 +1029,7 @@ function PreviewPanel({
           </button>
         )}
         {text !== null && (
-          <button type="button" className="secondary" onClick={onToggleText} aria-expanded={textOpen} aria-controls={textId}>
+          <button type="button" className="secondary" onClick={toggleText} aria-expanded={textOpen} aria-controls={textId}>
             {textOpen ? 'Çıkarılan Metni Gizle' : 'Çıkarılan Metni Gör'}
           </button>
         )}
@@ -957,11 +1037,7 @@ function PreviewPanel({
       {(fileType === 'doc' || fileType === 'docx') && (
         <p className="hint">Word belgelerinin görünümü gösterilmez; önizleme çıkarılan metinden oluşturulur.</p>
       )}
-      {textOpen && text !== null && (
-        <pre className="extracted-text" id={textId}>
-          {text}
-        </pre>
-      )}
+      {textOpen && text !== null && <ExtractedText id={textId} text={text} selection={evidenceSelection} />}
 
       {canSelect && (
         <label className="include-toggle">
@@ -984,8 +1060,14 @@ function PreviewPanel({
         previewSection
       ) : (
         <>
-          <ResultCard result={result} onViewOriginal={canViewOriginal ? onViewOriginal : null} onValidated={onValidated} />
-          <details className="result-details">
+          <ResultCard
+            result={result}
+            text={text}
+            onShowInText={showInText}
+            onViewOriginal={canViewOriginal ? onViewOriginal : null}
+            onValidated={onValidated}
+          />
+          <details className="result-details" ref={detailsRef}>
             <summary>Belge önizlemesi ve çıkarılan metin</summary>
             {previewSection}
           </details>

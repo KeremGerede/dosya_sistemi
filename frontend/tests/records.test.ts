@@ -10,6 +10,7 @@ import {
   countRecords,
   effectiveRouting,
   filterOptions,
+  findEvidenceInText,
   filterRecords,
   recordDisplayState,
   routingEvidenceSection,
@@ -388,5 +389,59 @@ describe('routingEvidenceSection', () => {
       )
       assert.deepEqual(section, { quotes: [TYPE_EVIDENCE.quote], aiBasis: true })
     })
+  })
+})
+
+describe('findEvidenceInText ("Metinde göster", F-04)', () => {
+  const TEXT = 'Sayın Başkanlık, Gülpınar Sokak üzerindeki kaldırım çökmüştür. Gülpınar Sokak için onarım talep ediyorum.'
+
+  test('ilk birebir geçişi bulur; parçalar birleşince metnin kendisi olur', () => {
+    const match = findEvidenceInText(TEXT, 'kaldırım çökmüştür')
+    assert.ok(match !== null)
+    assert.equal(match.quote, 'kaldırım çökmüştür')
+    assert.equal(match.before, 'Sayın Başkanlık, Gülpınar Sokak üzerindeki ')
+    assert.equal(match.before + match.quote + match.after, TEXT)
+  })
+
+  test('ifade birden fazla geçiyorsa yalnız ilk geçiş döner', () => {
+    const match = findEvidenceInText(TEXT, 'Gülpınar Sokak')
+    assert.ok(match !== null)
+    assert.equal(match.before, 'Sayın Başkanlık, ')
+    assert.ok(match.after.includes('Gülpınar Sokak için'))
+  })
+
+  test('metinde geçmeyen ifade null döner', () => {
+    assert.equal(findEvidenceInText(TEXT, 'asfalt yenileme'), null)
+  })
+
+  test('büyük/küçük harf farkı eşleşmez', () => {
+    assert.equal(findEvidenceInText(TEXT, 'gülpınar sokak'), null)
+    assert.equal(findEvidenceInText(TEXT, 'KALDIRIM ÇÖKMÜŞTÜR'), null)
+  })
+
+  test('Türkçe karakter farkı eşleşmez (katlama yok)', () => {
+    assert.equal(findEvidenceInText(TEXT, 'Gulpinar Sokak'), null)
+    assert.equal(findEvidenceInText(TEXT, 'kaldirim cokmustur'), null)
+  })
+
+  test('whitespace farkı katlanmaz', () => {
+    assert.equal(findEvidenceInText(TEXT, 'Gülpınar  Sokak'), null)
+  })
+
+  test('NFC kanonik eşdeğerlik eşleşir: NFD metin ve NFC ifade', () => {
+    const nfdText = 'Konu: Şikayet dilekçesi üzerine'
+    const match = findEvidenceInText(nfdText, 'Şikayet dilekçesi')
+    assert.ok(match !== null)
+    assert.equal(match.quote, 'Şikayet dilekçesi')
+    assert.equal(match.before + match.quote + match.after, nfdText.normalize('NFC'))
+  })
+
+  test('NFC kanonik eşdeğerlik eşleşir: NFC metin ve NFD ifade', () => {
+    assert.ok(findEvidenceInText('Şikayet dilekçesi', 'Şikayet') !== null)
+  })
+
+  test('metin null veya ifade boşsa null döner', () => {
+    assert.equal(findEvidenceInText(null, 'kaldırım'), null)
+    assert.equal(findEvidenceInText(TEXT, ''), null)
   })
 })

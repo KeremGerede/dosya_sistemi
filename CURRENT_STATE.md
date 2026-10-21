@@ -9,7 +9,7 @@
 ## Durum özeti
 
 - Blocker veya high risk yok.
-- Aktif workstream yok. Son kapanan: geliştirme PostgreSQL host portunun 5434'e geçişi (D-051, 2026-10-21, masaüstü bilgisayar). Yeni ana workstream seçilmedi; sıradaki iş `TODOS.md` → Now (T-01, T-02).
+- Aktif workstream: F-04 "Metinde göster" (evidence ifadesini çıkarılan metinde vurgulama). Uygulama, birim testleri ve sahte API'li tarayıcı kontrolü tamam; kullanıcının gerçek ortam manuel testi bekleniyor. Son kapanan: geliştirme PostgreSQL host portunun 5434'e geçişi (D-051, 2026-10-21, masaüstü bilgisayar). Sıradaki ana iş `TODOS.md` → Now (T-01, T-02).
 - Açık manuel doğrulama ve bakım işleri (PDF orijinal görünümünün Chrome/Edge kontrolü, rehearsal kayıt kararı, laptop'ta D-051 geçişi): `TODOS.md` → Maintenance / Minor (T-07, T-08, T-13).
 
 ## Ürün durumu (main)
@@ -19,14 +19,14 @@
 - Hazırla → önizle → sınıflandır akışı, arayüzde en fazla 5 dosya (V1.4; F-05; D-045, D-046).
 - Kayıtlar: liste, detay ve indirme; istemci tarafı arama, filtre ve özet sayıları (F-07; D-043, D-048).
 - Human Validation + Routing Correction (F-06; D-049).
-- Evidence-backed Routing: "Belgedeki ilgili ifade" (F-04; D-050). Workstream kapalı.
+- Evidence-backed Routing: "Belgedeki ilgili ifade" (F-04; D-050). "Metinde göster" ile ifadenin ilk birebir geçişi çıkarılan metinde vurgulanır (2026-10-21; manuel test bekliyor).
 
 ## Teknik baseline
 
-Son doğrulama: 2026-10-20 · commit `8646480`; backend ve frontend kodu `b21ff28` ile aynı (sonraki değişiklikler yalnız doküman ve geliştirme ortamı host portu, D-051) · yerel Windows 11, Python 3.13.15, Node 24.20.0, npm 11.19.0.
+Yerel Windows 11, Python 3.13.15, Node 24.20.0, npm 11.19.0.
 
-- **Backend:** `pytest` **473 passed** (1 uyarı: `starlette.testclient` kaynaklı `StarletteDeprecationWarning`); `pip check` temiz.
-- **Frontend:** `npm test` **73 passed**; `npm run build` ve `npm run lint` temiz.
+- **Backend:** `pytest` **473 passed** (1 uyarı: `starlette.testclient` kaynaklı `StarletteDeprecationWarning`); `pip check` temiz. Son doğrulama 2026-10-20 · commit `8646480`; backend kodu o tarihten beri `b21ff28` ile aynı (sonraki değişiklikler doküman, geliştirme ortamı host portu D-051 ve frontend).
+- **Frontend:** `npm test` **82 passed**; `npm run build` ve `npm run lint` temiz. Son doğrulama 2026-10-21, F-04 "Metinde göster" değişikliğiyle.
 - **Veritabanı:** Tek `documents` tablosu. Alembic tek head `5ed883607e08` (dört migration). `alembic check` çalışan veritabanı ister; son sonucu temiz (2026-10-21, masaüstü bilgisayardaki geliştirme DB'si, `127.0.0.1:5434`).
 - Otomatik testler gerçek Gemini API'si veya Docker PostgreSQL gerektirmez: endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır; Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
 - **Test kapsamı:** Frontend'de bileşen/tarayıcı testi yoktur; yalnız `src/documentPreview.ts` ve `src/records.ts` birim testleri vardır (Node 22.18+). Endpoint testleri SQLite kullanır; PostgreSQL'e özgü davranış yalnız gerçek ortam testleriyle doğrulanır.
