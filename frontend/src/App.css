@@ -342,7 +342,7 @@ dl.result-primary {
 
 .result-summary p {
   margin: 0;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .result-actions {
@@ -828,9 +828,10 @@ tr.open .chevron {
   margin: 0.5rem 0 0;
 }
 
+/* Kayıtlar detayındaki AI özeti: sonuç kartındaki özetle aynı satır yüksekliği */
 .record-summary {
   margin: 0;
-  line-height: 1.55;
+  line-height: 1.7;
 }
 
 .record-type,
@@ -852,9 +853,10 @@ tr.open .chevron {
 }
 
 /* Belgedeki ilgili ifade (D-050): sonuç kartında ve Kayıtlar detayında aynı, sonuç ve onayla yarışmayan ikincil bölüm.
-   .record-detail h3'ten sonra gelir: başlık büyük harfe çevrilmeden, yazıldığı gibi görünür. */
+   .record-detail h3'ten sonra gelir: başlık büyük harfe çevrilmeden, yazıldığı gibi görünür. Alt boşluk, sonraki
+   bölüm başlığının (AI Özeti, Çıkarılan metin) 0.9rem'lik üst boşluğuyla birleşir; iki ekranda da aynı mesafe kalır. */
 .routing-evidence {
-  margin-top: 1rem;
+  margin: 1.25rem 0;
 }
 
 /* Bölüm başlığı ifade başlıklarından (.evidence-label, 0.85rem) daha büyük: hiyerarşi bölüm → ifade. Koyu nötr ve
@@ -880,9 +882,13 @@ tr.open .chevron {
   font-size: 0.75rem;
 }
 
-/* Bir ifade: başlık, alıntı ve "Metinde göster" */
+/* Bir ifade: başlık, alıntı ve "Metinde göster". İki ifade arasında, başlıkla ilk ifade arasından fazla boşluk */
 .evidence-item {
   margin-top: 0.75rem;
+}
+
+.evidence-item + .evidence-item {
+  margin-top: 1.25rem;
 }
 
 /* İfade başlığı supports'tan çevrilir (D-052); ifadenin ne için okunacağını söyler, bu yüzden koyu ve belirgin */
@@ -895,11 +901,11 @@ tr.open .chevron {
 
 /* İfade birebir gösterilir: kesme veya satır sınırı yok, uzun ifade sarılır */
 .evidence-quote {
-  margin: 0.25rem 0 0;
+  margin: 0.35rem 0 0;
   padding: 0.1rem 0 0.1rem 0.75rem;
   border-left: 3px solid var(--border-strong);
   font-size: 0.95rem;
-  line-height: 1.5;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
@@ -908,7 +914,7 @@ button.secondary.evidence-show {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0.4rem 0 0 0.95rem;
+  margin: 0.5rem 0 0 0.95rem;
   border-color: var(--accent);
   color: var(--accent-hover);
   font-weight: 600;
