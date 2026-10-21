@@ -26,6 +26,7 @@ Araştırma sorularıdır; feature kararı değildir.
 - **T-07** · Açık · PDF orijinal görünümünü gerçek Chrome/Edge tarayıcısında elle kontrol et (otomatik test tarayıcısında PDF görüntüleyici yok).
 - **T-08** · Açık · Laptop demo DB'sindeki 6 rehearsal kaydı (`rehearsal-d050-*`) ve 6 storage dosyası için karar ver: tut veya temizle.
 - **T-13** · Açık · Laptop'ta D-051 geçişi: değişiklik çekildikten sonra container'ı `docker compose up -d` ile 5434 portuyla yeniden oluştur, laptop'taki `backend/.env` içinde `DATABASE_URL` portunu 5434 yap; bağlantıyı, migration head'ini ve kayıt sayısını doğrula.
+- **T-14** · Ertelendi · Evidence arayüzünün son görsel kontrolünü gerçek ortamda yap: sonuç kartı ve Kayıtlar detayı; `a2ade11` boşluk düzenlemesi dahil. Sahte API'li tarayıcı kontrolü yapıldı; gerçek belgeyle kontrol kullanıcı tarafından ertelendi.
 
 ## Later / Candidate
 
