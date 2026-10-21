@@ -788,6 +788,20 @@ tr.open .chevron {
   border-color: var(--err-text);
 }
 
+/* DOCX rozeti mavi; diğer türler nötr kalır */
+.file-icon.file-docx {
+  color: var(--accent-hover);
+}
+
+.download:has(.file-docx) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--surface));
+  background-color: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.download:has(.file-docx):hover {
+  border-color: var(--accent);
+}
+
 /* Genişleyen detay satırı */
 
 .detail-row > td {
@@ -843,11 +857,12 @@ tr.open .chevron {
   margin-top: 1rem;
 }
 
+/* Bölüm başlığı ifade başlıklarından (.evidence-label, 0.85rem) daha büyük: hiyerarşi bölüm → ifade */
 .routing-evidence h3 {
   margin: 0;
-  color: var(--text-subtle);
-  font-size: 0.8rem;
-  font-weight: 600;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
   letter-spacing: normal;
   text-transform: none;
 }

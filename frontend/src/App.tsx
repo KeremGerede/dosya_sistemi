@@ -491,17 +491,17 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
                 <tr className={openId === item.document_id ? 'open' : undefined}>
                   <td data-label="Belge Adı">
                     {/* Detayı yalnızca bu buton açar; indirme ayrı hücrede olduğundan tıklamalar çakışmaz. */}
+                    {/* Tam ad DOM içinde kalır; kısaltma yalnızca görseldir. title fare kullanıcısı içindir ve düğmenin
+                        kendisindedir: bazı tarayıcılar (ör. Firefox) düğme içindeki öğelerin title'ını göstermez. */}
                     <button
                       type="button"
                       className="record-main"
+                      title={item.file_name}
                       onClick={() => void toggle(item.document_id)}
                       aria-expanded={openId === item.document_id}
                     >
                       <span className="chevron" aria-hidden="true" />
-                      {/* Tam ad DOM içinde kalır; kısaltma yalnızca görseldir, title fare kullanıcısı içindir. */}
-                      <span className="record-name" title={item.file_name}>
-                        {item.file_name}
-                      </span>
+                      <span className="record-name">{item.file_name}</span>
                     </button>
                   </td>
                   <td data-label="Belge Türü" className="col-type">
@@ -705,7 +705,7 @@ function ValidationControls({
           <div className="validation-row">
             <button
               type="button"
-              className="secondary"
+              className="secondary approve"
               onClick={() =>
                 void save(draft.documentType, draft.institution === UNDETERMINED ? null : draft.institution)
               }
