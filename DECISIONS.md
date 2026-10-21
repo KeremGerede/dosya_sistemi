@@ -402,7 +402,7 @@
 - **Gerekçe:** Kullanıcı düzeltmesi AI çıktısını silmez; iki sonuç karşılaştırılabildiği için AI doğruluğu ölçülebilir kalır. Tek tablo kuralı (D-013) korunur; nullable kolonlar mevcut kayıtları ve API sözleşmesini bozmaz. Authentication olmadığından (D-025) onaylayan kişi bilinemez; geçmiş tutmak MVP için gereksiz karmaşıklıktır. `needs_review` ve `status`, AI işleme sonucunun kaydı olarak kalır (D-014, D-016).
 
 ### D-050 — Evidence-backed Routing: kaynakta birebir doğrulanmış "belgedeki ilgili ifade"
-- **Durum:** Aktif · **Git:** giriş ve son değişiklik 2026-10-07 · **Referans:** F-04; INV-4
+- **Durum:** Aktif (yalnız "`supports` arayüzde öğe bazında gösterilmez" hükmü 2026-10-21'de D-052 ile değişti; diğer hükümler geçerli) · **Git:** giriş ve son değişiklik 2026-10-07 · **Referans:** F-04; INV-4; D-052
 - **Kısıt:** Prompt v4 sabittir (frozen); gerekmedikçe değiştirilmez.
 - **Karar:**
   - **Aynı çağrı:** Evidence mevcut sınıflandırma çağrısında üretilir (D-008). Ayrı Gemini çağrısı, ayrı çıkarım adımı, agent veya RAG yoktur.
@@ -430,6 +430,15 @@
   - **Arayüz:** Başlık "Belgedeki ilgili ifade"; "Kanıt", "Gerekçe" gibi akıl yürütme çağrıştıran adlar kullanılmaz. Evidence yoksa bölüm görünmez. Sonuç kartında `ValidationControls` altında ve AI Özeti üstünde, Kayıtlar detayında da gösterilir. Yeni sayfa, modal veya liste kolonu yoktur. OCR kaynağına özel not yoktur.
   - **Kapsam dışı:** Ayrı çıkarım çağrısı, RAG, vector DB, agent, güven skoru, evidence düzenleme veya kullanıcı tarafından evidence ekleme, hukuki değerlendirme, açıklama üretimi, tekrar tespiti, workflow/SLA, Structured Operational Extraction.
 - **Gerekçe:** Kullanıcı yönlendirme sonucunu belgenin kendi ifadesiyle hızlıca kontrol eder. Aynı çağrı ek gecikme ve maliyet getirmez (D-044 emsali). Birebir doğrulama, modelin uydurduğu veya değiştirdiği bir ifadenin belge ifadesi gibi gösterilmesini önler; uyuşmazlığın bedeli yalnız evidence kaybıdır. Toleranslı doğrulama, ikincil bir alanın sınıflandırma güvenilirliğini düşürmesini engeller.
+
+### D-052 — Belgedeki ilgili ifadenin başlığı `supports`'tan gelir
+- **Durum:** Aktif · **Tarih:** 2026-10-21 · **Referans:** F-04; D-050'nin `supports` gösterim hükmüne dar istisna
+- **Karar:**
+  - Her doğrulanmış ifadenin üstünde küçük bir başlık gösterilir. Başlık yalnız backend'in döndürdüğü `supports` değerinden çevrilir: `document_type` → "Belge türüne dayanak", `institution` → "Hedef kuruma dayanak", `both` → "Belge türü ve hedef kuruma dayanak". Tanımsız bir değer nötr "İlgili ifade" başlığına düşer.
+  - Ham `supports` değeri kullanıcıya gösterilmez. Başlık ifade sırasından veya ifade metninden tahmin edilmez; yeni AI çıkarımı yoktur.
+  - Kullanıcı AI belge türünü veya kurumunu düzeltse de başlıklar değişmez; bağlamı bölüm düzeyindeki "AI önerisinin dayanağı" notu verir (D-050).
+  - D-050'nin diğer hükümleri (aynı çağrı, kaynakta birebir doğrulama, persistence, API, bölüm başlığı ve yeri, kapsam dışı öğeler) değişmeden geçerlidir. Backend, API ve DB değişmez.
+- **Gerekçe:** İki ifade gösterildiğinde kullanıcı hangisinin belge türüne, hangisinin hedef kuruma ilişkin olduğunu ayırt edemiyordu (manuel test geri bildirimi). `supports` kapalı bir enum'dur; şema tanımsız değeri atar ve backend kurum `null` iken yalnız `document_type` kabul eder, bu yüzden başlık eşlemesi deterministiktir. İfadenin neyi desteklediği modelin önerisidir; başlıklar bu yüzden AI önerisinin parçası olan bölümde, "dayanak" diliyle gösterilir.
 
 ### D-020 — Senkron işleme
 - **Durum:** Aktif · **Git:** giriş 2026-09-15, son değişiklik 2026-10-03 · **Referans:** F-05; `PROJECT_BRAIN.md` §2

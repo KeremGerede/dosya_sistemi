@@ -386,6 +386,28 @@ dl.result-primary {
   gap: 0.5rem;
 }
 
+/* Onay belirgin yeşil; Düzelt ondan hafif, amber çerçeveli (onay öncesi ve sonrası aynı). Kırmızı kullanılmaz. */
+button.secondary.approve {
+  background-color: var(--ok-text);
+  border-color: var(--ok-text);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+button.secondary.approve:hover:not(:disabled) {
+  background-color: var(--ok-text);
+  filter: brightness(0.9);
+}
+
+button.secondary.revise {
+  border-color: var(--warn-border);
+  color: var(--warn-text);
+}
+
+button.secondary.revise:hover:not(:disabled) {
+  background-color: var(--warn-bg);
+}
+
 .validation-note {
   margin: 0;
   color: var(--text-muted);
@@ -819,9 +841,22 @@ tr.open .chevron {
   font-size: 0.75rem;
 }
 
+/* Bir ifade: başlık, alıntı ve "Metinde göster" */
+.evidence-item {
+  margin-top: 0.75rem;
+}
+
+/* İfade başlığı supports'tan çevrilir (D-052); bölüm başlığından küçük ve soluk */
+.evidence-label {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 /* İfade birebir gösterilir: kesme veya satır sınırı yok, uzun ifade sarılır */
 .evidence-quote {
-  margin: 0.5rem 0 0;
+  margin: 0.25rem 0 0;
   padding: 0.1rem 0 0.1rem 0.75rem;
   border-left: 3px solid var(--border-strong);
   font-size: 0.9rem;
@@ -829,9 +864,15 @@ tr.open .chevron {
   overflow-wrap: anywhere;
 }
 
-/* "Metinde göster" (F-04): ifadenin altında, girintisiyle hizalı */
-.evidence-show {
-  margin: 0.35rem 0 0 0.95rem;
+/* "Metinde göster" (F-04): ifadenin altında, girintisiyle hizalı; accent çerçeveli ikincil düğme */
+button.secondary.evidence-show {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.4rem 0 0 0.95rem;
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  font-weight: 600;
 }
 
 /* Çıkarılan metinde seçilen ifadenin ilk birebir geçişi */

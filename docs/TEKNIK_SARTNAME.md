@@ -15,7 +15,7 @@
 | F-01 | Belge kabulü ve depolama | Uygulandı | D-001, D-004, D-017, D-028, D-029 |
 | F-02 | Metin çıkarımı ve OCR | Uygulandı | D-002, D-003, D-026, D-042, D-047 |
 | F-03 | Sınıflandırma, özet ve gönderen | Uygulandı | D-007–D-012, D-027, D-031, D-033, D-044 |
-| F-04 | Belgedeki ilgili ifade | Uygulandı (2026-10-07) | D-050 |
+| F-04 | Belgedeki ilgili ifade | Uygulandı (2026-10-07) | D-050, D-052 |
 | F-05 | Hazırla → önizle → sınıflandır | Uygulandı | D-020, D-039, D-040, D-045, D-046 |
 | F-06 | Kullanıcı onayı ve yönlendirme düzeltmesi | Uygulandı (2026-10-06) | D-049 |
 | F-07 | Kayıtlar | Uygulandı | D-043, D-048 |
@@ -232,8 +232,9 @@ Kodda ayrıca (`services/classification_service.py`, `PROMPT_TEMPLATE`): prompt,
 
 **Belgedeki ilgili ifade (D-050):**
 
-- Doğrulanmış ifadeler sonuç kartında (onay kontrollerinin altında, AI özetinin üstünde) ve Kayıtlar detayında "Belgedeki ilgili ifade" başlığıyla, birebir gösterilir. Kayıtlar listesinde gösterilmez. Evidence `null` veya `[]` ise bölüm render edilmez; `supports` değeri kullanıcıya gösterilmez.
-- Evidence AI önerisine aittir: onay ve düzeltme onu değiştirmez, onaylanan yönlendirme için yeni ifade üretilmez. Kullanıcı AI belge türünü veya kurumunu değiştirdiyse bölümde küçük "AI önerisinin dayanağı" notu görünür.
+- Doğrulanmış ifadeler sonuç kartında (onay kontrollerinin altında, AI özetinin üstünde) ve Kayıtlar detayında "Belgedeki ilgili ifade" başlığıyla, birebir gösterilir. Kayıtlar listesinde gösterilmez. Evidence `null` veya `[]` ise bölüm render edilmez.
+- Her ifadenin üstünde `supports`'tan çevrilen küçük bir başlık görünür (D-052): `document_type` → "Belge türüne dayanak", `institution` → "Hedef kuruma dayanak", `both` → "Belge türü ve hedef kuruma dayanak", tanımsız değer → "İlgili ifade". Ham `supports` değeri gösterilmez; başlık ifade sırasından veya metninden tahmin edilmez.
+- Evidence AI önerisine aittir: onay ve düzeltme onu değiştirmez, onaylanan yönlendirme için yeni ifade üretilmez. Kullanıcı AI belge türünü veya kurumunu değiştirdiyse bölümde küçük "AI önerisinin dayanağı" notu görünür; ifade başlıkları değişmez.
 
 **Metinde göster:**
 
@@ -241,7 +242,7 @@ Kodda ayrıca (`services/classification_service.py`, `PROMPT_TEMPLATE`): prompt,
 - Eşleşme backend doğrulamasıyla aynı kuraldır: metne ve ifadeye yalnız Unicode NFC uygulanır, büyük/küçük harfe duyarlı birebir substring aranır. Türkçe veya ASCII katlama, whitespace katlaması ve bulanık eşleşme yoktur.
 - Tıklanınca sonuç kartında kapalı "Belge önizlemesi ve çıkarılan metin" bölümü ve çıkarılan metin açılır. Seçilen ifadenin yalnız ilk geçişi vurgulanır, görünür alana kaydırılır ve odak oraya taşınır. Başka ifadeye tıklamak vurguyu oraya taşır; aynı ifadeye tekrar tıklamak yeniden kaydırır.
 - Seçim yokken metin değiştirilmeden gösterilir. Kayıt detayı veya önizleme paneli kapanınca ve sonuç kartında metin gizlenince seçim sıfırlanır.
-- Yeni API, DB alanı veya LLM çağrısı yoktur; ifade metni değişmez ve `supports` gösterilmez.
+- Yeni API, DB alanı veya LLM çağrısı yoktur; ifade metni değişmez ve ham `supports` değeri gösterilmez.
 
 **Kabul ölçütleri**
 
@@ -250,7 +251,8 @@ Kodda ayrıca (`services/classification_service.py`, `PROMPT_TEMPLATE`): prompt,
 - Bozuk ya da eksik evidence boş listeye düşer; retry, `failed` veya `502` üretmez; sınıflandırma alanları ve `needs_review` değişmez — `llm::test_malformed_evidence_becomes_empty_list_without_retry`, `llm::test_missing_evidence_field_becomes_empty_list_without_retry`, `llm::test_evidence_does_not_change_classification_fields`, `llm::test_missing_verified_evidence_does_not_set_needs_review`, `api::test_evidence_does_not_change_status_needs_review_or_reason`.
 - Başarılı sınıflandırma ifadeleri ya da `[]` yazar; `prepared`, `failed` ve eski kayıtta değer `NULL` kalır; onay evidence'ı değiştirmez — `api::test_empty_evidence_is_persisted_as_empty_list_not_null`, `api::test_prepared_record_has_null_evidence_until_classified`, `api::test_failed_classification_leaves_evidence_null`, `api::test_old_record_without_evidence_returns_null_in_list_and_detail`, `api::test_validation_never_changes_routing_evidence`.
 - İfade metni loglanmaz — `llm::test_evidence_quotes_are_not_logged`.
-- Arayüz: evidence `null` veya `[]` ise bölüm görünmez; ifadeler backend sırasıyla ve değiştirilmeden gösterilir; `supports` gösterilmez; AI türü veya kurumu değiştirilerek onaylandıysa "AI önerisinin dayanağı" notu görünür — `records:` "evidence null ise bölüm yoktur", "iki ifade backend sırasıyla döner", "supports değeri kullanıcıya sızmaz: yalnız ifade metinleri döner", "kurum düzeltildiyse not gerekir".
+- Arayüz: evidence `null` veya `[]` ise bölüm görünmez; ifadeler backend sırasıyla ve değiştirilmeden gösterilir; ham `supports` gösterilmez; AI türü veya kurumu değiştirilerek onaylandıysa "AI önerisinin dayanağı" notu görünür — `records:` "evidence null ise bölüm yoktur", "iki ifade backend sırasıyla döner", "ham supports değeri kullanıcıya sızmaz: yalnız ifade metni ve Türkçe başlık döner", "kurum düzeltildiyse not gerekir".
+- İfade başlıkları (D-052): her `supports` değeri kendi başlığına çevrilir; başlık sıradan veya ifade metninden tahmin edilmez; tanımsız değer nötr "İlgili ifade" olur; düzeltilmiş onayda başlıklar değişmez — `records:` "her supports değeri kendi başlığına çevrilir", "başlık sıradan tahmin edilmez: sıra değişince başlık ifadesiyle birlikte gider", "başlık ifade metninden tahmin edilmez", "tanımsız supports değeri nötr başlığa düşer ve ham değer görünmez", "not ifadelerin metnini ve başlıklarını değiştirmez".
 - Metinde göster: yalnız ilk birebir geçiş bulunur; büyük/küçük harf, Türkçe karakter ve whitespace farkı eşleşmez; NFC kanonik eşdeğerlik eşleşir; metin yoksa veya ifade bulunamazsa sonuç yoktur (düğme görünmez) — `records:` "ilk birebir geçişi bulur; parçalar birleşince metnin kendisi olur", "ifade birden fazla geçiyorsa yalnız ilk geçiş döner", "büyük/küçük harf farkı eşleşmez", "Türkçe karakter farkı eşleşmez (katlama yok)", "whitespace farkı katlanmaz", "NFC kanonik eşdeğerlik eşleşir: NFD metin ve NFC ifade", "metinde geçmeyen ifade null döner". Açma, kaydırma, odak ve seçimin sıfırlanması otomatik testte değil, tarayıcıda doğrulanır (bileşen testi yok).
 
 **Sınırlar**
@@ -259,7 +261,7 @@ Kodda ayrıca (`services/classification_service.py`, `PROMPT_TEMPLATE`): prompt,
 - "Metinde göster" çıkarılan metin üzerinde çalışır; orijinal belge görünümünde (PDF, görüntü) konum gösterilmez. Yalnız seçilen ifadenin ilk geçişi vurgulanır; sonraki geçişler vurgulanmaz.
 - Kapsam dışı öğeler (ayrı çıkarım çağrısı, güven skoru, evidence düzenleme, anlamsal filtre, OCR kaynağı etiketi): D-050 ve `PROJECT_BRAIN.md` §12.
 
-**Referanslar:** D-050, D-049 · Kod: `services/classification_service.py` (`verify_routing_evidence`), `schemas/classification.py` (`drop_invalid_routing_evidence`), `frontend/src/records.ts` (`routingEvidenceSection`, `findEvidenceInText`), `frontend/src/App.tsx` (`RoutingEvidenceSection`, `ExtractedText`)
+**Referanslar:** D-050, D-052, D-049 · Kod: `services/classification_service.py` (`verify_routing_evidence`), `schemas/classification.py` (`drop_invalid_routing_evidence`), `frontend/src/records.ts` (`routingEvidenceSection`, `findEvidenceInText`), `frontend/src/App.tsx` (`RoutingEvidenceSection`, `ExtractedText`)
 
 ## F-05 — Hazırla → önizle → sınıflandır
 

@@ -658,14 +658,15 @@ function ValidationControls({
           ) : (
             <button
               type="button"
-              className="secondary"
+              className="secondary approve"
               onClick={() => void save(aiDocumentType, record.institution_id)}
               disabled={busy !== null}
             >
               Sonucu Onayla
             </button>
           )}
-          <button type="button" className="secondary" onClick={() => void startEdit()} disabled={busy !== null}>
+          {/* Onay öncesi ve sonrası aynı görünüm: onaydan hafif, amber çerçeveli ikincil aksiyon. */}
+          <button type="button" className="secondary revise" onClick={() => void startEdit()} disabled={busy !== null}>
             Düzelt
           </button>
         </div>
@@ -739,7 +740,8 @@ function ValidationControls({
 }
 
 // Belgedeki ilgili ifade (D-050): sonuç kartında ve Kayıtlar detayında aynı bölüm. İfadeler AI önerisine aittir ve
-// backend'den geldiği gibi gösterilir; supports gösterilmez. Kullanıcı türü veya kurumu değiştirdiyse küçük not eklenir.
+// backend'den geldiği gibi gösterilir; her ifadenin üstünde supports'tan çevrilen başlık vardır, ham değer gösterilmez
+// (D-052). Kullanıcı türü veya kurumu değiştirdiyse küçük not eklenir.
 // "Metinde göster" (F-04) yalnız çıkarılan metinde birebir bulunan ifadede görünür; metin henüz yoksa da görünmez.
 function RoutingEvidenceSection({
   record,
@@ -758,15 +760,21 @@ function RoutingEvidenceSection({
     <div className="routing-evidence">
       <h3>Belgedeki ilgili ifade</h3>
       {section.aiBasis && <p className="routing-evidence-note">AI önerisinin dayanağı</p>}
-      {section.quotes.map((quote, index) => (
-        <Fragment key={index}>
+      {section.items.map(({ quote, label }, index) => (
+        <div key={index} className="evidence-item">
+          <h4 className="evidence-label">{label}</h4>
           <blockquote className="evidence-quote">{quote}</blockquote>
           {findEvidenceInText(text, quote) !== null && (
             <button type="button" className="secondary small evidence-show" onClick={() => onShowInText(quote)}>
+              {/* Satır içi SVG (FileTypeIcon ile aynı yaklaşım); erişilebilir ad düğme metninden gelir. */}
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+                <circle cx="6.5" cy="6.5" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <path d="M10 10l4.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
               Metinde göster
             </button>
           )}
-        </Fragment>
+        </div>
       ))}
     </div>
   )

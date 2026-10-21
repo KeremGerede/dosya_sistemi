@@ -56,16 +56,29 @@ export function effectiveRouting(record: RoutingFields): EffectiveRouting {
   }
 }
 
-// Belgedeki ilgili ifade (D-050): backend'in kaynakta birebir doğruladığı ifade. supports arayüzde gösterilmez.
+// Belgedeki ilgili ifade (D-050): backend'in kaynakta birebir doğruladığı ifade. Ham supports değeri arayüzde
+// gösterilmez; yalnız ifade başlığına çevrilir (D-052).
 export type RoutingEvidence = { quote: string; supports: 'document_type' | 'institution' | 'both' }
 
+export type EvidenceItem = { quote: string; label: string }
+
 export type EvidenceSection = {
-  quotes: string[]
+  items: EvidenceItem[]
   aiBasis: boolean // kullanıcı türü veya kurumu AI önerisinden farklı onayladı: ifadeler AI önerisinin dayanağıdır
 }
 
+// İfade başlığı (D-052) yalnız supports'tan gelir; ifade sırasından veya metninden tahmin edilmez. Değer API'den
+// geldiği için tanımsız bir değer (ör. ileride eklenen) nötr başlığa düşer.
+const EVIDENCE_LABELS = new Map<string, string>([
+  ['document_type', 'Belge türüne dayanak'],
+  ['institution', 'Hedef kuruma dayanak'],
+  ['both', 'Belge türü ve hedef kuruma dayanak'],
+])
+export const NEUTRAL_EVIDENCE_LABEL = 'İlgili ifade'
+
 // Bölüm yalnız doğrulanmış ifade varsa görünür; null ve [] aynıdır, boş durum mesajı yoktur. İfadeler backend'in
-// sırasıyla ve birebir döner: kısaltma, tekilleştirme veya filtre yapılmaz. Bağlam bölüm düzeyindedir (D-050).
+// sırasıyla ve birebir döner: kısaltma, tekilleştirme veya filtre yapılmaz. Onay bağlamı bölüm düzeyindedir (D-050):
+// kullanıcı türü veya kurumu düzeltse de başlıklar değişmez.
 export function routingEvidenceSection(
   record: RoutingFields & { routing_evidence: RoutingEvidence[] | null },
 ): EvidenceSection | null {
@@ -74,7 +87,13 @@ export function routingEvidenceSection(
     return null
   }
   const routing = effectiveRouting(record)
-  return { quotes: evidence.map((item) => item.quote), aiBasis: routing.typeChanged || routing.institutionChanged }
+  return {
+    items: evidence.map((item) => ({
+      quote: item.quote,
+      label: EVIDENCE_LABELS.get(item.supports) ?? NEUTRAL_EVIDENCE_LABEL,
+    })),
+    aiBasis: routing.typeChanged || routing.institutionChanged,
+  }
 }
 
 // Çıkarılan metinde ifadenin ilk birebir geçişi; parçalar metnin NFC biçimindendir ve birleşince onu verir.

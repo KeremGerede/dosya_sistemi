@@ -4,6 +4,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  NEUTRAL_EVIDENCE_LABEL,
   NO_FILTERS,
   RECORD_DISPLAY_LABELS,
   UNDETERMINED,
@@ -312,38 +313,80 @@ describe('routingEvidenceSection', () => {
     assert.equal(routingEvidenceSection(failed), null)
   })
 
-  test('tek ifade birebir döner', () => {
-    assert.deepEqual(routingEvidenceSection(withEvidence([TYPE_EVIDENCE])), { quotes: [TYPE_EVIDENCE.quote], aiBasis: false })
-  })
-
-  test('iki ifade backend sırasıyla döner', () => {
-    assert.deepEqual(routingEvidenceSection(withEvidence([INSTITUTION_EVIDENCE, TYPE_EVIDENCE])), {
-      quotes: [INSTITUTION_EVIDENCE.quote, TYPE_EVIDENCE.quote],
+  test('tek ifade birebir ve başlığıyla döner', () => {
+    assert.deepEqual(routingEvidenceSection(withEvidence([TYPE_EVIDENCE])), {
+      items: [{ quote: TYPE_EVIDENCE.quote, label: 'Belge türüne dayanak' }],
       aiBasis: false,
     })
   })
 
-  test('supports değeri kullanıcıya sızmaz: yalnız ifade metinleri döner', () => {
+  test('iki ifade backend sırasıyla döner', () => {
+    assert.deepEqual(routingEvidenceSection(withEvidence([INSTITUTION_EVIDENCE, TYPE_EVIDENCE]))?.items, [
+      { quote: INSTITUTION_EVIDENCE.quote, label: 'Hedef kuruma dayanak' },
+      { quote: TYPE_EVIDENCE.quote, label: 'Belge türüne dayanak' },
+    ])
+  })
+
+  test('ham supports değeri kullanıcıya sızmaz: yalnız ifade metni ve Türkçe başlık döner', () => {
     const section = routingEvidenceSection(withEvidence([TYPE_EVIDENCE, INSTITUTION_EVIDENCE, BOTH_EVIDENCE]))
     assert.ok(section !== null)
-    assert.deepEqual(Object.keys(section), ['quotes', 'aiBasis'])
-    assert.deepEqual(section.quotes, [TYPE_EVIDENCE.quote, INSTITUTION_EVIDENCE.quote, BOTH_EVIDENCE.quote])
-    assert.doesNotMatch(JSON.stringify(section), /document_type|institution|both/)
+    assert.deepEqual(Object.keys(section), ['items', 'aiBasis'])
+    assert.ok(section.items.every((item) => Object.keys(item).join() === 'quote,label'))
+    assert.deepEqual(
+      section.items.map((item) => item.quote),
+      [TYPE_EVIDENCE.quote, INSTITUTION_EVIDENCE.quote, BOTH_EVIDENCE.quote],
+    )
+    assert.doesNotMatch(JSON.stringify(section), /document_type|institution|both|supports/)
   })
 
   test('uzun ifade kısaltılmadan ve değiştirilmeden döner', () => {
     const long = `Mahallemizdeki Gülpınar Sokak ile Şehit Öğretmen Caddesi kesişiminde bulunan yaya kaldırımının yaklaşık on beş metrelik bölümü çökmüş, "parke" taşları yerinden çıkmıştır; ızgara kırıktır (İ/ı, Ş/ş, Ğ/ğ korunur) ${'ve '.repeat(20)}son.`
     const section = routingEvidenceSection(withEvidence([{ quote: long, supports: 'both' }]))
     assert.ok(section !== null)
-    assert.equal(section.quotes[0], long)
-    assert.equal(section.quotes[0].length, long.length)
-    assert.ok(!section.quotes[0].endsWith('…') && !section.quotes[0].endsWith('...'))
+    assert.equal(section.items[0].quote, long)
+    assert.equal(section.items[0].quote.length, long.length)
+    assert.ok(!section.items[0].quote.endsWith('…') && !section.items[0].quote.endsWith('...'))
   })
 
   test('örtüşen veya kapsayan ifadeler tekilleştirilmez', () => {
     const short = { quote: 'asfalt yenileme çalışmalarının listesi', supports: 'document_type' } as const
     const containing = { quote: '2025 yılında yapılan asfalt yenileme çalışmalarının listesi', supports: 'institution' } as const
-    assert.deepEqual(routingEvidenceSection(withEvidence([short, containing]))?.quotes, [short.quote, containing.quote])
+    assert.deepEqual(
+      routingEvidenceSection(withEvidence([short, containing]))?.items.map((item) => item.quote),
+      [short.quote, containing.quote],
+    )
+  })
+
+  describe('ifade başlıkları (D-052)', () => {
+    const labels = (evidence: RoutingEvidence[]) => routingEvidenceSection(withEvidence(evidence))?.items.map((item) => item.label)
+
+    test('her supports değeri kendi başlığına çevrilir', () => {
+      assert.deepEqual(labels([TYPE_EVIDENCE]), ['Belge türüne dayanak'])
+      assert.deepEqual(labels([INSTITUTION_EVIDENCE]), ['Hedef kuruma dayanak'])
+      assert.deepEqual(labels([BOTH_EVIDENCE]), ['Belge türü ve hedef kuruma dayanak'])
+    })
+
+    test('başlık sıradan tahmin edilmez: sıra değişince başlık ifadesiyle birlikte gider', () => {
+      assert.deepEqual(labels([TYPE_EVIDENCE, INSTITUTION_EVIDENCE]), ['Belge türüne dayanak', 'Hedef kuruma dayanak'])
+      assert.deepEqual(labels([INSTITUTION_EVIDENCE, TYPE_EVIDENCE]), ['Hedef kuruma dayanak', 'Belge türüne dayanak'])
+      assert.deepEqual(labels([INSTITUTION_EVIDENCE, BOTH_EVIDENCE]), ['Hedef kuruma dayanak', 'Belge türü ve hedef kuruma dayanak'])
+    })
+
+    test('başlık ifade metninden tahmin edilmez', () => {
+      // Metin kurum adı içerse de supports document_type ise başlık belge türüdür.
+      const quote = { quote: 'FEN İŞLERİ MÜDÜRLÜĞÜNE kaldırım şikayeti', supports: 'document_type' } as const
+      assert.deepEqual(labels([quote]), ['Belge türüne dayanak'])
+    })
+
+    test('tanımsız supports değeri nötr başlığa düşer ve ham değer görünmez', () => {
+      const unknown = [
+        { quote: 'a', supports: 'sender' },
+        { quote: 'b', supports: '' },
+        { quote: 'c', supports: 'toString' },
+      ] as unknown as RoutingEvidence[]
+      assert.deepEqual(labels(unknown), [NEUTRAL_EVIDENCE_LABEL, NEUTRAL_EVIDENCE_LABEL, NEUTRAL_EVIDENCE_LABEL])
+      assert.equal(NEUTRAL_EVIDENCE_LABEL, 'İlgili ifade')
+    })
   })
 
   describe('Human Validation bağlamı (bölüm düzeyinde)', () => {
@@ -383,11 +426,20 @@ describe('routingEvidenceSection', () => {
       assert.equal(aiBasis(validatedAs('complaint', 'Şikayet', 'fen_isleri', 'Fen İşleri Müdürlüğü')), false)
     })
 
-    test('not ifadelerin metnini değiştirmez', () => {
+    test('not ifadelerin metnini ve başlıklarını değiştirmez', () => {
       const section = routingEvidenceSection(
-        withEvidence([TYPE_EVIDENCE], validatedAs('request', 'Talep Dilekçesi', 'fen_isleri', 'Fen İşleri Müdürlüğü')),
+        withEvidence(
+          [TYPE_EVIDENCE, INSTITUTION_EVIDENCE],
+          validatedAs('request', 'Talep Dilekçesi', 'zabita', 'Zabıta Müdürlüğü'),
+        ),
       )
-      assert.deepEqual(section, { quotes: [TYPE_EVIDENCE.quote], aiBasis: true })
+      assert.deepEqual(section, {
+        items: [
+          { quote: TYPE_EVIDENCE.quote, label: 'Belge türüne dayanak' },
+          { quote: INSTITUTION_EVIDENCE.quote, label: 'Hedef kuruma dayanak' },
+        ],
+        aiBasis: true,
+      })
     })
   })
 })
