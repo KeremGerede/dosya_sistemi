@@ -1,4 +1,4 @@
-# Yalnızca yerel geliştirme için PostgreSQL. Backend ve frontend yerel makinede çalışır (D-036).
+# Yalnızca yerel geliştirme için PostgreSQL. Backend ve frontend yerel makinede çalışır (D-036, D-051).
 services:
   postgres:
     image: postgres:18
@@ -8,8 +8,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres # yalnızca yerel geliştirme
     ports:
-      # Host 5432 yerel Windows PostgreSQL servisinde olduğu için 5433; yalnızca localhost'a açık.
-      - "127.0.0.1:5433:5432"
+      # Host portu 5434: 5433 aynı makinedeki stok projesinin PostgreSQL'inde (D-051); yalnızca localhost'a açık.
+      - "127.0.0.1:5434:5432"
     volumes:
       # PostgreSQL 18+ image'ında veri /var/lib/postgresql/18/docker altında; volume üst dizine bağlanır.
       - dosya_sistemi_pgdata:/var/lib/postgresql

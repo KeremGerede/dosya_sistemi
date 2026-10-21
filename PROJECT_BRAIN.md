@@ -89,9 +89,9 @@ Bu yapı yön gösterir, zorunlu değildir. Kurallar:
 - Yeni bir soyutlama katmanı için somut gerekçe ve `DECISIONS.md` kaydı gerekir.
 - Sayısal sınırlar (50 MB, 10 karakter, %50 görüntü kapsaması, 200 karakter, 3 sayfalık transkripsiyon grubu, 50.000 karakter, 3 deneme, 30 sn timeout, 1/2 sn bekleme) kodda tek bir yerde tanımlanır. Tek istisna: 50 MB sınırı D-040 gereği frontend ön kontrolünde de tanımlıdır; ikisi birlikte güncellenir.
 
-**Geliştirme ortamı** (D-036):
+**Geliştirme ortamı** (D-036, D-051):
 
-- PostgreSQL 18 Docker Compose ile çalışır. Tek servis; veriler Docker yönetimindeki `dosya_sistemi_pgdata` volume'unda kalır. Host portu `127.0.0.1:5433`.
+- PostgreSQL 18 Docker Compose ile çalışır. Tek servis; veriler Docker yönetimindeki `dosya_sistemi_pgdata` volume'unda kalır. Host portu `127.0.0.1:5434`.
 - FastAPI backend yerel makinede çalışır (kurulum ve komutlar: `README.md` "Kurulum").
 - React/Vite frontend de yerel makinede çalışır. İstekler `/api/...` göreli yollarına yapılır; Vite dev sunucusu bunları `http://127.0.0.1:8000` adresine proxy'ler, backend'e CORS middleware eklenmez (D-038).
 - Backend ve frontend şimdilik containerize edilmez.

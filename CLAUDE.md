@@ -89,7 +89,7 @@ Kritik değişmezlerin tam metni `PROJECT_BRAIN.md` §10 → "Kritik değişmezl
 
 Geliştirmede dikkat edilecekler:
 
-- **Yerel ortam:** Port ve adres kuralları (5433, `127.0.0.1`, arayüzde `localhost`) D-036 ve `README.md` "Kurulum" bölümündedir. `docker-compose.yml` sabit container adı, port ve volume kullanır; aynı makinede ikinci bir klonun stack'i çakışır.
+- **Yerel ortam:** Port ve adres kuralları (5434, `127.0.0.1`, arayüzde `localhost`) D-051 ve `README.md` "Kurulum" bölümündedir. 5433 aynı makinedeki `stok` projesine aittir. `docker-compose.yml` sabit container adı, port ve volume kullanır; aynı makinede ikinci bir klonun stack'i çakışır.
 - **Elle senkron tutulanlar:** 50 MB sınırı frontend'de de tanımlıdır ve backend ile birlikte güncellenmelidir. Frontend `ClassifyResponse` tipi backend şemasıyla elle eşleştirilir.
 - **Katalog:** Katalog değişikliği uygulama yeniden başlatılmadan etkili olmaz. `other` türü katalogdan çıkarılırsa servis yüklenmez. Katalog değişirse, arayüzde açık kalan eski katalogla yapılan onay `422` alır.
 - **SDK yükseltmesi:** google-genai yükseltilirse retry/timeout testleri (gerçek SDK + `MockTransport`) yeniden çalıştırılmalıdır.

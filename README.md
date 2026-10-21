@@ -75,7 +75,7 @@ Komutlar PowerShell içindir. macOS/Linux'ta `python3 -m venv .venv`, `source .v
 docker compose up -d
 ```
 
-`docker compose ps` çıktısında `dosya-sistemi-postgres` `healthy` olmalıdır. Veritabanı `127.0.0.1:5433` adresindedir.
+`docker compose ps` çıktısında `dosya-sistemi-postgres` `healthy` olmalıdır. Veritabanı `127.0.0.1:5434` adresindedir.
 
 **2. Ortam dosyası** (mevcut `.env` dosyasının üzerine yazmaz):
 
@@ -135,7 +135,7 @@ Değerler `backend/.env` dosyasındadır; bu dosya Git'e girmez. Şablon ve aç�
 |---|---|---|
 | `GEMINI_API_KEY` | Evet | Gemini API anahtarı |
 | `GEMINI_MODEL` | Evet | Transkripsiyon ve sınıflandırma modeli. Şablon değeri `gemini-3.5-flash-lite`; kodda varsayılan yoktur |
-| `DATABASE_URL` | Evet | PostgreSQL adresi (psycopg 3). Şablon değeri yerel Docker veritabanını gösterir (`127.0.0.1:5433`, `connect_timeout=10`) |
+| `DATABASE_URL` | Evet | PostgreSQL adresi (psycopg 3). Şablon değeri yerel Docker veritabanını gösterir (`127.0.0.1:5434`, `connect_timeout=10`) |
 | `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörü; `tur.traineddata` içermelidir. Tanımlı değilse yedek OCR atlanır |
 
 Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde `localhost` yerine `127.0.0.1` kullanın.

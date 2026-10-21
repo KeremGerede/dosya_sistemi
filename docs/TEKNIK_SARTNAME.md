@@ -23,7 +23,7 @@
 
 ## Ortak teknoloji ve yapılandırma
 
-Seçim gerekçeleri: D-005 (backend ve frontend), D-006 (PostgreSQL, senkron SQLAlchemy, psycopg 3), D-007 (Gemini), D-030 (Alembic), D-035 (yapılandırma), D-036 (geliştirme ortamı), D-037 (frontend), D-041 (bağlantı zaman aşımı). Bir özelliğe özgü teknoloji o özelliğin kaydındadır.
+Seçim gerekçeleri: D-005 (backend ve frontend), D-006 (PostgreSQL, senkron SQLAlchemy, psycopg 3), D-007 (Gemini), D-030 (Alembic), D-035 (yapılandırma), D-036 ve D-051 (geliştirme ortamı, host portu), D-037 (frontend), D-041 (bağlantı zaman aşımı). Bir özelliğe özgü teknoloji o özelliğin kaydındadır.
 
 | Katman | Teknoloji |
 |---|---|

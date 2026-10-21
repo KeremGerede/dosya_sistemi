@@ -11,7 +11,7 @@
 > - Bu dosya iş listesi, roadmap veya checkpoint günlüğü değildir (iş → `TODOS.md`).
 >
 > **Geçiş notu:** D-001–D-050 bu kurallardan önce "Karar + Gerekçe" biçiminde yazıldı; o zamanki kural, geçersizleşen kararın dosyadan çıkarılmasını ve değişen kararın yerinde yeniden yazılmasını istiyordu. Karar ve gerekçe metinleri değiştirilmedi; her kayda bir durum satırı eklendi:
-> - **Aktif:** kararın ana kuralları 2026-10-20'de koda karşı kontrol edildi; 50 kaydın hiçbiri için yerini başka bir kararın aldığına dair kanıt bulunmadı.
+> - **Aktif:** kararın ana kuralları 2026-10-20'de koda karşı kontrol edildi; 50 kaydın hiçbiri için yerini başka bir kararın aldığına dair kanıt bulunmadı. Sonra 2026-10-21'de D-036'nın yalnız host portu maddesinin yerini D-051 aldı; D-036 bu yüzden "Yerini aldı" durumundadır.
 > - **Git:** "giriş" kaydın `DECISIONS.md`'ye ilk girdiği commit'in, "son değişiklik" karar ve gerekçe metninin son değiştiği commit'in tarihidir. İkisi de kararın verildiği tarih değildir; eski kayıtlarda o tarih bilinmiyor. Eski kurala göre metin yerinde değiştiği için ayrıntılar Git geçmişindedir.
 > - **Referans:** F-xx ve "Ortak teknoloji" `docs/TEKNIK_SARTNAME.md` bölümleridir; INV-x `PROJECT_BRAIN.md` §10'daki değişmezlerdir; T-xx `TODOS.md` görevleridir.
 > - D-049 ve D-050'deki eski "Uygulandı" tarihleri F-06 ve F-04'ün durumuna taşındı.
@@ -144,7 +144,7 @@
 - **Gerekçe:** `.env.example` → `.env` akışıyla uyumlu en küçük çözüm. Değerler tek yerden, aynı yardımcıyla okunur. Eksik yapılandırma, sessizce yanlış bir bağlantıya veya modele düşmek yerine açık hatayla fark edilir. Her zorunlu değişken yalnızca onu kullanan modül yüklenirken istenir.
 
 ### D-036 — Geliştirme ortamı: PostgreSQL 18 Docker Compose'da, backend ve frontend yerelde
-- **Durum:** Aktif · **Git:** giriş 2026-09-15, son değişiklik 2026-09-16 · **Referans:** Ortak teknoloji; `README.md` "Kurulum"
+- **Durum:** Yerini aldı → D-051 (2026-10-21; yalnız host portu değişti, diğer maddeler D-051'de geçerli) · **Git:** giriş 2026-09-15, son değişiklik 2026-09-16 · **Referans:** Ortak teknoloji; `README.md` "Kurulum"
 - **Karar:**
   - Geliştirme ortamında PostgreSQL, repo kökündeki `docker-compose.yml` ile çalışır. Compose'da yalnızca `postgres` servisi vardır:
     - image `postgres:18`, container `dosya-sistemi-postgres`, veritabanı `dosya_sistemi`
@@ -163,6 +163,14 @@
   - Yalnızca bağlantı kurma süresini sınırlar; sorgu/statement zaman aşımı eklenmez.
   - Parametresi olmayan eski bir `.env`, psycopg'un varsayılan bekleme süresine döner; yerel `.env` şablonla uyumlu tutulur.
 - **Gerekçe:** PostgreSQL kapalıyken psycopg'un varsayılanıyla bağlantı denemesi yaklaşık 130 saniye sürüyor, bir backend thread'ini meşgul ediyor ve frontend'in 120 saniyelik zaman aşımından (D-039) uzun kalıyordu. 10 saniye, yerel ve kısa ağ gecikmelerine pay bırakırken hatayı hızlı ve genel `500` yanıtıyla sonuçlandırır. Değer yapılandırmada olduğu için kod değişmeden ayarlanabilir.
+
+### D-051 — Geliştirme PostgreSQL host portu: `127.0.0.1:5434`
+- **Durum:** Aktif · **Tarih:** 2026-10-21 · **Referans:** Ortak teknoloji; `README.md` "Kurulum"; D-036'nın yerini alır
+- **Karar:**
+  - Geliştirme PostgreSQL'inin host portu `127.0.0.1:5434`, container portu `5432`'dir. Port yalnızca localhost'a açıktır.
+  - `DATABASE_URL`: `postgresql+psycopg://postgres:postgres@127.0.0.1:5434/dosya_sistemi?connect_timeout=10` (bağlantı zaman aşımı: D-041).
+  - D-036'nın diğer maddeleri değişmeden geçerlidir: Compose'da yalnız `postgres` servisi (`postgres:18`, container `dosya-sistemi-postgres`, veritabanı `dosya_sistemi`), `dosya_sistemi_pgdata` volume'unun `/var/lib/postgresql` yoluna bağlanması, `localhost` yerine `127.0.0.1`, yalnız yerel geliştirme için `postgres` / `postgres`, backend ve frontend yerelde ve containerize edilmeden.
+- **Gerekçe:** Aynı makinede `stok` projesinin PostgreSQL container'ı `127.0.0.1:5433`'ü kullanıyor. İki proje aynı host portunu isteyince `dosya_sistemi` container'ı başlayamıyor ve backend, `DATABASE_URL` ile diğer projenin sunucusuna bağlanma riski taşıyordu. Ayrı host portu iki projenin aynı anda çalışmasına izin verir; volume ve veri değişmez.
 
 ## LLM
 
