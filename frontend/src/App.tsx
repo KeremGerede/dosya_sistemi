@@ -282,10 +282,10 @@ function formatDate(value: string): string {
   })
 }
 
-// Dosya türü rozeti; ikon kütüphanesi yerine küçük satır içi SVG.
+// Dosya türü rozeti; ikon kütüphanesi yerine küçük satır içi SVG. Tür sınıfı yalnız görünüm içindir (ör. PDF kırmızı).
 function FileTypeIcon({ fileType }: { fileType: string }) {
   return (
-    <span className="file-icon" aria-hidden="true">
+    <span className={`file-icon file-${fileType}`} aria-hidden="true">
       <svg viewBox="0 0 16 20" width="14" height="18" focusable="false">
         <path d="M2 1h7l5 5v13H2z" fill="none" stroke="currentColor" strokeWidth="1.4" />
         <path d="M9 1v5h5" fill="none" stroke="currentColor" strokeWidth="1.4" />

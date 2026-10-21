@@ -400,12 +400,15 @@ button.secondary.approve:hover:not(:disabled) {
 }
 
 button.secondary.revise {
+  background-color: var(--warn-bg);
   border-color: var(--warn-border);
   color: var(--warn-text);
+  font-weight: 600;
 }
 
 button.secondary.revise:hover:not(:disabled) {
   background-color: var(--warn-bg);
+  filter: brightness(0.95);
 }
 
 .validation-note {
@@ -643,7 +646,7 @@ button.secondary.revise:hover:not(:disabled) {
 }
 
 .col-institution {
-  color: var(--text-muted);
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
@@ -771,6 +774,20 @@ tr.open .chevron {
   gap: 0.3rem;
 }
 
+/* PDF rozeti diğer türlerden ayrışır: kırmızı ikon ve yazı; Kayıtlar'daki indirme düğmesi de kırmızı zeminli */
+.file-icon.file-pdf {
+  color: var(--err-text);
+}
+
+.download:has(.file-pdf) {
+  border-color: var(--err-border);
+  background-color: var(--err-bg);
+}
+
+.download:has(.file-pdf):hover {
+  border-color: var(--err-text);
+}
+
 /* Genişleyen detay satırı */
 
 .detail-row > td {
@@ -835,6 +852,12 @@ tr.open .chevron {
   text-transform: none;
 }
 
+/* "AI Özeti" başlığı: .record-detail h3'ten sonra gelir; diğer bölüm başlıklarından koyu ve kalın */
+.result-summary h3 {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .routing-evidence-note {
   margin: 0.1rem 0 0;
   color: var(--text-subtle);
@@ -846,12 +869,12 @@ tr.open .chevron {
   margin-top: 0.75rem;
 }
 
-/* İfade başlığı supports'tan çevrilir (D-052); bölüm başlığından küçük ve soluk */
+/* İfade başlığı supports'tan çevrilir (D-052); ifadenin ne için okunacağını söyler, bu yüzden koyu ve belirgin */
 .evidence-label {
   margin: 0;
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 /* İfade birebir gösterilir: kesme veya satır sınırı yok, uzun ifade sarılır */
@@ -859,7 +882,7 @@ tr.open .chevron {
   margin: 0.25rem 0 0;
   padding: 0.1rem 0 0.1rem 0.75rem;
   border-left: 3px solid var(--border-strong);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
