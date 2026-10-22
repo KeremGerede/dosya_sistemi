@@ -9,14 +9,14 @@ Yaşayan backlog: aktif işler, araştırmalar, bakım, aday workstream'ler, kap
 
 ## Now
 
-- **T-15** · Açık · Kayıtlar'dan kontrollü ve kalıcı belge silme (yol haritası 1). Sıradaki aktif iş; PLAN bekliyor, BUILD onayı yok. Kalıcı kayıt silme bugün INV-5 (D-019, D-046) ile yasak ve `PROJECT_BRAIN.md` §12'de kapsam dışıdır; PLAN yeni bir karar kaydı gerektirir.
+- **T-15** · Devam ediyor · Kayıtlar'dan kontrollü ve kalıcı belge silme (yol haritası 1; D-054, ADR-001, F-10). Branch `feature/records-permanent-delete`. S1 (karar ve dokümantasyon), S2 (backend endpoint'i ve testleri), S3 (gerçek PostgreSQL ve dosya sistemi kontrolü) ve S4 (Kayıtlar arayüzü ve sahte API'li tarayıcı kontrolü) yapıldı; sonraki dilimler (kullanıcının gerçek ortam testi, kapanış) her biri ayrı onay bekler.
 
 ## Next
 
 Kullanıcının 2026-10-22'de onayladığı sıra: T-15 → T-16 → T-17 → T-18 → T-01. Her madde başlamadan önce kendi PLAN onayını alır; hiçbiri için BUILD onayı yoktur.
 
 - **T-16** · Açık · Kayıtlar'da gelişmiş arama (yol haritası 2). T-06'nın hacim sorusuyla birlikte değerlendirilir; sunucu tarafı arama ve filtre bugün kapsam dışıdır (D-048, `PROJECT_BRAIN.md` §12).
-- **T-17** · Açık · AWS staging / canlı demo (yol haritası 3). Ön koşul kararları T-12'dedir (`CURRENT_STATE.md` → "Dağıtıma hazır değil").
+- **T-17** · Açık · AWS staging / canlı demo (yol haritası 3). Ön koşul kararları T-12'dedir (`CURRENT_STATE.md` → "Dağıtıma hazır değil"). **Zorunlu ön koşul (D-054):** dış erişim açılmadan önce kalıcı silme endpoint'i (`DELETE /api/documents/{document_id}`) sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır; arayüz onayı, CORS ve yerel adres bunun yerine geçmez.
 - **T-18** · Açık · OCR ve dashboard iyileştirmelerinin değerlendirilmesi (yol haritası 4). T-11 bu değerlendirmenin adaylarındandır.
 
 ## Validate / Research
@@ -43,7 +43,7 @@ Doğrulanmamış adaylardır; onaylı iş değildir. Uzun vadeli ürün genişle
 - **T-09** · Aday · Structured Operational Extraction: araştırma sonucuna bağlı aday; onaylanmış sıradaki feature değildir. Araştırma gerçek değer göstermeden alan şeması oluşturulmaz.
 - **T-10** · Aday · Gerçek kullanım verisiyle kurum açıklamalarının iyileştirilmesi.
 - **T-11** · Aday · Otomatik döndürme / orientation.
-- **T-12** · Aday · Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication.
+- **T-12** · Aday · Deployment / production kararları: containerize etme, reverse proxy ve gövde boyutu sınırı, CORS (D-038), authentication; kalıcı silme endpoint'inin sunucu tarafında korunması veya kapatılması (D-054, T-17 için zorunlu).
 
 ## Kapanan
 
@@ -56,3 +56,4 @@ Kayıt: görev ID'si, kapanış tarihi, kanıt (commit veya doğrulama sonucu). 
 Bir görev sırasında fark edilen, o görevin kapsamı dışındaki bulgular. Bulgu onaylı iş değildir; ele alınacaksa göreve dönüştürülür. Kayıt: tarih, bulgu, fark edildiği görev.
 
 - 2026-10-22 · Kayıtlar detayında metin çıkarımı başarısız (yetersiz metin) kaydın başarısızlık nedeni gösterilmiyor; yalnız çıkarılan metin görünüyor. Fark edildiği görev: F-09 arayüz düzeltmeleri.
+- 2026-10-22 · Beklenmeyen hatada (ör. kalıcı silmede dosya kilitliyken) sunucunun uvicorn traceback'i storage yolunu (`<document_id>.<uzantı>` dahil) sunucu loguna yazıyor; yanıta girmiyor, belge adı ve metni yok. Bütün endpoint'lerin beklenmeyen hata davranışıdır; D-054 ve F-10 metni buna göre yazıldı, genel log düzenlemesi yapılmadı. Fark edildiği görev: T-15 S3.

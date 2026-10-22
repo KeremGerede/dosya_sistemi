@@ -128,6 +128,18 @@ export function retryConflict(record: { status: string; retryable: boolean }): R
   return record.retryable ? 'busy' : 'not_allowed'
 }
 
+// Kalıcı silme yanıtı (D-054). 204 ve 404 aynı sonuçtur: kayıt artık yok (404'te kaydı başka bir istek ya da zaman
+// aşımına uğramış önceki deneme silmiş olabilir). 409'da kayıt korunur. Diğer yanıtlarda (500, ağ hatası, zaman aşımı)
+// sonuç bilinmez: başarı varsayılmaz, kaydın gerçek durumu detay endpoint'inden okunur.
+export type DeleteOutcome = 'deleted' | 'busy' | 'unknown'
+
+export function deleteOutcome(status: number | null): DeleteOutcome {
+  if (status === 204 || status === 404) {
+    return 'deleted'
+  }
+  return status === 409 ? 'busy' : 'unknown'
+}
+
 export type RecordDisplayState = 'classified' | 'needs_review' | 'validated' | 'failed'
 
 // Durum filtresindeki sıra da budur.
@@ -186,6 +198,22 @@ export function filterOptions(values: { id: string | null; name: string | null }
       (a, b) =>
         Number(a.value === UNDETERMINED) - Number(b.value === UNDETERMINED) || a.label.localeCompare(b.label, 'tr'),
     )
+}
+
+// Silinen kayıt bir tür ya da kurumun son kaydıysa o seçenek listeden kalkar (D-054). Seçili kalan değer artık hiçbir
+// seçenekle eşleşmez: liste boş görünürken açılır menü "tümü" gösterirdi. Bu yüzden yalnız o filtre "tümü" sayılır.
+export function keepAvailableFilters(
+  filters: RecordFilters,
+  typeOptions: FilterOption[],
+  institutionOptions: FilterOption[],
+): RecordFilters {
+  const available = (value: string, options: FilterOption[]) =>
+    value === '' || options.some((option) => option.value === value) ? value : ''
+  return {
+    ...filters,
+    documentType: available(filters.documentType, typeOptions),
+    institution: available(filters.institution, institutionOptions),
+  }
 }
 
 // Tüm yüklü kayıtlardan sayılır; needs_review kayıtlar da sınıflandırılmış olduğu için "Sınıflandırıldı" sayılmaz.

@@ -5,6 +5,7 @@
 - V1.4 iki adımlı akış (D-045, D-046): POST /prepare (kabul → storage → metin çıkarımı → prepared kaydı),
   POST /{id}/classify (kayıttaki metinle Gemini) ve DELETE /{id}/prepared (hazırlanmış kaydı ve dosyasını siler).
 - POST /{id}/retry-classification: sınıflandırması başarısız olan kaydı aynı metinle yeniden sınıflandırır (D-053).
+- DELETE /{id}: kalıcı kaydı ve orijinal dosyasını kalıcı olarak siler (D-054); prepared kayda dokunmaz.
 - PUT /{id}/validation: kullanıcı onayı (D-049); AI sonucu ve status değişmez, Gemini çağrılmaz.
 - Salt okunur kayıt endpoint'leri (D-043).
 
@@ -52,7 +53,8 @@ SOURCE_FILE_MISSING_MESSAGE = "Belgenin orijinal dosyasına ulaşılamadı; belg
 VALIDATION_NOT_ALLOWED_MESSAGE = "Yalnız sınıflandırılmış belgeler onaylanabilir."
 RETRY_NOT_ALLOWED_MESSAGE = "Bu belge yeniden sınıflandırılamaz; gerekirse belgeyi yeniden yükleyin."
 DOCUMENT_BUSY_MESSAGE = "Belge şu anda işleniyor; lütfen biraz sonra tekrar deneyin."
-LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"  # PostgreSQL lock_not_available: FOR UPDATE NOWAIT çakışması (D-053)
+PREPARED_NOT_DELETABLE_MESSAGE = "Henüz sınıflandırılmamış belge kalıcı olarak silinmez; listeden kaldırın."
+LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"  # PostgreSQL lock_not_available: FOR UPDATE NOWAIT çakışması (D-053, D-054)
 
 PREPARED_STATUS = "prepared"  # metni çıkarılmış, henüz sınıflandırılmamış belge (D-046)
 PREPARED_TTL = timedelta(hours=24)  # sahipsiz prepared kayıtlar bundan eskiyse sonraki prepare'de temizlenir (D-046)
@@ -125,7 +127,7 @@ def _delete_expired_prepared(db: Session) -> None:
         removed = 0
         for document in expired:
             try:
-                _discard_prepared(document, db)
+                _delete_with_file(document, db)
                 removed += 1
             except OSError as exc:
                 logger.warning("Süresi dolmuş hazırlanmış belge %s silinemedi (%s); sonraki temizlikte denenecek.", document.id, type(exc).__name__)
@@ -342,7 +344,7 @@ def retry_classification(document_id: uuid.UUID, db: Annotated[Session, Depends(
     olursa hiçbir alan yazılmaz (rollback): kayıt önceki failed hâliyle kalır. Kayıt hiçbir zaman prepared'a
     çekilmez; prepared TTL temizliği kalıcı kayda dokunmamalıdır (INV-5).
     """
-    document = _lock_for_retry(document_id, db)
+    document = _lock_document(document_id, db)
     try:
         if not _is_classification_retryable(document):
             processed = document.status in VALIDATABLE_STATUSES
@@ -371,8 +373,9 @@ def retry_classification(document_id: uuid.UUID, db: Annotated[Session, Depends(
     return _respond(body, failure)
 
 
-def _lock_for_retry(document_id: uuid.UUID, db: Session) -> Document:
-    """Kaydı satır kilidiyle okur (D-053). Kilit çakışması 409'a çevrilir; diğer veritabanı hataları 500 kalır.
+def _lock_document(document_id: uuid.UUID, db: Session) -> Document:
+    """Kaydı satır kilidiyle okur; tekrar deneme (D-053) ve kalıcı silme (D-054) aynı kilidi kullanır, biri sürerken
+    diğeri beklemeden reddedilir. Kilit çakışması 409'a çevrilir; diğer veritabanı hataları 500 kalır.
 
     NOWAIT yalnız PostgreSQL'de çalışır; SQLite FOR UPDATE'i yok sayar (otomatik testler kilidi sınayamaz).
     """
@@ -381,7 +384,7 @@ def _lock_for_retry(document_id: uuid.UUID, db: Session) -> Document:
     except OperationalError as exc:
         db.rollback()
         if getattr(exc.orig, "sqlstate", None) == LOCK_NOT_AVAILABLE_SQLSTATE:
-            logger.info("Belge %s başka bir istekte işleniyor; tekrar deneme reddedildi.", document_id)
+            logger.info("Belge %s başka bir istekte işleniyor; istek reddedildi.", document_id)
             raise HTTPException(status_code=409, detail=DOCUMENT_BUSY_MESSAGE) from None
         raise
     if document is None:
@@ -419,7 +422,7 @@ def discard_prepared_document(document_id: uuid.UUID, db: Annotated[Session, Dep
     if document.status != PREPARED_STATUS:
         raise HTTPException(status_code=409, detail=ALREADY_PROCESSED_MESSAGE)
     try:
-        _discard_prepared(document, db)
+        _delete_with_file(document, db)
         db.commit()
     except Exception as exc:
         # Kayıt prepared kalır: Kaldır tekrar denenebilir, yedek temizlik de bulur.
@@ -429,11 +432,46 @@ def discard_prepared_document(document_id: uuid.UUID, db: Annotated[Session, Dep
     logger.info("Hazırlanmış belge %s kaldırıldı.", document_id)
 
 
-def _discard_prepared(document: Document, db: Session) -> None:
-    """Önce storage dosyası, sonra kayıt silinir; commit çağırana aittir.
+@router.delete(
+    "/{document_id}",
+    status_code=204,
+    responses={
+        404: {"description": DOCUMENT_NOT_FOUND_MESSAGE},
+        409: {
+            "description": f"{DOCUMENT_BUSY_MESSAGE} / {PREPARED_NOT_DELETABLE_MESSAGE} Kayda ve dosyaya dokunulmaz."
+        },
+    },
+    summary="Kalıcı kaydı ve orijinal dosyasını kalıcı olarak siler",
+)
+def delete_document(document_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]) -> None:
+    """Kayıtlar'dan kalıcı silme (D-054): kayıt (AI sonucu ve onay dahil) ve orijinal dosya geri alınamaz şekilde silinir.
 
-    Sıra bilinçlidir: işlem yarıda kalırsa geride kaydı olan bir artık kalır ve yedek temizlik onu bulur.
-    Dosya zaten yoksa ya da yol storage dışına çıkıyorsa yalnızca kayıt silinir.
+    Satır tekrar denemeyle aynı kilitle alınır. Dosya silme ile commit atomik değildir: dosya silinemezse kayıt ve
+    dosya yerinde kalır; dosya silindikten sonra commit başarısız olursa kayıt dosyasız kalır ve aynı istek
+    tekrarlanınca silme tamamlanır. Endpoint'te yetki yoktur (D-025); dış erişimden önce korunmalıdır (T-17).
+    """
+    document = _lock_document(document_id, db)
+    try:
+        if document.status == PREPARED_STATUS:
+            raise HTTPException(status_code=409, detail=PREPARED_NOT_DELETABLE_MESSAGE)
+        _delete_with_file(document, db)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        logger.error("Belge %s kalıcı olarak silinemedi (%s); işlem geri alınıyor.", document_id, type(exc).__name__)
+        db.rollback()
+        raise
+    logger.info("Belge %s kalıcı olarak silindi.", document_id)
+
+
+def _delete_with_file(document: Document, db: Session) -> None:
+    """Önce storage dosyası, sonra kayıt silinir; commit çağırana aittir (D-046, D-054).
+
+    Sıra bilinçlidir: işlem yarıda kalırsa geride kaydı olan ve tekrar silinebilen bir artık kalır; ters sırada
+    kaydı olmayan ve hiçbir yüzeyin göremediği bir dosya kalabilirdi. Dosya zaten yoksa ya da yol storage dışına
+    çıkıyorsa yalnızca kayıt silinir.
     """
     path = _stored_file_path(document)
     if path is not None:

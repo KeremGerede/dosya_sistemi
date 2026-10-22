@@ -21,6 +21,7 @@
 | F-07 | Kayıtlar | Uygulandı | D-043, D-048 |
 | F-08 | API ve hata sözleşmesi | Uygulandı | D-019, D-032, D-034 |
 | F-09 | Başarısız sınıflandırmayı tekrar deneme | Uygulandı (2026-10-22) | D-053 |
+| F-10 | Kalıcı belge silme | Uygulandı (2026-10-22; kullanıcı testi T-15'te) | D-054 |
 
 ## Ortak teknoloji ve yapılandırma
 
@@ -344,7 +345,7 @@ Endpoint sözleşmesi F-08'dedir (`PUT /api/documents/{document_id}/validation`,
 **Davranış**
 
 - Liste kalıcı kayıtları en yeni önce gösterir; `prepared` kayıtlar listede yoktur. Satırda dosya adı, effective belge türü ve hedef kurum (F-06), durum, tarih ve indirme bağlantısı bulunur.
-- Detayda özet, effective tür ve kurum (onaylanan değer AI önerisinden farklıysa AI önerisi ikincil satırda), gönderen, inceleme nedeni, onay kontrolleri (F-06), belgedeki ilgili ifade (F-04) ve çıkarılan metin bulunur.
+- Detayda özet, effective tür ve kurum (onaylanan değer AI önerisinden farklıysa AI önerisi ikincil satırda), gönderen, inceleme nedeni, onay kontrolleri (F-06), belgedeki ilgili ifade (F-04) ve çıkarılan metin bulunur. Kalıcı silme detaydan yapılır (F-10).
 - Arama ve filtre yalnız istemci tarafındadır ve `GET /api/documents` yanıtı üzerinde çalışır. Arama dosya adındadır; büyük/küçük harf ve Türkçe karakter farkını gözetmez, bulanık değildir. Belge türü, hedef kurum ve durum filtreleri birlikte uygulanır: tür ve kurum effective değerle, durum gösterim durumuyla (Sınıflandırıldı / İnceleme gerekli / Onaylandı / Başarısız) filtrelenir. Türü ya da kurumu olmayan kayıtlar "Belirlenemedi" seçeneğindedir.
 - Üç özet sayısı tüm yüklü kayıtlardan hesaplanır ve filtreden etkilenmez: Toplam Kayıt, İnceleme Gereken (onaylanmamış `needs_review`), Başarısız.
 - Endpoint'ler F-08'dedir (liste, detay, indirme); ayrıntılı kurallar D-043 ve D-048'dedir.
@@ -360,7 +361,7 @@ Endpoint sözleşmesi F-08'dedir (`PUT /api/documents/{document_id}/validation`,
 
 - **Kayıtlar (D-048):** Liste sayfalamasız tek istekte gelir; arama ve filtre istemci tarafındadır. Kayıt sayısı çok artarsa sunucu tarafı sayfalama/filtre ayrı karar gerektirir.
 
-**Referanslar:** D-043, D-048, D-049 · Kod: `api/documents.py` (`list_documents`, `get_document`, `download_document`), `frontend/src/records.ts` (`filterRecords`, `filterOptions`, `countRecords`), `frontend/src/App.tsx` · Görev: T-06
+**Referanslar:** D-043, D-048, D-049, D-054 · Kod: `api/documents.py` (`list_documents`, `get_document`, `download_document`), `frontend/src/records.ts` (`filterRecords`, `filterOptions`, `countRecords`), `frontend/src/App.tsx` · Görev: T-06
 
 ## F-08 — API ve hata sözleşmesi
 
@@ -380,6 +381,7 @@ V1.4 iki adımlı akış (D-045, D-046):
 | **`POST /api/documents/{document_id}/classify`** | Kayıttaki metinle sınıflandırır. `200` (`classified` / `needs_review`) · `502` (`failed`) · `404` (kayıt yok) · `409` (kayıt `prepared` değil ya da orijinal dosya storage'da yok; Gemini çağrılmaz, kayıt değişmez) · `500` (kayıt `prepared` kalır) |
 | **`DELETE /api/documents/{document_id}/prepared`** | Yalnızca `prepared` kaydı ve dosyasını siler. `204` · `404` · `409` (kalıcı kayıt; dokunulmaz) · `500` (kayıt `prepared` kalır) |
 | **`POST /api/documents/{document_id}/retry-classification`** | Sınıflandırması başarısız kaydı kayıttaki metinle yeniden sınıflandırır (F-09, D-053). `200` (`classified` / `needs_review`) · `502` (yine başarısız; kayıt değişmez) · `404` · `409` (başka istek işliyor, kayıt uygun değil ya da orijinal dosya yok; Gemini çağrılmaz, kayıt değişmez) · `500` (kayıt değişmez) |
+| **`DELETE /api/documents/{document_id}`** | Kalıcı kaydı ve orijinal dosyasını siler (F-10, D-054). `204` · `404` · `409` (kayıt `prepared` ya da başka bir istek kaydı işliyor; hiçbir şeye dokunulmaz) · `422` (geçersiz ID) · `500` (dosya silinemedi: kayıt ve dosya yerinde; ya da commit başarısız: kayıt kalır, dosya silinmiş olabilir, aynı istek tekrarlanınca tamamlanır). Yetki yoktur; dış erişimden önce sunucu tarafında korunmalıdır (T-17) |
 
 Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
 
@@ -480,10 +482,10 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 **Sınırlar**
 
-- Authentication ve yetkilendirme yoktur (D-025). CORS middleware yoktur; geliştirmede Vite proxy kullanılır (D-038). Dağıtım kararları T-12'dedir.
+- Authentication ve yetkilendirme yoktur (D-025): API'ye erişebilen herkes, kalıcı silme dahil her endpoint'i çağırabilir. CORS middleware yoktur; geliştirmede Vite proxy kullanılır (D-038). CORS'un olmaması ve yerel adreste dinleme yetkilendirme değildir. Dağıtım kararları T-12'dedir; dış erişimden önce silme endpoint'i sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır (D-054, T-17).
 - Endpoint'lerde arama, filtre ve sayfalama yoktur (D-043, D-048).
 
-**Referanslar:** D-019, D-032, D-034, D-043, D-046, D-049, D-050, D-053 · Kod: `api/documents.py`, `api/catalogs.py`, `main.py`, `schemas/classification.py`, `database.py` · Görev: T-05, T-12
+**Referanslar:** D-019, D-032, D-034, D-043, D-046, D-049, D-050, D-053, D-054 · Kod: `api/documents.py`, `api/catalogs.py`, `main.py`, `schemas/classification.py`, `database.py` · Görev: T-05, T-12, T-17
 
 ## F-09 — Başarısız sınıflandırmayı tekrar deneme
 
@@ -517,4 +519,49 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Migration öncesi failed kayıtlar (`ocr_fallback` NULL) tekrar denenemez; backfill yoktur. Otomatik veya zamanlanmış tekrar deneme yoktur.
 - Arayüz davranışı (düğmenin görünmesi, kilitlenmesi, mesajlar) için bileşen testi yoktur; gerçek tarayıcıda elle doğrulanır.
 
-**Referanslar:** D-053, D-004, D-034, D-045, D-046, D-047 · Kod: `api/documents.py` (`retry_classification`, `_lock_for_retry`, `_is_classification_retryable`, `_extract_into`), `models/document.py` (`ocr_fallback`), `alembic/versions/261a2937eb7c_add_ocr_fallback.py`, `frontend/src/App.tsx` (`retryClassification`, `retryItem`, `retryFromRecords`), `frontend/src/records.ts` (`retryConflict`)
+**Referanslar:** D-053, D-004, D-034, D-045, D-046, D-047 · Kod: `api/documents.py` (`retry_classification`, `_lock_document`, `_is_classification_retryable`, `_extract_into`), `models/document.py` (`ocr_fallback`), `alembic/versions/261a2937eb7c_add_ocr_fallback.py`, `frontend/src/App.tsx` (`retryClassification`, `retryItem`, `retryFromRecords`), `frontend/src/records.ts` (`retryConflict`)
+
+## F-10 — Kalıcı belge silme
+
+**Durum:** Uygulandı (2026-10-22); kullanıcının gerçek ortam testi T-15'te bekliyor
+
+**Amaç:** Yanlış, test ya da demo amacıyla yüklenmiş kalıcı kaydın Kayıtlar'dan, açık kullanıcı onayıyla, orijinal dosyasıyla birlikte geri alınamaz şekilde silinebilmesi.
+
+**Davranış**
+
+- Silinebilen kayıtlar: `classified`, `needs_review`, `failed` ve kullanıcı onaylı kayıtlar. `prepared` kayıt bu yolla silinmez (`409`); Kaldır ve 24 saatlik temizlik F-05'teki gibidir.
+- `DELETE /api/documents/{document_id}` kaydı satır kilidiyle (`FOR UPDATE NOWAIT`, F-09 ile aynı kilit) okur. Önce orijinal dosyayı, sonra kaydı siler ve commit eder; başarıda `204` döner. Hata kodları F-08'dedir.
+- Kayıtla birlikte AI sonucu, onay alanları, evidence ve çıkarılan metin silinir. Soft delete, arşiv, çöp kutusu ve geri alma yoktur. Uygulama logu yalnız belge ID'sini içerir; dosya adı, belge metni ve storage yolu loglanmaz. Beklenmeyen bir hatada sunucunun traceback'i storage yolunu içerebilir; bu yalnız sunucu logundadır, yanıta girmez.
+- **Dosya silme ile veritabanı commit'i atomik değildir.** Dosya silinemezse kayıt ve dosya yerinde kalır (`500`). Dosya silindikten sonra commit başarısız olursa ya da süreç kesilirse kayıt kalır, dosya kalmaz; indirme `404`, tekrar deneme `409` döner ve aynı silme isteği tekrarlanınca silme tamamlanır.
+- Arayüz (Kayıtlar detayı):
+  - "Belgeyi Sil" ilk tıklamada istek göndermez. Detay içinde "Bu belgeyi silmek istediğinizden emin misiniz?" sorusu, dosya adı, "Bu işlem belge kaydını, sınıflandırma ve onay bilgilerini ve orijinal dosyayı kalıcı olarak silecektir. İşlem geri alınamaz." uyarısı ve "Vazgeç" / "Evet, Kalıcı Olarak Sil" seçenekleri görünür. Modal yoktur. "Vazgeç" hiçbir şeyi değiştirmez.
+  - İstek sürerken "Vazgeç", "Evet, Kalıcı Olarak Sil" ve aynı kaydın onay/düzeltme düğmeleri kilitlidir. Silme istek çalıştırıcısından geçer (D-045): analiz listesinde istek sürerken "Belgeyi Sil" kilitlidir; silme sürerken analiz ve tekrar deneme beklenir.
+  - `204` veya `404` sonrası kayıt listeden çıkar, detay kapanır, "kalıcı olarak silindi" bilgisi gösterilir, sayılar ve filtre seçenekleri güncellenir; seçeneği kalmayan tür/kurum filtresi "tümü" sayılır. Aynı belge analiz listesindeyse oradan da çıkar.
+  - `409`'da "başka bir işlemde" mesajı gösterilir, kayıt listede kalır. `500`, ağ hatası ve zaman aşımında başarı varsayılmaz: kaydın durumu detay endpoint'inden okunur. Kayıt yoksa (`404`) silinmiş sayılır; varsa "kayıt yerinde duruyor", okunamazsa "sonuç doğrulanamadı, kayıtları yenileyin" mesajı gösterilir. Hata sonrası onay alanı kapanır; tekrar silme yeniden onay ister.
+
+**Kabul ölçütleri**
+
+Arayüz davranışı için bileşen testi yoktur; tarayıcıda sahte API'yle ve kullanıcının gerçek ortam testinde doğrulanır.
+
+- Dört kalıcı durumda (onaylı dahil) kayıt ve dosya silinir, başka kayıt etkilenmez; sonrasında liste, detay, indirme, tekrar deneme ve ikinci silme kaydı bulamaz (`404`). Uygulama logu yalnız belge ID'sini taşır; dosya adı, belge metni ve storage yolu loglanmaz — `api::test_delete_permanent_document_removes_record_and_file`.
+- `prepared` kayıt `409` alır, kayıt ve dosya değişmez; Kaldır çalışmaya devam eder — `api::test_delete_rejects_prepared_document_and_discard_still_works`.
+- Bilinmeyen kayıt `404`, geçersiz ID `422` alır — `api::test_delete_unknown_or_invalid_document`.
+- Dosyası olmayan kayıt silinir — `api::test_delete_works_when_storage_file_is_already_missing`.
+- Dosya silinemezse `500`; kayıt ve dosya yerinde kalır, tekrar silme tamamlanır — `api::test_delete_file_error_keeps_record_and_file`.
+- Commit hatasında `500` ve rollback; kayıt kalır, dosya silinmiş olur, tekrar silme tamamlanır — `api::test_delete_commit_failure_keeps_record_and_repeated_delete_completes`.
+- Storage klasörü dışına çıkan bir yol silinmez — `api::test_delete_never_deletes_files_outside_storage`.
+- Kilit çakışması (`55P03`) `409`, diğer veritabanı hataları `500`; ikisinde de hiçbir şey değişmez — `api::test_delete_lock_conflict_returns_409_and_keeps_record_and_file`, `api::test_delete_other_database_error_is_500_and_keeps_record_and_file` (SQLite'ta simülasyon).
+- Arayüzde yanıt yorumu: `204`/`404` silindi, `409` meşgul, diğerlerinde durum ayrıca okunur — `records:` "204 ve 404 silinmiş sayılır: kayıt artık yok", "409 meşguldür; kayıt korunur", "500, ağ hatası ve zaman aşımında başarı varsayılmaz; durum ayrıca okunur". Silme sonrası seçeneği kalmayan filtre "tümü" sayılır — `records:` "seçeneği kalmayan tür ve kurum filtresi sıfırlanır, diğerleri korunur".
+- Gerçek PostgreSQL ve dosya sisteminde (2026-10-22, geçici DB ve geçici storage; 24/24 kontrol): tekrar deneme kilidi tutarken silme beklemeden `409` alır, kayıt değişmez ve Gemini tek kez çağrılır; silme sürerken tekrar deneme ve ikinci silme beklemeden `409` alır; Windows'ta açık dosya `500` verir ve kayıt ile dosya korunur; dosya silindikten sonra bağlantı kesilirse kayıt kalır ve tekrar silme tamamlanır; silme sonrası satır ve dosya kalmaz; açık transaction ve bekleyen kilit kalmaz (`CURRENT_STATE.md` → "Son gerçek ortam doğrulamaları").
+- Tarayıcıda (2026-10-22, sahte API, masaüstü ve 375px): ilk tıklamada ve "Vazgeç"te DELETE isteği gitmez; onayla tek istek gider; istek ve analiz sürerken düğmeler kilitli; `204`, `409`, `500` (kayıt duruyor) ve `500` (kayıt silinmiş, uzlaştırmayla) doğru gösterilir; başarıda liste, sayaçlar, filtreler, detay ve analiz listesi güncel; onay, düzeltme ve tekrar deneme çalışmaya devam eder. Kullanıcının gerçek ortam testi bekliyor.
+
+**Sınırlar**
+
+- **Yetki yok (D-025):** API'ye erişebilen herkes her kalıcı kaydı silebilir. Arayüzdeki onay adımı, sunucunun yerel adreste dinlemesi ve CORS middleware'inin olmaması yetkilendirme değildir. Dış erişimden (T-17 veya başka bir yol) önce endpoint sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır.
+- Dosya silme ve commit atomik değildir (yukarıdaki "dosyasız kayıt" ara durumu).
+- Onay endpoint'i kilit kullanmaz: onay ile silme aynı anda gelirse onay hata (`500`) alabilir; gerçek PostgreSQL'de onay silmenin commit'ini bekler, sonra `500` alır. Bu, yalnız onay–silme çakışması için kabul edilen yerel MVP sınırıdır; diğer çakışmalar kendi kurallarıyla korunur (tekrar deneme: satır kilidi; `prepared` işlemleri: durum kontrolü).
+- İndirme kilit kullanmaz: indirme sürerken işletim sistemi açık dosyanın silinmesine izin vermezse (ör. Windows) silme `500` alır ve kayıt korunur.
+- Satır kilidi yalnız PostgreSQL'de çalışır; otomatik testler SQLite kullandığı için kilit çakışması simüle edilir.
+- Alınmış veritabanı ve storage yedekleri silinmez. Modül resmî saklama sistemi sayılmaz; gerçek kurum verisinde kullanılmadan önce saklama, silme ve yedek politikaları ayrıca doğrulanmalıdır. İlk kullanım yerel geliştirme ve sentetik/demo belgelerle sınırlıdır.
+
+**Referanslar:** D-054, ADR-001, D-019, D-025, D-046, D-049, D-053 · Kod: `api/documents.py` (`delete_document`, `_lock_document`, `_delete_with_file`), `frontend/src/App.tsx` (`deleteDocument`, `deleteFromRecords`, `RecordDeleteControls`), `frontend/src/records.ts` (`deleteOutcome`, `keepAvailableFilters`) · Görev: T-15, T-17

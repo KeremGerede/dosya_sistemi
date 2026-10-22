@@ -14,7 +14,7 @@ Bu dosya yalnız projeye özel yönlendirme ve kuralları içerir. Çalışma ku
 | Amaç, kullanıcılar, ürün sınırı, temel akış, mimari, kataloglar, veri modeli, ilkeler, kritik değişmezler (INV-x), kapsam ve kapsam dışı | `PROJECT_BRAIN.md` §1, §2, §4, §6, §8, §10–§13 |
 | Özellik davranışı, kabul ölçütleri ve sınırları (F-xx); ortak teknoloji ve yapılandırma; LLM ve OCR sözleşmesi; API ve hata kodları | `docs/TEKNIK_SARTNAME.md` |
 | Kurulum, komutlar, ortam değişkenleri, API özeti | `README.md` |
-| Önemli kararların gerekçesi ve alternatifleri | `docs/ADR/` (henüz ADR yok) |
+| Önemli kararların gerekçesi ve alternatifleri | `docs/ADR/` (dizin: `docs/ADR/README.md`) |
 | Geçmiş: checkpoint'ler, doğrulama günlükleri, eski baseline'lar | Git geçmişi |
 
 Okuma sırası:
@@ -32,7 +32,7 @@ Kritik değişmezlerin tam metni `PROJECT_BRAIN.md` §10 → "Kritik değişmezl
 - **INV-2** Kapalı katalog; belirsizlikte zorla atama yok, belge `needs_review` olur.
 - **INV-3** Kullanıcı onayı AI sonucunu değiştirmez; onay `validated_*` alanlarındadır.
 - **INV-4** "Belgedeki ilgili ifade" yalnız kaynakta birebir doğrulanmış alıntıdır.
-- **INV-5** Kalıcı kayıtlar silinmez; yalnız `prepared` kayıt silinir.
+- **INV-5** Kalıcı kayıtlar yalnız kalıcı silme endpoint'iyle, kayıt ve dosyasıyla birlikte silinir (D-054); başka hiçbir yol kalıcı kaydı silmez. Endpoint'te yetki yoktur: dış erişimden önce sunucu tarafında korunmalıdır (T-17).
 - **INV-6** Teknik hata ayrıntısı ve storage yolu dışarı sızmaz; belge metni, dosya içeriği ve API anahtarı loglanmaz.
 - Gerçek veya kişisel veri içeren belgeler, benchmark belgeleri ve verileri, ground truth ve ölçüm artefaktları repoya girmez; repo dışında tutulur. Gerçek kişi veya kurum verisi içermeyen sentetik test fixture'ları bu kuralın dışındadır.
 - Mimari bilinçli olarak basittir: `PROJECT_BRAIN.md` §12'deki kapsam dışı bir öğe ya da yeni bir soyutlama katmanı ancak karar kaydıyla eklenir (D-024).

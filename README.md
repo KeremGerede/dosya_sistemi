@@ -156,9 +156,12 @@ Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde 
 | GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metin dahil |
 | GET | `/api/documents/{document_id}/download` | Orijinal dosyayı indirir |
 | PUT | `/api/documents/{document_id}/validation` | Tür ve kurum sonucunu onaylar veya katalog içinden düzeltir; AI sonucu değişmez |
+| DELETE | `/api/documents/{document_id}` | Kalıcı kaydı ve orijinal dosyasını geri alınamaz şekilde siler; `prepared` kayda uygulanmaz |
 | GET | `/api/catalogs` | Belge türü ve kurum katalogları |
 
 Belge yanıtları AI sonucunu (`document_type`, `institution_id`), kullanıcı onayını (`validated_*`) ve doğrulanmış ifadeleri (`routing_evidence`) ayrı alanlarda döndürür.
+
+**Güvenlik notu:** API'de yetkilendirme yoktur; API'ye erişebilen herkes kalıcı silme dahil her endpoint'i çağırabilir. Yerel adreste dinleme ve CORS'un olmaması yetkilendirme değildir. Dış erişime açmadan önce silme endpoint'i sunucu tarafında korunmalı ya da kapatılmalıdır (D-054).
 
 Başlıca hata kodları: `404` kayıt yok, `409` kaydın durumu işleme uygun değil, `413` boyut, `415` format veya imza, `422` içerik işlenemedi ya da istek geçersiz, `502` Gemini sınıflandırması tamamlanamadı. Yanıt alanları ve tam HTTP sözleşmesi: [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) F-08.
 

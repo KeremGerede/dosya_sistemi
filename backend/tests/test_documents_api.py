@@ -1546,7 +1546,7 @@ def test_cleanup_failure_does_not_break_prepare(client, session_factory, storage
     def broken_discard(document, db):
         raise RuntimeError("beklenmeyen temizlik hatası")
 
-    monkeypatch.setattr(documents_api, "_discard_prepared", broken_discard)
+    monkeypatch.setattr(documents_api, "_delete_with_file", broken_discard)
     response = prepare(client, "yeni.pdf", make_pdf(PDF_TEXT))
 
     assert response.status_code == 200
@@ -2564,3 +2564,170 @@ def test_extraction_failure_is_not_retryable(client, session_factory, transcript
 
     assert (body["status"], body["retryable"]) == ("failed", False)
     assert stored(session_factory, uuid.UUID(body["document_id"])).ocr_fallback is None
+
+
+# --- D-054: Kayıtlar'dan kalıcı belge silme ---
+
+PREPARED_NOT_DELETABLE_MESSAGE = "Henüz sınıflandırılmamış belge kalıcı olarak silinmez; listeden kaldırın."
+PERMANENT_RECORDS = {
+    "classified": {"status": "classified"},
+    "needs_review": {"status": "needs_review", "needs_review": True, "review_reason": "Kurum belirsiz.", "institution_id": None},
+    "failed": {"status": "failed", "document_type": None, "institution_id": None, "ocr_fallback": False},
+    "validated": {
+        "status": "classified", "validated_document_type": DOCUMENT_TYPE, "validated_institution_id": INSTITUTION,
+        "validated_at": datetime.now(timezone.utc),
+    },
+}
+
+
+def delete_url(document_id) -> str:
+    return f"{LIST_URL}/{document_id}"
+
+
+@pytest.mark.parametrize("overrides", PERMANENT_RECORDS.values(), ids=PERMANENT_RECORDS.keys())
+def test_delete_permanent_document_removes_record_and_file(
+    client, session_factory, storage_dir, fake_classify, caplog, overrides
+):
+    document = insert_with_file(
+        session_factory, storage_dir, file_name=f"{SECRET_MARKER}.pdf", extracted_text=PDF_TEXT, **overrides
+    )
+    other = insert_with_file(session_factory, storage_dir)  # başka kayıt ve dosyası etkilenmez
+    calls = fake_classify(classification())
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert [item.id for item in all_documents(session_factory)] == [other.id]
+    assert stored_files(storage_dir) == [other.file_reference]
+    # Silinen kayıt hiçbir yüzeyde kalmaz; aynı istek tekrarlanırsa 404 döner.
+    assert [item["document_id"] for item in client.get(LIST_URL).json()] == [str(other.id)]
+    assert client.get(delete_url(document.id)).status_code == 404
+    assert client.get(f"{delete_url(document.id)}/download").status_code == 404
+    assert client.post(retry_url(document.id)).status_code == 404
+    assert client.delete(delete_url(document.id)).status_code == 404
+    assert calls == []
+    # Log yalnız belge ID'sini taşır; dosya adı, metin ve storage yolu yoktur (INV-6).
+    assert f"Belge {document.id} kalıcı olarak silindi." in caplog.text
+    assert SECRET_MARKER not in caplog.text
+    assert str(storage_dir) not in caplog.text
+
+
+def test_delete_rejects_prepared_document_and_discard_still_works(client, session_factory, storage_dir):
+    document = insert_prepared(session_factory, storage_dir)
+    before = row_snapshot(session_factory, document.id)
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": PREPARED_NOT_DELETABLE_MESSAGE}
+    assert row_snapshot(session_factory, document.id) == before
+    assert (storage_dir / document.file_reference).exists()
+    assert client.delete(discard_url(document.id)).status_code == 204  # prepared yaşam döngüsü değişmez (D-046)
+
+
+def test_delete_unknown_or_invalid_document(client):
+    response = client.delete(delete_url(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Belge bulunamadı."}
+    assert client.delete(delete_url("belge-degil")).status_code == 422
+
+
+def test_delete_works_when_storage_file_is_already_missing(client, session_factory, storage_dir):
+    document = insert_with_file(session_factory, storage_dir)
+    (storage_dir / document.file_reference).unlink()
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 204
+    assert all_documents(session_factory) == []
+
+
+def test_delete_file_error_keeps_record_and_file(client, session_factory, storage_dir, monkeypatch):
+    document = insert_with_file(session_factory, storage_dir)
+    before = row_snapshot(session_factory, document.id)
+    original_unlink = pathlib.Path.unlink
+
+    def locked_unlink(self, *args, **kwargs):
+        raise PermissionError("dosya kilitli")  # ör. Windows'ta indirme sürerken
+
+    monkeypatch.setattr(pathlib.Path, "unlink", locked_unlink)
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert row_snapshot(session_factory, document.id) == before
+    assert (storage_dir / document.file_reference).exists()
+
+    monkeypatch.setattr(pathlib.Path, "unlink", original_unlink)
+    assert client.delete(delete_url(document.id)).status_code == 204
+    assert all_documents(session_factory) == []
+    assert stored_files(storage_dir) == []
+
+
+def test_delete_commit_failure_keeps_record_and_repeated_delete_completes(
+    client, session_factory, storage_dir, failing_commit
+):
+    document = insert_with_file(session_factory, storage_dir)
+    before = row_snapshot(session_factory, document.id)
+    rollbacks = failing_commit()
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert rollbacks == [True]
+    # Dosya silme ile commit atomik değildir (D-054): kayıt aynen kalır, dosyası silinmiş olur.
+    assert row_snapshot(session_factory, document.id) == before
+    assert stored_files(storage_dir) == []
+    assert client.get(f"{delete_url(document.id)}/download").status_code == 404
+
+    def working_get_db():
+        with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = working_get_db
+    assert client.delete(delete_url(document.id)).status_code == 204
+    assert all_documents(session_factory) == []
+
+
+def test_delete_never_deletes_files_outside_storage(client, session_factory, storage_dir, tmp_path):
+    outside = tmp_path / "disarida.pdf"
+    outside.write_bytes(make_pdf(PDF_TEXT))
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    document = insert_document(session_factory, file_reference="../disarida.pdf")
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 204
+    assert all_documents(session_factory) == []
+    assert outside.exists()
+
+
+def test_delete_lock_conflict_returns_409_and_keeps_record_and_file(client, session_factory, storage_dir, failing_lock):
+    document = insert_failed(session_factory, storage_dir)
+    before = row_snapshot(session_factory, document.id)
+    rollbacks = failing_lock("55P03")  # ör. aynı kayıtta tekrar deneme sürüyor (D-053)
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": DOCUMENT_BUSY_MESSAGE}
+    assert rollbacks == [True]
+    assert row_snapshot(session_factory, document.id) == before
+    assert (storage_dir / document.file_reference).exists()
+
+
+def test_delete_other_database_error_is_500_and_keeps_record_and_file(client, session_factory, storage_dir, failing_lock):
+    document = insert_with_file(session_factory, storage_dir)
+    rollbacks = failing_lock("08006")  # bağlantı hatası: kilit çakışması değildir
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"  # teknik ayrıntı sızmaz (INV-6)
+    assert rollbacks == [True]
+    assert stored_document(session_factory, document.id) is not None
+    assert (storage_dir / document.file_reference).exists()

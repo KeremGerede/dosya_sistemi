@@ -392,6 +392,72 @@ button.secondary.retry-button:hover:not(:disabled) {
   background-color: color-mix(in srgb, var(--accent) 16%, var(--surface));
 }
 
+/* Kayıtlar detayında kalıcı silme (D-054): detayın sonunda, kesik çizgiyle ayrılmış. "Belgeyi Sil" kırmızı çerçeveli
+   ikincil düğme; onay alanı kırmızı tonlu kutu, onay düğmesi dolgulu kırmızı. Pasif görünüm button.secondary:disabled'dan gelir. */
+.record-delete {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--border-strong);
+}
+
+button.secondary.delete-button {
+  border-color: var(--err-border);
+  background-color: var(--err-bg);
+  color: var(--err-text);
+  font-weight: 600;
+}
+
+button.secondary.delete-button:hover:not(:disabled) {
+  background-color: var(--err-bg);
+  border-color: var(--err-text);
+}
+
+.delete-confirm {
+  padding: 0.85rem 1rem;
+  background-color: var(--err-bg);
+  border: 1px solid var(--err-border);
+  border-radius: var(--radius-sm);
+}
+
+.delete-confirm p {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+}
+
+.delete-confirm .delete-question {
+  color: var(--err-text);
+  font-weight: 600;
+}
+
+.delete-confirm .delete-file {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.delete-confirm .delete-warning {
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+button.secondary.delete-confirm-button {
+  border-color: var(--err-text);
+  background-color: var(--err-text);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+button.secondary.delete-confirm-button:hover:not(:disabled) {
+  background-color: var(--err-text);
+  filter: brightness(0.9);
+}
+
+/* Silme sonrası Kayıtlar başlığının altında kısa bilgi */
+.delete-note {
+  margin: 0 0 1rem;
+  color: var(--ok-text);
+  font-size: 0.875rem;
+}
+
 /* Tamamlanan tekrar denemenin kısa bilgisi; süren işlem göstergesi (.status) değildir */
 .retry-note {
   margin: 0.5rem 0 0;

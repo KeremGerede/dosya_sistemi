@@ -6,10 +6,12 @@ import {
   RECORD_DISPLAY_LABELS,
   UNDETERMINED,
   countRecords,
+  deleteOutcome,
   effectiveRouting,
   filterOptions,
   filterRecords,
   findEvidenceInText,
+  keepAvailableFilters,
   recordDisplayState,
   retryConflict,
   routingEvidenceSection,
@@ -62,6 +64,10 @@ const RETRY_NOT_FOUND_MESSAGE = 'Belge bulunamadı. Lütfen kayıtları yenileyi
 const RETRY_FAILED_MESSAGE = 'Tekrar deneme tamamlanamadı; birazdan yeniden deneyebilirsiniz.'
 const RETRY_WAIT_MESSAGE = 'Analiz sürerken tekrar denenemez; işlem bitince yeniden deneyin.'
 const RETRY_SUCCESS_MESSAGE = 'Belge yeniden sınıflandırıldı.'
+const DELETE_BUSY_MESSAGE = 'Belge şu anda başka bir işlemde olduğu için silinmedi; biraz sonra tekrar deneyin.'
+const DELETE_FAILED_MESSAGE = 'Belge silinemedi; kayıt yerinde duruyor. Lütfen tekrar deneyin.'
+const DELETE_UNVERIFIED_MESSAGE = 'Silme sonucu doğrulanamadı. Kayıtları yenileyip belgenin durumunu kontrol edin.'
+const DELETE_WAIT_MESSAGE = 'Analiz sürerken belge silinemez; işlem bitince yeniden deneyin.'
 
 type DocumentStatus = 'classified' | 'needs_review' | 'failed'
 
@@ -259,6 +265,26 @@ async function retryClassification(documentId: string): Promise<RetryOutcome> {
   return { record: null, error: result.status === null ? requestProblem(result) : RETRY_FAILED_MESSAGE }
 }
 
+type DeleteResult = { deleted: boolean; error: string | null }
+
+// Kalıcı silme (D-054). 409'da kayıt korunur. 500, ağ hatası ve zaman aşımında başarı varsayılmaz: backend silmeyi
+// tamamlamış ya da dosyayı silip commit edememiş olabilir; kaydın gerçek durumu mevcut detay endpoint'inden okunur.
+async function deleteDocument(documentId: string): Promise<DeleteResult> {
+  const result = await request(`/api/documents/${documentId}`, { method: 'DELETE' })
+  const outcome = deleteOutcome(result.status)
+  if (outcome === 'deleted') {
+    return { deleted: true, error: null }
+  }
+  if (outcome === 'busy') {
+    return { deleted: false, error: DELETE_BUSY_MESSAGE }
+  }
+  const current = await request(`/api/documents/${documentId}`)
+  if (current.status === 404) {
+    return { deleted: true, error: null }
+  }
+  return { deleted: false, error: current.status === 200 ? DELETE_FAILED_MESSAGE : DELETE_UNVERIFIED_MESSAGE }
+}
+
 // Onay hatası (D-049): kısa Türkçe mesaj; FastAPI'nin 422 ayrıntısı gösterilmez.
 function validationProblem(result: RequestResult): string {
   if (result.status === null) {
@@ -355,17 +381,24 @@ function RetryIcon() {
 // Kayıtlar'daki tekrar deneme durumu (D-053): hangi kayıt için, istek sürüyor mu, son mesaj.
 type RecordRetryState = { documentId: string; pending: boolean; error: string | null; succeeded: boolean }
 
+// Kayıtlar'daki kalıcı silme (D-054): hangi kayıt için, onay alanı açık mı, istek sürüyor mu, son hata.
+type RecordDeleteState = { documentId: string; confirming: boolean; pending: boolean; error: string | null }
+
 function RecordsView({
   onValidated,
   onRetry,
+  onDelete,
   busy,
 }: {
   onValidated: (updated: DocumentSummary) => void
   onRetry: (documentId: string) => Promise<RetryOutcome | null>
+  onDelete: (documentId: string) => Promise<DeleteResult | null>
   busy: boolean // analiz listesinde istek sürüyor; tek istek kuralı (D-045)
 }) {
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null)
   const [retryState, setRetryState] = useState<RecordRetryState | null>(null)
+  const [deleteState, setDeleteState] = useState<RecordDeleteState | null>(null)
+  const [deletedNotice, setDeletedNotice] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -399,6 +432,9 @@ function RecordsView({
   async function toggle(documentId: string) {
     setEvidenceSelection(null)
     setRetryState(null)
+    setDeletedNotice(null)
+    // Açık onay alanı başka kayda taşınmaz; süren silme ise sonucunu kendi kaydına yazar.
+    setDeleteState((current) => (current?.pending === true ? current : null))
     if (openId === documentId) {
       setOpenId(null)
       setDetail(null)
@@ -442,6 +478,25 @@ function RecordsView({
     setRetryState({ documentId: item.document_id, pending: false, error: outcome.error, succeeded })
   }
 
+  // Kalıcı silme (D-054): onay alanındaki "Evet, Kalıcı Olarak Sil" ile çağrılır; ilk tıklama istek göndermez.
+  // Silinen kayıt listeden çıkar ve detayı kapanır; sayılar ve filtre seçenekleri kalan kayıtlardan yeniden hesaplanır.
+  // Silinmediyse onay alanı kapanır, mesaj gösterilir ve kayıt listede kalır.
+  async function remove(item: DocumentSummary) {
+    const documentId = item.document_id
+    setDeleteState({ documentId, confirming: true, pending: true, error: null })
+    const outcome = await onDelete(documentId)
+    if (outcome === null || !outcome.deleted) {
+      setDeleteState({ documentId, confirming: false, pending: false, error: outcome?.error ?? DELETE_WAIT_MESSAGE })
+      return
+    }
+    setDeleteState(null)
+    setDocuments((current) => (current === null ? current : current.filter((existing) => existing.document_id !== documentId)))
+    setOpenId((current) => (current === documentId ? null : current))
+    setDetail((current) => (current?.document_id === documentId ? null : current))
+    setEvidenceSelection(null)
+    setDeletedNotice(`"${item.file_name}" kalıcı olarak silindi.`)
+  }
+
   // Onay yanıtı yalnız ilgili kaydı değiştirir; liste, sayaçlar, filtre ve detay yeniden istek atmadan güncellenir.
   function applyValidation(updated: DocumentSummary) {
     setDocuments((current) =>
@@ -455,19 +510,21 @@ function RecordsView({
   }
 
   const records = documents ?? []
-  // Tür, kurum ve durum tek kuraldan gelir: effective yönlendirme ve gösterim durumu (D-049).
-  const rows = filterRecords(records, filters).map((item) => ({
-    item,
-    routing: effectiveRouting(item),
-    state: recordDisplayState(item),
-  }))
   const counts = countRecords(records)
   const routings = records.map((item) => effectiveRouting(item))
   const typeOptions = filterOptions(routings.map((routing) => ({ id: routing.documentTypeId, name: routing.documentTypeName })))
   const institutionOptions = filterOptions(
     routings.map((routing) => ({ id: routing.institutionId, name: routing.institutionName })),
   )
-  const filtering = Object.values(filters).some((value) => value.trim() !== '')
+  // Silmeyle seçeneği kalmayan tür/kurum filtresi "tümü" sayılır; liste ve açılır menü aynı şeyi gösterir (D-054).
+  const activeFilters = keepAvailableFilters(filters, typeOptions, institutionOptions)
+  // Tür, kurum ve durum tek kuraldan gelir: effective yönlendirme ve gösterim durumu (D-049).
+  const rows = filterRecords(records, activeFilters).map((item) => ({
+    item,
+    routing: effectiveRouting(item),
+    state: recordDisplayState(item),
+  }))
+  const filtering = Object.values(activeFilters).some((value) => value.trim() !== '')
 
   return (
     <section className="records">
@@ -489,6 +546,12 @@ function RecordsView({
         <div className="notice error" role="alert">
           <p>{message}</p>
         </div>
+      )}
+
+      {deletedNotice !== null && (
+        <p className="delete-note" role="status">
+          {deletedNotice}
+        </p>
       )}
 
       {documents !== null && documents.length === 0 && (
@@ -518,13 +581,13 @@ function RecordsView({
               type="search"
               placeholder="Belge adında ara"
               aria-label="Belge adında ara"
-              value={filters.query}
-              onChange={(event) => setFilters({ ...filters, query: event.target.value })}
+              value={activeFilters.query}
+              onChange={(event) => setFilters({ ...activeFilters, query: event.target.value })}
             />
             <select
               aria-label="Belge türü"
-              value={filters.documentType}
-              onChange={(event) => setFilters({ ...filters, documentType: event.target.value })}
+              value={activeFilters.documentType}
+              onChange={(event) => setFilters({ ...activeFilters, documentType: event.target.value })}
             >
               <option value="">Tüm türler</option>
               {typeOptions.map((option) => (
@@ -535,8 +598,8 @@ function RecordsView({
             </select>
             <select
               aria-label="Gideceği kurum"
-              value={filters.institution}
-              onChange={(event) => setFilters({ ...filters, institution: event.target.value })}
+              value={activeFilters.institution}
+              onChange={(event) => setFilters({ ...activeFilters, institution: event.target.value })}
             >
               <option value="">Tüm kurumlar</option>
               {institutionOptions.map((option) => (
@@ -547,8 +610,8 @@ function RecordsView({
             </select>
             <select
               aria-label="Durum"
-              value={filters.status}
-              onChange={(event) => setFilters({ ...filters, status: event.target.value })}
+              value={activeFilters.status}
+              onChange={(event) => setFilters({ ...activeFilters, status: event.target.value })}
             >
               <option value="">Tüm durumlar</option>
               {Object.entries(RECORD_DISPLAY_LABELS).map(([value, label]) => (
@@ -654,7 +717,13 @@ function RecordsView({
                           <p className="review-note">AI inceleme nedeni: {item.review_reason}</p>
                         )}
 
-                        {item.status !== 'failed' && <ValidationControls record={item} onValidated={applyValidation} />}
+                        {item.status !== 'failed' && (
+                          <ValidationControls
+                            record={item}
+                            onValidated={applyValidation}
+                            locked={deleteState?.documentId === item.document_id && deleteState.pending}
+                          />
+                        )}
                         {/* D-053: yalnız backend'in retryable dediği failed kayıtta; aynı kayıt ve metin kullanılır. */}
                         {item.status === 'failed' && item.retryable && (
                           <div className="retry">
@@ -709,6 +778,18 @@ function RecordsView({
                             />
                           </>
                         )}
+
+                        <RecordDeleteControls
+                          item={item}
+                          state={deleteState?.documentId === item.document_id ? deleteState : null}
+                          busy={busy}
+                          retrying={retryState?.pending === true}
+                          onStart={() =>
+                            setDeleteState({ documentId: item.document_id, confirming: true, pending: false, error: null })
+                          }
+                          onCancel={() => setDeleteState(null)}
+                          onConfirm={() => void remove(item)}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -722,13 +803,88 @@ function RecordsView({
   )
 }
 
+// Kayıtlar detayındaki kalıcı silme (D-054): "Belgeyi Sil" yalnız onay alanını açar, istek göndermez. Silme
+// "Evet, Kalıcı Olarak Sil" ile başlar. Analiz, tekrar deneme ya da silme sürerken düğmeler kilitlidir (D-045).
+function RecordDeleteControls({
+  item,
+  state,
+  busy,
+  retrying,
+  onStart,
+  onCancel,
+  onConfirm,
+}: {
+  item: DocumentSummary
+  state: RecordDeleteState | null
+  busy: boolean
+  retrying: boolean
+  onStart: () => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const pending = state?.pending === true
+  const questionId = `delete-question-${item.document_id}`
+  return (
+    <div className="record-delete">
+      {state?.confirming === true ? (
+        <div className="delete-confirm" role="group" aria-labelledby={questionId}>
+          <p id={questionId} className="delete-question">
+            Bu belgeyi silmek istediğinizden emin misiniz?
+          </p>
+          <p className="delete-file">{item.file_name}</p>
+          <p className="delete-warning">
+            Bu işlem belge kaydını, sınıflandırma ve onay bilgilerini ve orijinal dosyayı kalıcı olarak silecektir. İşlem
+            geri alınamaz.
+          </p>
+          <div className="validation-row">
+            <button type="button" className="secondary" onClick={onCancel} disabled={pending}>
+              Vazgeç
+            </button>
+            <button
+              type="button"
+              className="secondary delete-confirm-button"
+              onClick={onConfirm}
+              disabled={pending || busy}
+              title={busy && !pending ? DELETE_WAIT_MESSAGE : undefined}
+            >
+              Evet, Kalıcı Olarak Sil
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="secondary delete-button"
+          onClick={onStart}
+          disabled={busy || retrying}
+          title={busy ? DELETE_WAIT_MESSAGE : undefined}
+        >
+          Belgeyi Sil
+        </button>
+      )}
+      {pending && (
+        <p className="status" role="status">
+          Siliniyor...
+        </p>
+      )}
+      {state?.error != null && (
+        <p className="validation-error" role="alert">
+          {state.error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // Kullanıcı onayı (D-049): sonuç kartında ve Kayıtlar detayında aynı bileşen. AI sonucu değişmez; onay ayrı alanlara yazılır.
 function ValidationControls({
   record,
   onValidated,
+  locked = false,
 }: {
   record: ClassifyResponse
   onValidated: (updated: DocumentSummary) => void
+  locked?: boolean // aynı kaydın kalıcı silinmesi sürüyor (D-054)
 }) {
   const [draft, setDraft] = useState<ValidationDraft | null>(null)
   const [catalogs, setCatalogs] = useState<Catalogs | null>(null)
@@ -784,13 +940,18 @@ function ValidationControls({
               type="button"
               className="secondary approve"
               onClick={() => void save(aiDocumentType, record.institution_id)}
-              disabled={busy !== null}
+              disabled={busy !== null || locked}
             >
               Sonucu Onayla
             </button>
           )}
           {/* Onay öncesi ve sonrası aynı görünüm: onaydan hafif, amber çerçeveli ikincil aksiyon. */}
-          <button type="button" className="secondary revise" onClick={() => void startEdit()} disabled={busy !== null}>
+          <button
+            type="button"
+            className="secondary revise"
+            onClick={() => void startEdit()}
+            disabled={busy !== null || locked}
+          >
             Düzelt
           </button>
         </div>
@@ -833,7 +994,7 @@ function ValidationControls({
               onClick={() =>
                 void save(draft.documentType, draft.institution === UNDETERMINED ? null : draft.institution)
               }
-              disabled={saving}
+              disabled={saving || locked}
             >
               Kaydet ve Onayla
             </button>
@@ -1514,6 +1675,27 @@ function App() {
     }
   }
 
+  // Kayıtlar'dan kalıcı silme de tek istek kuralına uyar (D-045, D-054): çalıştırıcı meşgulken başlamaz, sürerken
+  // çalıştırıcı bekler. Silinen belge analiz listesinde de varsa oradan çıkar; iki görünüm aynı kalır.
+  async function deleteFromRecords(documentId: string): Promise<DeleteResult | null> {
+    if (runningRef.current) {
+      return null
+    }
+    runningRef.current = true
+    setRunning(true)
+    try {
+      const outcome = await deleteDocument(documentId)
+      if (outcome.deleted) {
+        drop(itemsRef.current.filter((item) => item.result?.document_id === documentId).map((item) => item.key))
+      }
+      return outcome
+    } finally {
+      runningRef.current = false
+      setRunning(false)
+      void runQueue()
+    }
+  }
+
   // Kayıtlar'da tekrar denenip sınıflandırılan belgeyi gösteren analiz satırı da güncellenir; listede failed kalmaz.
   function applyRetried(updated: ClassifyResponse) {
     commit(
@@ -1642,7 +1824,7 @@ function App() {
       </nav>
 
       {view === 'records' ? (
-        <RecordsView onValidated={applyValidation} onRetry={retryFromRecords} busy={running} />
+        <RecordsView onValidated={applyValidation} onRetry={retryFromRecords} onDelete={deleteFromRecords} busy={running} />
       ) : (
         <>
           <section

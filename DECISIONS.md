@@ -281,7 +281,7 @@
 ## API ve mimari
 
 ### D-019 — Yazma endpoint'leri ve operasyonel `GET /health`
-- **Durum:** Aktif · **Git:** giriş 2026-09-15, son değişiklik 2026-10-06 · **Referans:** F-08; INV-5
+- **Durum:** Aktif (yalnız "kalıcı kayıtlar silinemez" hükmü 2026-10-22'de D-054 ile değişti: kalıcı kayıt yalnız `DELETE /api/documents/{document_id}` ile silinir; AI sonucunun değiştirilemezliği ve diğer hükümler geçerli) · **Git:** giriş 2026-09-15, son değişiklik 2026-10-06 · **Referans:** F-08; INV-5; D-054
 - **Karar:**
   - Kayıt **oluşturan** iki endpoint vardır. İkisi de `multipart/form-data` içinde en fazla 50 MB'lık tek bir PDF, DOC, DOCX, JPG/JPEG veya PNG dosyası alır (D-001):
     - `POST /api/documents/classify` — legacy / tek-adımlı sınıflandırma: kabul, metin çıkarımı, Gemini sınıflandırması ve kayıt tek istekte yapılır. Geriye dönük uyumluluk için korunur.
@@ -353,7 +353,7 @@
 - **Gerekçe:** Kullanıcı analize gönderdiği belgenin doğru belge olduğunu Gemini sınıflandırması çalışmadan önce görebilmelidir. Önizleme için ayrı bir yükleme veya ikinci bir OCR, süreyi uzatır ve önizlenen metinle sınıflandırılan metnin ayrışmasına yol açabilir. Mevcut `documents` tablosu ve düz metin `status` alanı ara durumu migration gerektirmeden taşıyabilir. Tek-adımlı endpoint, mevcut entegrasyonları bozmamak için korunur. Büyük bir PDF/görüntü görüntüleyicisi yerine okunur bir form, belgenin doğru olup olmadığını daha hızlı gösterir ve DOC/DOCX'te de aynı biçimde çalışır. Tarayıcı dosyanın baytlarına zaten sahip olduğundan orijinal belge için sunucuda yeni bir dosya sunma yüzeyi açılmaz.
 
 ### D-046 — `prepared` kayıt yaşam döngüsü (V1.4)
-- **Durum:** Aktif · **Git:** giriş 2026-09-24, son değişiklik 2026-10-03 · **Referans:** F-05; INV-5
+- **Durum:** Aktif (gerekçedeki "kalıcı kayıtları silmek kapsam dışıdır" ifadesi 2026-10-22'de D-054 ile değişti; `DELETE /{document_id}/prepared` ve temizlik kalıcı kayda dokunmamaya devam eder, diğer hükümler geçerli) · **Git:** giriş 2026-09-24, son değişiklik 2026-10-03 · **Referans:** F-05; INV-5; D-054
 - **Karar:**
   - **Tutulduğu yer:** `prepared` kayıt `documents` tablosunda tutulur; ayrı tablo, staging alanı veya migration yoktur. Sınıflandırma alanları `null`, `created_at` hazırlık anıdır. Kayıt `GET /api/documents` listesinde görünmez (D-043); detay ve indirme ID ile çalışır.
   - **Yedek OCR işareti:** `prepared` kayıtta `needs_review = false`'tur. Tek istisna, metni Tesseract yedeğiyle çıkarılan belgedir (D-047): `needs_review = true` ve `review_reason` yedek OCR gerekçesini taşır. Sınıflandırma bu işareti korur, sonuç `needs_review` olur ve model gerekçesi varsa yedek OCR gerekçesine eklenir. Sınıflandırma başarısız olursa işaret temizlenir (D-004).
@@ -453,6 +453,31 @@
     - Kayıt hiçbir durumda `prepared`'a çekilmez: prepared TTL temizliği kalıcı kayda dokunmamalıdır (INV-5). Yeni ara durum, kuyruk, worker ve otomatik retry yoktur.
   - **Arayüz:** "Tekrar Dene" yalnız `retryable` kayıtta görünür: analiz listesinde failed satırda ve Kayıtlar'da failed kayıt detayında. İstek sıralı çalıştırıcıdan geçer; analiz sürerken Kayıtlar'daki düğme kilitlidir (D-045). `409`'da kaydın güncel durumu detay endpoint'inden okunur; mesajlar frontend'in genel Türkçe metinleridir. Kayıtlar'da başarılı sonuç analiz listesine de yansır.
 - **Gerekçe:** Geçici Gemini hatasında kullanıcı belgeyi yeniden yüklemek zorunda kalıyordu; metin, dosya ve kayıt zaten saklıydı. Tek `failed` durumu çıkarım ve sınıflandırma hatalarını ayırmadığı ve sınıflandırma hatası yedek OCR işaretini sildiği için, kalıcı bir metin kaynağı alanı olmadan yapılan retry taranmış belgeyi incelemesiz sınıflandırabilirdi (D-047 ihlali). Satır kilidi, eşzamanlı iki isteğin hem çift Gemini çağrısını hem de "failed ama sonuç dolu" tutarsız kaydı önler; kilit tek belge satırındadır ve NOWAIT ile bekleyen istek birikmez. Bilinen sınırlar: kilit yalnız PostgreSQL'de çalışır (SQLite testleri sınamaz; gerçek PostgreSQL'de doğrulandı) ve migration öncesi failed kayıtlar yeniden yüklenmelidir.
+
+### D-054 — Kayıtlar'dan kalıcı belge silme
+- **Durum:** Aktif · **Tarih:** 2026-10-22 · **Referans:** F-10, F-07, F-08; INV-5; ADR-001; D-019, D-025, D-046, D-049, D-053; T-15, T-17
+- **Karar:**
+  - **Kapsam:** Kalıcı kayıtlar (`classified`, `needs_review`, `failed`; kullanıcı onaylı olanlar dahil) Kayıtlar detayından silinebilir. `prepared` kayıt bu yolla silinmez; Kaldır ve 24 saatlik temizlik D-046'daki gibi kalır.
+  - **Fiziksel silme:** Kayıt (AI sonucu, onay alanları, evidence ve çıkarılan metin dahil) ve orijinal storage dosyası silinir. Soft delete, arşiv, çöp kutusu, geri alma ve silme geçmişi yoktur. Tek iz, uygulamanın belge ID'sini içeren log satırıdır; uygulama logları dosya adı, belge metni ve storage yolu içermez (INV-6). Beklenmeyen bir hatada (ör. dosya silinemezse) sunucunun traceback'i storage yolunu (`<document_id>.<uzantı>`) içerebilir; bu yalnız sunucu logundadır, yanıta girmez ve diğer endpoint'lerin beklenmeyen hata davranışıyla aynıdır. Alınmış veritabanı ve storage yedekleri bu silmenin kapsamında değildir.
+  - **`DELETE /api/documents/{document_id}`:**
+    - Kayıt `SELECT … FOR UPDATE NOWAIT` ile okunur; D-053'teki kilit yardımcısı ortak kullanılır. Kilit alınamazsa (`55P03`) rollback ve `409`; hiçbir şeye dokunulmaz. Diğer veritabanı hataları `500`.
+    - Kayıt yoksa `404`; geçersiz ID'de FastAPI'nin standart `422` gövdesi. Kayıt `prepared` ise `409`; kayıt ve dosya değişmez.
+    - Sıra: önce storage dosyası silinir (dosya yoksa ya da yol storage dışına çıkıyorsa bu adım atlanır), sonra kayıt; ardından commit. Başarıda `204`, gövde yoktur.
+    - Dosya silinemezse rollback ve `500`; kayıt ve dosya yerinde kalır. Teknik ayrıntı yanıta girmez (D-034).
+  - **Dosya silme ve commit atomik değildir:** İkisi tek bir atomik işlem olarak yapılamaz. Dosya silindikten sonra commit başarısız olursa ya da süreç kesilirse kayıt kalır, dosya kalmaz. Bu ara durum görünürdür (indirme `404`, tekrar deneme `409`) ve aynı silme isteği tekrarlandığında tamamlanır. Ters sıra (önce commit, sonra dosya) seçilmedi: dosya silinemezse kaydı olmayan ve hiçbir yüzeyin göremediği bir dosya kalırdı (ADR-001).
+  - **Eşzamanlılık:** Her çakışma ayrı değerlendirilir; bir çakışma için kabul edilen sınır diğerlerini kapsamaz.
+    - Retry (D-053) ile: ikisi aynı satır kilidini kullanır. Kilidi tutan işlem sürerken diğeri `409` alır; silme tamamlandıktan sonra retry `404` alır.
+    - Onay (D-049) satır kilidi kullanmaz. Onay ile silme aynı anda gelirse onay isteği hata (`500`) alabilir; gerçek PostgreSQL'de onay silmenin commit'ini bekler, sonra `500` alır (2026-10-22). Bu, yerel MVP için kabul edilen sınırdır ve yalnız onay–silme çakışmasına aittir.
+    - `prepared` kayıt üzerindeki sınıflandırma, Kaldır ve temizlik silmeyle çakışmaz: silme `prepared` kayda `409` verir, temizlik yalnız `prepared` kayıtları seçer.
+    - İndirme satır kilidi kullanmaz. İndirme sürerken işletim sistemi açık dosyanın silinmesine izin vermezse (ör. Windows) silme `500` alır ve kayıt korunur.
+  - **Yetki:** Endpoint'te authentication ve authorization yoktur (D-025); API'ye erişebilen herkes her kalıcı kaydı silebilir. Arayüzdeki onay adımı, sunucunun yerel adreste dinlemesi ve CORS middleware'inin olmaması yetkilendirme değildir. Dış erişim (T-17 AWS staging veya başka bir yol) açılmadan önce bu endpoint sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır; bu, T-17'nin zorunlu ön koşuludur.
+  - **Saklama:** Modül resmî kayıt veya saklama sistemi sayılmaz; belgelerin başka bir sistemde (ör. EBYS) saklandığı da doğrulanmış kabul edilmez. Silme ilk aşamada yalnız yerel geliştirme ve silinmesine izin verilen sentetik/demo belgelerle kullanılır. Gerçek kurum verisinde kullanılmadan önce saklama, silme ve yedek politikaları ayrıca doğrulanır.
+  - **Arayüz:** Kayıtlar detayında silme iki aşamalıdır; modal ve dosya adını yeniden yazdırma yoktur.
+    - "Belgeyi Sil" ilk tıklamada istek göndermez. Detay içinde "Bu belgeyi silmek istediğinizden emin misiniz?" sorusu, dosya adı, "Bu işlem belge kaydını, sınıflandırma ve onay bilgilerini ve orijinal dosyayı kalıcı olarak silecektir. İşlem geri alınamaz." uyarısı ve "Vazgeç" / "Evet, Kalıcı Olarak Sil" seçenekleri görünür. "Vazgeç" hiçbir şeyi değiştirmez.
+    - İstek sürerken düğmeler kilitlidir; analiz listesinde istek sürerken "Belgeyi Sil" kilitlidir (D-045).
+    - `204` ve `404`'te kayıt listeden çıkar, detay kapanır, sayılar ve filtre seçenekleri güncellenir; aynı belge analiz listesindeyse oradan da çıkar. `409`'da kısa Türkçe mesaj gösterilir, kayıt listede kalır. `500`, ağ hatası ve zaman aşımında başarı varsayılmaz: kaydın durumu detay endpoint'inden okunur; kayıt yoksa silinmiş sayılır, varsa ya da okunamazsa mesaj gösterilir ve kayıt listede kalır.
+  - **Kapsam dışı:** Toplu silme, analiz listesinden kalıcı silme, çöp kutusu ve geri alma, silme geçmişi, kullanıcı yönetimi, yedeklerden silme, worker ve kuyruk.
+- **Gerekçe:** Yanlış, test ya da demo amacıyla yüklenmiş kalıcı kayıtları temizlemenin bir yolu yoktu (INV-5). Kalıcı silme, kişisel veri içerebilen orijinal dosyanın gerçekten silinmesini gerektirir; soft delete bunu karşılamaz. Satır kilidi D-053'te zaten vardır ve retry ile silmenin aynı kaydı aynı anda değiştirmesini önler. Alternatifler ve sonuçlar ADR-001'dedir.
 
 ### D-020 — Senkron işleme
 - **Durum:** Aktif · **Git:** giriş 2026-09-15, son değişiklik 2026-10-03 · **Referans:** F-05; `PROJECT_BRAIN.md` §2

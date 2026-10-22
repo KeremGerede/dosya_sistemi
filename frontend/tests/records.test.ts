@@ -9,10 +9,12 @@ import {
   RECORD_DISPLAY_LABELS,
   UNDETERMINED,
   countRecords,
+  deleteOutcome,
   effectiveRouting,
   filterOptions,
   findEvidenceInText,
   filterRecords,
+  keepAvailableFilters,
   recordDisplayState,
   retryConflict,
   routingEvidenceSection,
@@ -511,5 +513,46 @@ describe('retryConflict (D-053: tekrar denemede 409 sonrası güncel kayıt)', (
 
   test('kayıt failed ama uygun değilse belge yeniden yüklenmelidir', () => {
     assert.equal(retryConflict({ status: 'failed', retryable: false }), 'not_allowed')
+  })
+})
+
+describe('deleteOutcome (D-054: kalıcı silme yanıtı)', () => {
+  test('204 ve 404 silinmiş sayılır: kayıt artık yok', () => {
+    assert.equal(deleteOutcome(204), 'deleted')
+    assert.equal(deleteOutcome(404), 'deleted')
+  })
+
+  test('409 meşguldür; kayıt korunur', () => {
+    assert.equal(deleteOutcome(409), 'busy')
+  })
+
+  test('500, ağ hatası ve zaman aşımında başarı varsayılmaz; durum ayrıca okunur', () => {
+    assert.equal(deleteOutcome(500), 'unknown')
+    assert.equal(deleteOutcome(422), 'unknown')
+    assert.equal(deleteOutcome(null), 'unknown')
+  })
+})
+
+describe('keepAvailableFilters (D-054: silme sonrası filtreler)', () => {
+  const types = [{ value: 'dilekce', label: 'Dilekçe' }]
+  const institutions = [{ value: UNDETERMINED, label: 'Belirlenemedi' }]
+
+  test('seçeneği kalan filtreler ve arama korunur', () => {
+    const filters = { query: 'yol', documentType: 'dilekce', institution: UNDETERMINED, status: 'failed' }
+    assert.deepEqual(keepAvailableFilters(filters, types, institutions), filters)
+  })
+
+  test('seçeneği kalmayan tür ve kurum filtresi sıfırlanır, diğerleri korunur', () => {
+    const filters = { query: 'yol', documentType: 'sikayet', institution: 'temizlik', status: 'failed' }
+    assert.deepEqual(keepAvailableFilters(filters, types, institutions), {
+      query: 'yol',
+      documentType: '',
+      institution: '',
+      status: 'failed',
+    })
+  })
+
+  test('boş filtre ("tümü") değişmez', () => {
+    assert.deepEqual(keepAvailableFilters(NO_FILTERS, [], []), NO_FILTERS)
   })
 })
