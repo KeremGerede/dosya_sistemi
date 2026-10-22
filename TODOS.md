@@ -9,13 +9,12 @@ Yaşayan backlog: aktif işler, araştırmalar, bakım, aday workstream'ler, kap
 
 ## Now
 
-- **T-15** · Devam ediyor · Kayıtlar'dan kontrollü ve kalıcı belge silme (yol haritası 1; D-054, ADR-001, F-10). Branch `feature/records-permanent-delete`. S1 (karar ve dokümantasyon), S2 (backend endpoint'i ve testleri), S3 (gerçek PostgreSQL ve dosya sistemi kontrolü) ve S4 (Kayıtlar arayüzü ve sahte API'li tarayıcı kontrolü) yapıldı; sonraki dilimler (kullanıcının gerçek ortam testi, kapanış) her biri ayrı onay bekler.
+- **T-16** · Açık · Kayıtlar'da gelişmiş arama (yol haritası 2). Sıradaki aktif iş; PLAN bekliyor, BUILD onayı yok. T-06'nın hacim sorusuyla birlikte değerlendirilir; sunucu tarafı arama ve filtre bugün kapsam dışıdır (D-048, `PROJECT_BRAIN.md` §12).
 
 ## Next
 
-Kullanıcının 2026-10-22'de onayladığı sıra: T-15 → T-16 → T-17 → T-18 → T-01. Her madde başlamadan önce kendi PLAN onayını alır; hiçbiri için BUILD onayı yoktur.
+Kullanıcının 2026-10-22'de onayladığı sıra: T-15 (kapandı) → T-16 → T-17 → T-18 → T-01. Her madde başlamadan önce kendi PLAN onayını alır; hiçbiri için BUILD onayı yoktur.
 
-- **T-16** · Açık · Kayıtlar'da gelişmiş arama (yol haritası 2). T-06'nın hacim sorusuyla birlikte değerlendirilir; sunucu tarafı arama ve filtre bugün kapsam dışıdır (D-048, `PROJECT_BRAIN.md` §12).
 - **T-17** · Açık · AWS staging / canlı demo (yol haritası 3). Ön koşul kararları T-12'dedir (`CURRENT_STATE.md` → "Dağıtıma hazır değil"). **Zorunlu ön koşul (D-054):** dış erişim açılmadan önce kalıcı silme endpoint'i (`DELETE /api/documents/{document_id}`) sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır; arayüz onayı, CORS ve yerel adres bunun yerine geçmez.
 - **T-18** · Açık · OCR ve dashboard iyileştirmelerinin değerlendirilmesi (yol haritası 4). T-11 bu değerlendirmenin adaylarındandır.
 
@@ -50,6 +49,7 @@ Doğrulanmamış adaylardır; onaylı iş değildir. Uzun vadeli ürün genişle
 Kayıt: görev ID'si, kapanış tarihi, kanıt (commit veya doğrulama sonucu). Bu bölüm açılmadan önce kapanan işler Git geçmişindedir.
 
 - **T-02** · Kapandı · 2026-10-22 · Sıradaki ana workstream'in seçilmesi: kullanıcı yol haritasını onayladı (T-15 → T-16 → T-17 → T-18 → T-01). Seçim araştırma sonucu beklenmeden yapıldı; T-01 açık kalır.
+- **T-15** · Kapandı · 2026-10-23 · Kayıtlar'dan kontrollü ve kalıcı belge silme (D-054, ADR-001, F-10). Kanıt: `37f3337`; backend 507 ve frontend 98 test; gerçek PostgreSQL ve dosya sistemi kontrolü 24/24 (geçici DB); sahte API'li tarayıcı kontrolü (masaüstü, 375px); kullanıcının laptop testi (S5: Vazgeç, kalıcı silme, onay alanı yerleşimi). Açık koşul: T-17 öncesi silme endpoint'inin sunucu tarafında korunması.
 
 ## Kapsam Dışı Bulgular
 

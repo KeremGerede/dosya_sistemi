@@ -21,7 +21,7 @@
 | F-07 | Kayıtlar | Uygulandı | D-043, D-048 |
 | F-08 | API ve hata sözleşmesi | Uygulandı | D-019, D-032, D-034 |
 | F-09 | Başarısız sınıflandırmayı tekrar deneme | Uygulandı (2026-10-22) | D-053 |
-| F-10 | Kalıcı belge silme | Uygulandı (2026-10-22; kullanıcı testi T-15'te) | D-054 |
+| F-10 | Kalıcı belge silme | Uygulandı (2026-10-23) | D-054 |
 
 ## Ortak teknoloji ve yapılandırma
 
@@ -523,7 +523,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 
 ## F-10 — Kalıcı belge silme
 
-**Durum:** Uygulandı (2026-10-22); kullanıcının gerçek ortam testi T-15'te bekliyor
+**Durum:** Uygulandı (2026-10-23)
 
 **Amaç:** Yanlış, test ya da demo amacıyla yüklenmiş kalıcı kaydın Kayıtlar'dan, açık kullanıcı onayıyla, orijinal dosyasıyla birlikte geri alınamaz şekilde silinebilmesi.
 
@@ -553,7 +553,8 @@ Arayüz davranışı için bileşen testi yoktur; tarayıcıda sahte API'yle ve 
 - Kilit çakışması (`55P03`) `409`, diğer veritabanı hataları `500`; ikisinde de hiçbir şey değişmez — `api::test_delete_lock_conflict_returns_409_and_keeps_record_and_file`, `api::test_delete_other_database_error_is_500_and_keeps_record_and_file` (SQLite'ta simülasyon).
 - Arayüzde yanıt yorumu: `204`/`404` silindi, `409` meşgul, diğerlerinde durum ayrıca okunur — `records:` "204 ve 404 silinmiş sayılır: kayıt artık yok", "409 meşguldür; kayıt korunur", "500, ağ hatası ve zaman aşımında başarı varsayılmaz; durum ayrıca okunur". Silme sonrası seçeneği kalmayan filtre "tümü" sayılır — `records:` "seçeneği kalmayan tür ve kurum filtresi sıfırlanır, diğerleri korunur".
 - Gerçek PostgreSQL ve dosya sisteminde (2026-10-22, geçici DB ve geçici storage; 24/24 kontrol): tekrar deneme kilidi tutarken silme beklemeden `409` alır, kayıt değişmez ve Gemini tek kez çağrılır; silme sürerken tekrar deneme ve ikinci silme beklemeden `409` alır; Windows'ta açık dosya `500` verir ve kayıt ile dosya korunur; dosya silindikten sonra bağlantı kesilirse kayıt kalır ve tekrar silme tamamlanır; silme sonrası satır ve dosya kalmaz; açık transaction ve bekleyen kilit kalmaz (`CURRENT_STATE.md` → "Son gerçek ortam doğrulamaları").
-- Tarayıcıda (2026-10-22, sahte API, masaüstü ve 375px): ilk tıklamada ve "Vazgeç"te DELETE isteği gitmez; onayla tek istek gider; istek ve analiz sürerken düğmeler kilitli; `204`, `409`, `500` (kayıt duruyor) ve `500` (kayıt silinmiş, uzlaştırmayla) doğru gösterilir; başarıda liste, sayaçlar, filtreler, detay ve analiz listesi güncel; onay, düzeltme ve tekrar deneme çalışmaya devam eder. Kullanıcının gerçek ortam testi bekliyor.
+- Tarayıcıda (2026-10-22, sahte API, masaüstü ve 375px): ilk tıklamada ve "Vazgeç"te DELETE isteği gitmez; onayla tek istek gider; istek ve analiz sürerken düğmeler kilitli; `204`, `409`, `500` (kayıt duruyor) ve `500` (kayıt silinmiş, uzlaştırmayla) doğru gösterilir; başarıda liste, sayaçlar, filtreler, detay ve analiz listesi güncel; onay, düzeltme ve tekrar deneme çalışmaya devam eder.
+- Kullanıcının laptop testinde (2026-10-23, gerçek backend, sentetik belgeler): "Vazgeç" kaydı korur, onaylı kalıcı silme kaydı kaldırır; onay alanı ve düğme yerleşimi kabul edildi.
 
 **Sınırlar**
 

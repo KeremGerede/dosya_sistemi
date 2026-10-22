@@ -9,9 +9,9 @@
 ## Durum özeti
 
 - Blocker veya high risk yok.
-- Aktif workstream: T-15 Kayıtlar'dan kontrollü ve kalıcı belge silme (D-054, ADR-001, F-10), branch `feature/records-permanent-delete`. S1 (karar ve dokümantasyon), S2 (backend endpoint'i ve testleri), S3 (gerçek PostgreSQL ve dosya sistemi kontrolü) ve S4 (Kayıtlar arayüzü, sahte API'li tarayıcı kontrolü) feature branch'te; kullanıcının gerçek ortam testi (S5, laptop, sentetik belgeler) bekliyor. `main`'e alınmadı; `main`'deki ürün davranışı değişmedi. Yeni migration yoktur. Onaylı yol haritasının sırası `TODOS.md` → Now ve Next'tedir.
+- Aktif workstream yok. Sıradaki: T-16 Kayıtlar'da gelişmiş arama (`TODOS.md` → Now); PLAN bekliyor. Onaylı yol haritasının sırası `TODOS.md` → Now ve Next'tedir.
 - Migration head `261a2937eb7c` (D-053): kodu çalıştırmadan önce yerel DB'de `alembic upgrade head` gerekir. Masaüstü DB bu head'de (2026-10-22, `alembic current`). Laptop DB'si doğrulanmadı (Yerel ortamlar).
-- Son kapanan: F-09 başarısız sınıflandırmayı tekrar deneme (D-053; 2026-10-22). İşlevsel geliştirme `0895dc0`; arayüz düzeltmeleri `26d5833` (analiz listesinde işlem düğmelerinin taşması, "Tekrar Dene" görünümü, yetersiz metinli belgenin önizleme mesajı). Kullanıcı bildirimi: gerçek ortam manuel testleri ve üç arayüz düzeltmesinin laptop kontrolü geçti. Otomatik testler, gerçek PostgreSQL kilit/migration kontrolü (geçici DB) ve sahte API'li tarayıcı kontrolü tamam.
+- Son kapanan: T-15 Kayıtlar'dan kontrollü ve kalıcı belge silme (D-054, ADR-001, F-10; 2026-10-23). Geliştirme `37f3337`; yeni migration yok. Otomatik testler, gerçek PostgreSQL ve dosya sistemi kontrolü (geçici DB, 24/24), sahte API'li tarayıcı kontrolü ve kullanıcının laptop testi (S5) tamam. **Dış erişimden önce silme endpoint'i sunucu tarafında korunmalıdır (T-17 ön koşulu).**
 - Açık manuel doğrulama ve bakım işleri (PDF orijinal görünümünün Chrome/Edge kontrolü, rehearsal kayıt kararı, laptop'ta D-051 geçişi, evidence arayüzünün son görsel kontrolü): `TODOS.md` → Maintenance / Minor (T-07, T-08, T-13, T-14).
 
 ## Ürün durumu (main)
@@ -28,8 +28,8 @@
 
 Yerel Windows 11, Python 3.13.15, Node 24.20.0, npm 11.19.0.
 
-- **Backend:** `pytest` **507 passed** (1 uyarı: `starlette.testclient` kaynaklı `StarletteDeprecationWarning`); `pip check` temiz. Son doğrulama 2026-10-23, `feature/records-permanent-delete` üzerinde (T-15). `main` (`992ed72`) üzerinde 495 passed.
-- **Frontend:** `npm test` **98 passed**; `npm run build` ve `npm run lint` temiz. Son doğrulama 2026-10-23, `feature/records-permanent-delete` üzerinde (T-15). `main` (`992ed72`) üzerinde 92 passed.
+- **Backend:** `pytest` **507 passed** (1 uyarı: `starlette.testclient` kaynaklı `StarletteDeprecationWarning`); `pip check` temiz. Son doğrulama 2026-10-23, T-15 (`37f3337`) üzerinde.
+- **Frontend:** `npm test` **98 passed**; `npm run build` ve `npm run lint` temiz. Son doğrulama 2026-10-23, T-15 (`37f3337`) üzerinde.
 - **Veritabanı:** Tek `documents` tablosu. Alembic tek head `261a2937eb7c` (beş migration; D-053 `ocr_fallback`). `alembic check` çalışan veritabanı ister; son sonucu temiz (2026-10-22, aynı PostgreSQL sunucusunda geçici DB, upgrade/downgrade/upgrade sonrası). Masaüstü geliştirme DB'si `261a2937eb7c`'de; laptop doğrulanmadı (Yerel ortamlar).
 - Otomatik testler gerçek Gemini API'si veya Docker PostgreSQL gerektirmez: endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır; Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
 - **Test kapsamı:** Frontend'de bileşen/tarayıcı testi yoktur; yalnız `src/documentPreview.ts` ve `src/records.ts` birim testleri vardır (Node 22.18+). Endpoint testleri SQLite kullanır; PostgreSQL'e özgü davranış (ör. D-053 satır kilidi `FOR UPDATE NOWAIT`; SQLite'ta yok sayılır ve testte simüle edilir) yalnız gerçek ortam testleriyle doğrulanır.
@@ -38,6 +38,7 @@ Yerel Windows 11, Python 3.13.15, Node 24.20.0, npm 11.19.0.
 
 Otomatik testlerin kapsamadığı davranış (gerçek Gemini, PostgreSQL, tarayıcı) için son kayıtlar; 2026-10-22 kayıtları dışındakiler bu turda yeniden çalıştırılmadı.
 
+- **2026-10-23 · D-054 (F-10) S5 manuel test (kullanıcı bildirimi, laptop, sentetik belgeler):** gerçek backend ve frontend, `feature/records-permanent-delete` (`37f3337`). Geçti: "Belgeyi Sil" → "Vazgeç" kaydı koruyor; "Belgeyi Sil" → onay → "Evet, Kalıcı Olarak Sil" kaydı kaldırıyor; onay alanı ve düğme yerleşimi kabul edildi. Bu kayıtta bildirilmeyenler (sayfa yenileme sonrası, indirme `404`'ü, sayaçlar, onay/tekrar deneme korunması) otomatik testler, S3 gerçek PostgreSQL kontrolü ve S4 tarayıcı kontrolüyle doğrulandı; laptopta ayrıca denenmedi. Laptop DB'sinin head'i ve portu bu kayıtla doğrulanmadı.
 - **2026-10-22 · D-054 (F-10) S3:** aynı PostgreSQL sunucusunda geçici `dosya_delete_s3_test` DB (`alembic upgrade head`, `alembic check` temiz; sonra silindi) ve repo dışında geçici storage; gerçek uvicorn sunucusu ve HTTP istekleri; sahte sınıflandırma, Gemini çağrısı yok. 24/24 kontrol geçti:
   - Silme: `prepare` → `prepared` kayda `409`, sınıflandırma sonrası `204`; `needs_review`, `failed`, onaylı kayıt `204`; başka kayıt ve dosyası yerinde; silinen kayıtta detay, indirme, tekrar deneme ve ikinci silme `404`; dosyası olmayan kayıt `204`.
   - Bütünlük: Windows'ta açık dosya tanıtıcısıyla silme `500` (ayrıntısız), kayıt ve dosya aynen, dosya kapanınca `204`. Dosya silindikten sonra DB bağlantısı sonlandırıldı (`pg_terminate_backend`): `500`, satır sunucu rollback'iyle aynen kaldı, dosya silinmişti, indirme `404`, tekrar deneme `409`; aynı silme tekrarlanınca `204` (bağlantı havuzu kesintiden sonra çalıştı).
