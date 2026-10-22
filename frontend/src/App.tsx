@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
-import { buildDocumentPreview } from './documentPreview'
+import { buildDocumentPreview, extractionFailure } from './documentPreview'
 import {
   NO_FILTERS,
   RECORD_DISPLAY_LABELS,
@@ -36,6 +36,7 @@ const UNSUPPORTED_FILE_MESSAGE = 'Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG d
 const FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB'ı aşamaz."
 const NOT_SENT_MESSAGE = 'Dosya gönderilemedi. Lütfen bir PDF, DOC, DOCX, JPG, JPEG veya PNG dosyası seçip tekrar deneyin.'
 const TEXT_FAILED_MESSAGE = 'Belge içeriği işlenemedi veya yeterli metin çıkarılamadı.'
+const INSUFFICIENT_TEXT_MESSAGE = 'Sınıflandırma için yeterli metin çıkarılamadı.'
 const CLASSIFICATION_FAILED_MESSAGE = 'Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin.'
 const UNEXPECTED_MESSAGE = 'Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.'
 const NETWORK_MESSAGE = 'Sunucuya ulaşılamadı. Lütfen bağlantıyı kontrol edip tekrar deneyin.'
@@ -122,6 +123,7 @@ type BatchItem = {
   prepared: PreparedDocument | null
   result: ClassifyResponse | null // prepare'in failed (422) gövdesi veya sınıflandırma sonucu
   error: string | null // yalnız genel Türkçe mesaj; teknik ayrıntı gösterilmez
+  storedText?: string | null // prepare 422: kayda yazılan metin, detaydan okunur; okunamadıysa undefined (D-026)
 }
 
 type Notice = { kind: 'error' | 'info'; messages: string[] }
@@ -330,6 +332,23 @@ function FileTypeIcon({ fileType }: { fileType: string }) {
       </svg>
       {fileType.toUpperCase()}
     </span>
+  )
+}
+
+// "Tekrar Dene" döngü simgesi (D-053); FileTypeIcon gibi satır içi SVG. Erişilebilir ad düğme metninden gelir.
+function RetryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" focusable="false">
+      <path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path
+        d="M20 3.5v5h-5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 
@@ -641,11 +660,12 @@ function RecordsView({
                           <div className="retry">
                             <button
                               type="button"
-                              className="secondary"
+                              className="secondary retry-button"
                               onClick={() => void retry(item)}
                               disabled={busy || retryState?.pending === true}
                               title={busy ? RETRY_WAIT_MESSAGE : undefined}
                             >
+                              <RetryIcon />
                               Tekrar Dene
                             </button>
                           </div>
@@ -1059,7 +1079,9 @@ function PreviewPanel({
   onValidated: (updated: DocumentSummary) => void
 }) {
   const fileType = serverFileType(item)
-  const text = item.prepared?.extracted_text ?? null
+  // Prepare'de metin çıkarımı başarısızsa (422) metin kayıttan gelir ve hata türü buna göre anlatılır (D-026).
+  const failure = item.prepared === null && item.result?.status === 'failed' ? extractionFailure(item.storedText) : null
+  const text = item.prepared?.extracted_text ?? item.storedText ?? null
   const preview = buildDocumentPreview(text, item.file.name)
   const titleId = `${id}-title`
   const textId = `${id}-text`
@@ -1124,12 +1146,13 @@ function PreviewPanel({
         <div className="field wide">
           <dt>Belge İçeriği</dt>
           {text === null ? (
-            <dd className="missing">Bu belgeden metin çıkarılamadı.</dd>
+            <dd className="missing">{failure === 'unknown' ? TEXT_FAILED_MESSAGE : 'Bu belgeden metin çıkarılamadı.'}</dd>
           ) : (
             <FieldValue value={preview.content} className="content" />
           )}
         </div>
       </dl>
+      {failure === 'insufficient' && <p className="hint">{INSUFFICIENT_TEXT_MESSAGE}</p>}
       {text !== null && canSelect && (
         <p className="hint">"—": belgede açıkça bulunamadı. Bu bir hata değildir; belge yine analiz edilebilir.</p>
       )}
@@ -1388,6 +1411,14 @@ function App() {
     // 422 failed gövdesi kabul edilmiş bir dosyadır (D-004): Belge Görünümü için türü saklanır.
     const failedBody = isFailedBody(result.body) ? (result.body as ClassifyResponse) : null
     patch(item.key, { state: 'failed', result: failedBody, error: requestProblem(result) })
+    if (failedBody !== null) {
+      // Gövde metni taşımaz; kayda yazılan (yetersiz de olsa) metin önizlemede gösterilsin diye mevcut detay
+      // endpoint'inden okunur. İstek çalıştırıcı içinde kalır, sıradaki dosya bundan sonra başlar.
+      const detail = await request(`/api/documents/${failedBody.document_id}`)
+      if (detail.status === 200) {
+        patch(item.key, { storedText: (detail.body as DocumentDetail).extracted_text })
+      }
+    }
   }
 
   async function analyzeItem(item: BatchItem) {
@@ -1656,7 +1687,7 @@ function App() {
                     <th scope="col">Dosya</th>
                     <th scope="col">Format · Boyut</th>
                     <th scope="col">Durum</th>
-                    <th scope="col" className="col-actions">
+                    <th scope="col">
                       <span className="visually-hidden">İşlemler</span>
                     </th>
                   </tr>
@@ -1702,37 +1733,40 @@ function App() {
                               {item.removing ? 'Kaldırılıyor' : validated ? 'Onaylandı' : BATCH_LABELS[item.state]}
                             </span>
                           </td>
-                          <td data-label="İşlem" className="col-actions">
-                            <button
-                              type="button"
-                              className="secondary small"
-                              onClick={() => togglePreview(item)}
-                              disabled={serverFileType(item) === null}
-                              aria-expanded={isOpen}
-                              aria-controls={isOpen ? panelId : undefined}
-                            >
-                              {isOpen ? 'Kapat' : item.state === 'done' || item.state === 'review' ? 'Sonucu Gör' : 'Önizle'}
-                            </button>
-                            {/* D-053: yalnız backend'in retryable dediği failed satırda; metin çıkarımı hatasında yok. */}
-                            {item.state === 'failed' && item.result?.retryable === true && !item.removing && (
+                          <td data-label="İşlem">
+                            <div className="row-actions">
                               <button
                                 type="button"
                                 className="secondary small"
-                                onClick={() => retryFailed(item.key)}
-                                aria-label={`${item.file.name} için tekrar dene`}
+                                onClick={() => togglePreview(item)}
+                                disabled={serverFileType(item) === null}
+                                aria-expanded={isOpen}
+                                aria-controls={isOpen ? panelId : undefined}
                               >
-                                Tekrar Dene
+                                {isOpen ? 'Kapat' : item.state === 'done' || item.state === 'review' ? 'Sonucu Gör' : 'Önizle'}
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              className="secondary small"
-                              onClick={() => void removeItem(item.key)}
-                              disabled={item.removing || item.state === 'preparing' || item.state === 'analyzing'}
-                              aria-label={`${item.file.name} dosyasını kaldır`}
-                            >
-                              Kaldır
-                            </button>
+                              {/* D-053: yalnız backend'in retryable dediği failed satırda; metin çıkarımı hatasında yok. */}
+                              {item.state === 'failed' && item.result?.retryable === true && !item.removing && (
+                                <button
+                                  type="button"
+                                  className="secondary small retry-button"
+                                  onClick={() => retryFailed(item.key)}
+                                  aria-label={`${item.file.name} için tekrar dene`}
+                                >
+                                  <RetryIcon />
+                                  Tekrar Dene
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="secondary small"
+                                onClick={() => void removeItem(item.key)}
+                                disabled={item.removing || item.state === 'preparing' || item.state === 'analyzing'}
+                                aria-label={`${item.file.name} dosyasını kaldır`}
+                              >
+                                Kaldır
+                              </button>
+                            </div>
                           </td>
                         </tr>
                         {isOpen && (

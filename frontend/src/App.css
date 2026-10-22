@@ -376,6 +376,22 @@ dl.result-primary {
   margin-top: 1rem;
 }
 
+/* "Tekrar Dene" (D-053): analiz listesinde ve Kayıtlar'da mavi vurgulu ikincil düğme, döngü simgesiyle. Pasif görünüm
+   button.secondary:disabled'dan gelir. */
+button.secondary.retry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+button.secondary.retry-button:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
 /* Tamamlanan tekrar denemenin kısa bilgisi; süren işlem göstergesi (.status) değildir */
 .retry-note {
   margin: 0.5rem 0 0;
@@ -1034,13 +1050,17 @@ button.secondary.evidence-show {
   margin-top: 0.15rem;
 }
 
-.col-actions {
-  text-align: right;
-  white-space: nowrap;
+/* Düğmeler sütuna sığmazsa alt satıra geçer (ör. failed satırda "Tekrar Dene" ile üç düğme); tablonun kırpılan
+   kenarına taşmaz. */
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }
 
-.col-actions button + button {
-  margin-left: 0.35rem;
+.row-actions button {
+  white-space: nowrap;
 }
 
 .badge.batch-queued,
@@ -1306,8 +1326,8 @@ dl.preview-fields {
     scroll-padding-bottom: 0;
   }
 
-  .col-actions {
-    text-align: left;
+  .row-actions {
+    justify-content: flex-start;
   }
 
   .file-size {

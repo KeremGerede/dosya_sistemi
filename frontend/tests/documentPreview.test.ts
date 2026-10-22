@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildDocumentPreview } from '../src/documentPreview.ts'
+import { buildDocumentPreview, extractionFailure } from '../src/documentPreview.ts'
 
 // Backend'in döndürdüğü biçim: normalize edilmiş, satır sonu olmayan tek satır metin.
 const TEMIZLIK_TEXT =
@@ -232,5 +232,19 @@ describe('Normalize edilmiş tek satır metin', () => {
     assert.equal(result.documentNo, null)
     assert.equal(result.sender, null)
     assert.equal(result.senderInstitution, null)
+  })
+})
+
+describe('extractionFailure (prepare 422: kayıttaki metin)', () => {
+  test('kayıtta metin varsa sınıflandırma için yetersizdir; "metin çıkarılamadı" sayılmaz', () => {
+    assert.equal(extractionFailure('TEST'), 'insufficient')
+  })
+
+  test('kayıtta metin yoksa hiç çıkarılamamıştır', () => {
+    assert.equal(extractionFailure(null), 'no_text')
+  })
+
+  test('kayıt okunamadıysa iki durum ayırt edilmez', () => {
+    assert.equal(extractionFailure(undefined), 'unknown')
   })
 })

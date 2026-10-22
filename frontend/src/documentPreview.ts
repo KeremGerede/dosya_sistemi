@@ -229,3 +229,16 @@ export function buildDocumentPreview(extractedText: string | null, fileName: str
     content: content === '' ? null : content,
   }
 }
+
+// Prepare'de metin çıkarımı başarısız olan (422) belgenin önizlemede nasıl anlatılacağı. 422 gövdesi metni taşımaz;
+// kayıttaki metin detay endpoint'inden okunur. Backend boş olmayan metni yalnız uzunluk sınırının (D-026) altında
+// kaldığında saklar: metin varsa yetersizdir, null ise hiç çıkarılamamıştır. Detay okunamadıysa (undefined) ikisi
+// ayırt edilmez.
+export type ExtractionFailure = 'insufficient' | 'no_text' | 'unknown'
+
+export function extractionFailure(storedText: string | null | undefined): ExtractionFailure {
+  if (storedText === undefined) {
+    return 'unknown'
+  }
+  return storedText === null ? 'no_text' : 'insufficient'
+}
