@@ -277,6 +277,7 @@ Sunucu tarafındaki akış `PROJECT_BRAIN.md` §2 "İki adımlı akış"ta, ayr�
 - En fazla 5 dosya çoklu seçim veya sürükle-bırakla eklenir. Uzantı ve 50 MB ön kontrolü yalnız kullanıcı deneyimi içindir; kabul kararı backend'indir (D-040).
 - İstemci aynı anda tek bir prepare veya classify isteği gönderir; bir dosyanın hatası diğerlerinin işlenmesini durdurmaz (D-045, D-020).
 - Önizlemenin varsayılanı, çıkarılan metinden tarayıcıda deterministik olarak oluşturulan "Belge Önizlemesi" formudur: dosya adı, hitap/başlık, konu, tarih, evrak no, gönderen, gönderen kurum ve belge içeriği. Açıkça bulunamayan alan `—` kalır; form saklanmaz ve Gemini kullanmaz.
+- Metin çıkarımı başarısız (`422`) satırın önizlemesi kayıttaki metni detay endpoint'inden okur: metin varsa gösterilir ve "Sınıflandırma için yeterli metin çıkarılamadı." notu eklenir (D-026); metin yoksa "Bu belgeden metin çıkarılamadı." yazar.
 - Orijinal belge (PDF, JPG/JPEG/PNG) tarayıcıdaki dosyadan, ayrı bir görüntüleme penceresinde (modal `<dialog>`) açılır; sunucuda önizleme endpoint'i yoktur. DOC/DOCX'te önizleme formu ve çıkarılan metin gösterilir.
 - Sınıflandırma, kullanıcı analizi başlattıktan sonra çalışır. Sonuç kartında sırasıyla belge türü ve hedef kurum (effective değer, F-06), inceleme nedeni, onay kontrolleri (F-06), belgedeki ilgili ifade (F-04), AI özeti, gönderen ve orijinal belgeyi görme/indirme bulunur. Analizden sonra önizleme ve çıkarılan metin kapalı bir bölüme iner.
 - Her istek için ayrı 120 sn zaman aşımı uygulanır (D-039). Sınıflandırmada `409` alınırsa kaydın gerçek durumu detay endpoint'inden okunur; Gemini tekrar çağrılmaz.
@@ -292,6 +293,7 @@ Sunucu tarafındaki akış `PROJECT_BRAIN.md` §2 "İki adımlı akış"ta, ayr�
 - 24 saatten eski sahipsiz `prepared` kayıtlar sonraki prepare'de temizlenir; taze `prepared` ve kalıcı kayıtlar korunur; temizlik hatası prepare'i düşürmez — `api::test_prepare_cleans_up_expired_orphan_prepared_documents`, `api::test_cleanup_keeps_fresh_prepared_and_all_permanent_records`, `api::test_cleanup_failure_does_not_break_prepare`.
 - Yedek OCR işareti `prepared` kayıtta tutulur, sınıflandırmada korunur, sınıflandırma başarısızsa temizlenir — `api::test_prepare_with_fallback_marks_prepared_record_and_classify_keeps_it`, `api::test_classify_prepared_fallback_document_error_clears_review_flag`.
 - Önizleme formu yalnız açıkça yazan alanları okur, tahmin etmez — `preview:` "birden fazla farklı etiketsiz tarih varsa tahmin etmez", "muhatap belediye gönderen kurum sayılmaz", "düzyazıdaki etiket benzeri kelimelerden hiçbir alan uydurulmaz".
+- `422` önizlemesinde kayıttaki metin yetersiz metin sayılır, "metin çıkarılamadı" sayılmaz — `preview:` "kayıtta metin varsa sınıflandırma için yetersizdir; "metin çıkarılamadı" sayılmaz", "kayıtta metin yoksa hiç çıkarılamamıştır".
 - Arayüz kuralları (5 dosya sınırı, ön kontrol, sıralı işleme, 120 sn zaman aşımı, sonuç kartı düzeni) için otomatik test yoktur; gerçek tarayıcıda elle doğrulanır (`CURRENT_STATE.md` → "Teknik baseline", test kapsamı). Kod: `frontend/src/App.tsx` (`MAX_BATCH_FILES`, `MAX_FILE_SIZE`, `REQUEST_TIMEOUT_MS`, `runQueue`, `recoverAfterConflict`).
 
 **Sınırlar**
@@ -300,7 +302,7 @@ Sunucu tarafındaki akış `PROJECT_BRAIN.md` §2 "İki adımlı akış"ta, ayr�
 - **`prepared` akışı (D-040, D-046):** 5 dosya sınırı yalnız arayüzdedir. Sahipsiz `prepared` kayıt yalnız sonraki prepare çağrısında temizlenir. Aynı kayıt için eşzamanlı classify ve classify sırasında silme nadir kenar durumlarıdır.
 - PDF orijinal görünümü tarayıcının yerleşik PDF görüntüleyicisine bağlıdır (çoğu mobil tarayıcıda yoktur); DOC/DOCX için orijinal görünüm yoktur.
 
-**Referanslar:** D-020, D-039, D-040, D-045, D-046 · Kod: `api/documents.py` (`prepare_document`, `classify_prepared_document`, `discard_prepared_document`, `_delete_expired_prepared`), `frontend/src/App.tsx`, `frontend/src/documentPreview.ts` (`buildDocumentPreview`) · Görev: T-07
+**Referanslar:** D-020, D-039, D-040, D-045, D-046 · Kod: `api/documents.py` (`prepare_document`, `classify_prepared_document`, `discard_prepared_document`, `_delete_expired_prepared`), `frontend/src/App.tsx`, `frontend/src/documentPreview.ts` (`buildDocumentPreview`, `extractionFailure`) · Görev: T-07
 
 ## F-06 — Kullanıcı onayı ve yönlendirme düzeltmesi
 
