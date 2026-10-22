@@ -440,6 +440,20 @@
   - D-050'nin diğer hükümleri (aynı çağrı, kaynakta birebir doğrulama, persistence, API, bölüm başlığı ve yeri, kapsam dışı öğeler) değişmeden geçerlidir. Backend, API ve DB değişmez.
 - **Gerekçe:** İki ifade gösterildiğinde kullanıcı hangisinin belge türüne, hangisinin hedef kuruma ilişkin olduğunu ayırt edemiyordu (manuel test geri bildirimi). `supports` kapalı bir enum'dur; şema tanımsız değeri atar ve backend kurum `null` iken yalnız `document_type` kabul eder, bu yüzden başlık eşlemesi deterministiktir. İfadenin neyi desteklediği modelin önerisidir; başlıklar bu yüzden AI önerisinin parçası olan bölümde, "dayanak" diliyle gösterilir.
 
+### D-053 — Sınıflandırması başarısız olan belgenin tekrar denenmesi
+- **Durum:** Aktif · **Tarih:** 2026-10-22 · **Referans:** F-09, F-08; D-004, D-034, D-045, D-046, D-047; INV-5
+- **Karar:**
+  - **Metin kaynağı kalıcıdır:** `documents.ocr_fallback` nullable boolean; migration `261a2937eb7c`, backfill/default/index/constraint yok. Metin çıkarımı başarılıysa yazılır: `true` Tesseract yedeği (D-047), `false` dijital metin veya Gemini transkripsiyonu. `NULL`: çıkarım tamamlanmadı (422) ya da kayıt bu alandan önce oluştu. Sınıflandırma hatası `needs_review`/`review_reason`'ı temizlemeye devam eder (D-004, D-046); bilgi yalnız bu kolonda kalır.
+  - **Tek uygunluk kuralı:** Kayıt tekrar denenebilir ⇔ `status = failed` ∧ `ocr_fallback` dolu ∧ kayıttaki metin ≥ 10 karakter (D-026). Kural backend'de tek fonksiyondadır; yanıtlar bunu `retryable: bool` olarak taşır (classify, prepare, liste, detay, onay ve failed gövdeleri). Metin kaynağı bilinmeyen eski kayıtlar tahminle uygun sayılmaz.
+  - **Ayrı endpoint:** `POST /api/documents/{document_id}/retry-classification`. `/{id}/classify` değişmez; failed kayda `409` vermeye devam eder (D-046 kurtarma sözleşmesi).
+    - Kayıt `SELECT … FOR UPDATE NOWAIT` ile okunur; kilit Gemini cevabı ve commit/rollback'e kadar tutulur. Kilit alınamazsa (`55P03`) rollback + `409`; Gemini çağrılmaz. Uygunluk kilit altında kontrol edilir.
+    - Uygun değilse `409` (`classified`/`needs_review`: "zaten işlenmiş"; diğerleri: "yeniden sınıflandırılamaz"); orijinal dosya yoksa `409`. Hepsinde Gemini çağrılmaz, kayıt değişmez.
+    - Uygunsa yedek OCR işareti `ocr_fallback`'ten yalnız bellekte kurulur ve mevcut `_classify_into` çalışır: tek Gemini çağrısı (D-033), metin çıkarımı/OCR tekrar çalışmaz, aynı kayıt ID'si, dosya ve metin kullanılır.
+    - Başarıda `200` ve commit. Gemini yine başarısızsa hiçbir alan yazılmaz (rollback), `502` ve kayıt önceki failed hâliyle kalır. Commit hatasında rollback + `500`; diğer veritabanı hataları da `500`. Teknik ayrıntı dönmez (INV-6).
+    - Kayıt hiçbir durumda `prepared`'a çekilmez: prepared TTL temizliği kalıcı kayda dokunmamalıdır (INV-5). Yeni ara durum, kuyruk, worker ve otomatik retry yoktur.
+  - **Arayüz:** "Tekrar Dene" yalnız `retryable` kayıtta görünür: analiz listesinde failed satırda ve Kayıtlar'da failed kayıt detayında. İstek sıralı çalıştırıcıdan geçer; analiz sürerken Kayıtlar'daki düğme kilitlidir (D-045). `409`'da kaydın güncel durumu detay endpoint'inden okunur; mesajlar frontend'in genel Türkçe metinleridir. Kayıtlar'da başarılı sonuç analiz listesine de yansır.
+- **Gerekçe:** Geçici Gemini hatasında kullanıcı belgeyi yeniden yüklemek zorunda kalıyordu; metin, dosya ve kayıt zaten saklıydı. Tek `failed` durumu çıkarım ve sınıflandırma hatalarını ayırmadığı ve sınıflandırma hatası yedek OCR işaretini sildiği için, kalıcı bir metin kaynağı alanı olmadan yapılan retry taranmış belgeyi incelemesiz sınıflandırabilirdi (D-047 ihlali). Satır kilidi, eşzamanlı iki isteğin hem çift Gemini çağrısını hem de "failed ama sonuç dolu" tutarsız kaydı önler; kilit tek belge satırındadır ve NOWAIT ile bekleyen istek birikmez. Bilinen sınırlar: kilit yalnız PostgreSQL'de çalışır (SQLite testleri sınamaz; gerçek PostgreSQL'de doğrulandı) ve migration öncesi failed kayıtlar yeniden yüklenmelidir.
+
 ### D-020 — Senkron işleme
 - **Durum:** Aktif · **Git:** giriş 2026-09-15, son değişiklik 2026-10-03 · **Referans:** F-05; `PROJECT_BRAIN.md` §2
 - **Karar:**

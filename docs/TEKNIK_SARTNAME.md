@@ -20,6 +20,7 @@
 | F-06 | Kullanıcı onayı ve yönlendirme düzeltmesi | Uygulandı (2026-10-06) | D-049 |
 | F-07 | Kayıtlar | Uygulandı | D-043, D-048 |
 | F-08 | API ve hata sözleşmesi | Uygulandı | D-019, D-032, D-034 |
+| F-09 | Başarısız sınıflandırmayı tekrar deneme | Uygulandı (2026-10-22) | D-053 |
 
 ## Ortak teknoloji ve yapılandırma
 
@@ -280,6 +281,7 @@ Sunucu tarafındaki akış `PROJECT_BRAIN.md` §2 "İki adımlı akış"ta, ayr�
 - Sınıflandırma, kullanıcı analizi başlattıktan sonra çalışır. Sonuç kartında sırasıyla belge türü ve hedef kurum (effective değer, F-06), inceleme nedeni, onay kontrolleri (F-06), belgedeki ilgili ifade (F-04), AI özeti, gönderen ve orijinal belgeyi görme/indirme bulunur. Analizden sonra önizleme ve çıkarılan metin kapalı bir bölüme iner.
 - Her istek için ayrı 120 sn zaman aşımı uygulanır (D-039). Sınıflandırmada `409` alınırsa kaydın gerçek durumu detay endpoint'inden okunur; Gemini tekrar çağrılmaz.
 - "Kaldır", `prepared` kaydı ve dosyasını siler; sahipsiz `prepared` kayıtlar 24 saatten eskiyse sonraki prepare çağrısında temizlenir (D-046).
+- Sınıflandırması Gemini hatasıyla başarısız olan satırda "Tekrar Dene" görünür; belge yeniden yüklenmez (F-09, D-053).
 
 **Kabul ölçütleri**
 
@@ -375,6 +377,7 @@ V1.4 iki adımlı akış (D-045, D-046):
 | **`POST /api/documents/prepare`** | Girdi legacy endpoint'le aynı. Başarıda `200` ve detay yanıtıyla aynı şekil (`status = "prepared"`, `extracted_text` dahil). `413` / `415` / doğrulama `422` / `failed` + `422` / `500` legacy endpoint'le aynıdır. Gemini sınıflandırması çağrılmaz, `502` yoktur (OCR gereken belgede transkripsiyon çağrısı yapılır; hatası Tesseract yedeğine gider) |
 | **`POST /api/documents/{document_id}/classify`** | Kayıttaki metinle sınıflandırır. `200` (`classified` / `needs_review`) · `502` (`failed`) · `404` (kayıt yok) · `409` (kayıt `prepared` değil ya da orijinal dosya storage'da yok; Gemini çağrılmaz, kayıt değişmez) · `500` (kayıt `prepared` kalır) |
 | **`DELETE /api/documents/{document_id}/prepared`** | Yalnızca `prepared` kaydı ve dosyasını siler. `204` · `404` · `409` (kalıcı kayıt; dokunulmaz) · `500` (kayıt `prepared` kalır) |
+| **`POST /api/documents/{document_id}/retry-classification`** | Sınıflandırması başarısız kaydı kayıttaki metinle yeniden sınıflandırır (F-09, D-053). `200` (`classified` / `needs_review`) · `502` (yine başarısız; kayıt değişmez) · `404` · `409` (başka istek işliyor, kayıt uygun değil ya da orijinal dosya yok; Gemini çağrılmaz, kayıt değişmez) · `500` (kayıt değişmez) |
 
 Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
 
@@ -418,6 +421,8 @@ Başarılı yanıt en az şu alanları içerir:
 Yanıtlar ayrıca kullanıcı onayı alanlarını içerir: `validated_document_type`, `validated_document_type_name`, `validated_institution_id`, `validated_institution_name`, `validated_at`. Onaysız kayıtta hepsi `null`'dır; adlar aynı kuralla katalogdan çözülür (D-049). `document_type` ve `institution_id` her zaman AI sonucudur.
 
 Yanıtlar ayrıca `routing_evidence` alanını içerir: `[{"quote": "...", "supports": "document_type" | "institution" | "both"}]`. Doğrulanan ifade yoksa `[]`; `prepared`, `failed` ve migration öncesi kayıtlarda `null` (D-050). Ayrı evidence endpoint'i yoktur.
+
+Yanıtlar ayrıca `retryable: bool` alanını içerir: kayıt sınıflandırma aşamasında başarısız oldu ve aynı metinle tekrar denenebilir (F-09, D-053). Backend tek kuraldan hesaplar; `failed` olmayan, metin çıkarımı başarısız olan ve metin kaynağı bilinmeyen eski kayıtlarda `false`.
 
 `file_reference` ve `extracted_text` veritabanında saklanır ama bu endpoint'in yanıtında **dönmez**.
 
@@ -476,4 +481,38 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 - Authentication ve yetkilendirme yoktur (D-025). CORS middleware yoktur; geliştirmede Vite proxy kullanılır (D-038). Dağıtım kararları T-12'dedir.
 - Endpoint'lerde arama, filtre ve sayfalama yoktur (D-043, D-048).
 
-**Referanslar:** D-019, D-032, D-034, D-043, D-046, D-049, D-050 · Kod: `api/documents.py`, `api/catalogs.py`, `main.py`, `schemas/classification.py`, `database.py` · Görev: T-05, T-12
+**Referanslar:** D-019, D-032, D-034, D-043, D-046, D-049, D-050, D-053 · Kod: `api/documents.py`, `api/catalogs.py`, `main.py`, `schemas/classification.py`, `database.py` · Görev: T-05, T-12
+
+## F-09 — Başarısız sınıflandırmayı tekrar deneme
+
+**Durum:** Uygulandı (2026-10-22)
+
+**Amaç:** Gemini/API kaynaklı geçici bir hatayla sınıflandırılamayan belgenin, yeniden yüklenmeden, aynı kayıt, dosya ve çıkarılan metinle tekrar sınıflandırılabilmesi.
+
+**Davranış**
+
+- Kayıt yalnız sınıflandırma aşamasında başarısız olduysa tekrar denenebilir: `status = failed`, metin kaynağı (`ocr_fallback`) biliniyor ve metin ≥ 10 karakter. Metin çıkarımı hatası (422) ve metin kaynağı bilinmeyen migration öncesi kayıt tekrar denenemez; belge yeniden yüklenir. Kural backend'de tektir ve yanıtlarda `retryable` olarak döner (D-053).
+- `POST /api/documents/{document_id}/retry-classification` kaydı PostgreSQL satır kilidiyle (`FOR UPDATE NOWAIT`) okur; aynı belgeye eşzamanlı ikinci istek Gemini çağrılmadan `409` alır. Uygunluk kilit altında kontrol edilir; orijinal dosya storage'da olmalıdır.
+- Metin çıkarımı, OCR ve transkripsiyon tekrar çalışmaz. Tesseract yedeğiyle okunmuş belgenin sonucu yine `needs_review` olur ve yedek OCR gerekçesini taşır (D-047).
+- Gemini yine başarısızsa kayda hiçbir alan yazılmaz (rollback); yanıt `502`, kayıt önceki failed hâliyle kalır ve tekrar denenebilir. Kayıt hiçbir durumda `prepared`'a çekilmez (INV-5).
+- Arayüz: "Tekrar Dene" analiz listesinde `retryable` failed satırda ve Kayıtlar'da `retryable` failed kayıt detayında görünür. İstek sıralı çalıştırıcıdan geçer; analiz sürerken Kayıtlar'daki düğme kilitlidir (D-045). `409`'da kaydın güncel durumu detay endpoint'inden okunur; kullanıcıya genel Türkçe mesaj gösterilir. Kayıtlar'da başarı mesajı gösterilir; sonuç analiz listesindeki aynı belgeye de yansır.
+
+**Kabul ölçütleri**
+
+- Metin kaynağı çıkarımda yazılır: dijital ve Gemini `false`, Tesseract yedeği `true`, çıkarım hatası `NULL` — `api::test_extraction_records_ocr_fallback_source`.
+- Başarılı tekrar deneme aynı kaydı, dosyayı ve metni kullanır, metin çıkarımı/OCR tekrar çalışmaz, yedek OCR işareti geri kurulur; sonrasında onay çalışır — `api::test_retry_classification_success_uses_same_record_without_reextracting`.
+- Gemini yine başarısızsa yalnız rollback yapılır, kayıt birebir aynı kalır ve sonraki deneme kilide takılmaz — `api::test_retry_classification_error_rolls_back_and_keeps_failed_record`.
+- `classified`, `needs_review`, `prepared`, metin kaynağı bilinmeyen, çıkarımı başarısız ve metni yetersiz kayıt `409` alır; Gemini çağrılmaz, kayıt değişmez — `api::test_retry_rejects_non_retryable_record_with_409`; dosya yoksa `409` — `api::test_retry_without_source_file_returns_409_and_keeps_record`; bilinmeyen/geçersiz ID `404`/`422` — `api::test_retry_unknown_or_invalid_document`.
+- Commit hatası `500` ve kayıt değişmez — `api::test_retry_commit_failure_returns_500_and_keeps_failed_record`. Kilit çakışması (`55P03`) `409`, diğer veritabanı hataları `500`; ikisinde de Gemini çağrılmaz ve rollback yapılır — `api::test_retry_lock_conflict_returns_409_without_gemini_call`, `api::test_retry_other_database_error_is_500_not_busy` (SQLite'ta simülasyon).
+- Legacy ve iki adımlı akışta sınıflandırma hatası D-004 alanlarını değiştirmez ve `retryable = true` döner; `/{id}/classify` failed kayda `409` vermeye devam eder; çıkarım hatası `retryable = false` — `api::test_classification_failures_are_retryable_and_keep_d004_fields`, `api::test_extraction_failure_is_not_retryable`.
+- `409` sonrası mesaj seçimi — `records:` "kayıt başka bir istekte sınıflandırıldıysa mesaj yoktur", "kayıt hâlâ failed ve uygunsa başka bir istek sürüyordur", "kayıt failed ama uygun değilse belge yeniden yüklenmelidir".
+- Gerçek PostgreSQL'de (2026-10-22, geçici DB): eşzamanlı iki istekte ikincisi Gemini beklemeden `409` alır ve Gemini tek kez çağrılır; çağrı sırasında satır kilitli, sonrasında serbesttir; Gemini hatasında kayıt birebir aynı kalır; açık transaction kalmaz. Migration upgrade/downgrade mevcut kayıtları korur; `alembic check` temiz.
+
+**Sınırlar**
+
+- Satır kilidi yalnız PostgreSQL'de çalışır; otomatik testler SQLite kullandığı için kilit çakışması orada simüle edilir, gerçek davranış gerçek ortamda doğrulanır.
+- Kilit Gemini çağrısı boyunca (en kötü ~93 sn, D-033) tek belge satırında tutulur.
+- Migration öncesi failed kayıtlar (`ocr_fallback` NULL) tekrar denenemez; backfill yoktur. Otomatik veya zamanlanmış tekrar deneme yoktur.
+- Arayüz davranışı (düğmenin görünmesi, kilitlenmesi, mesajlar) için bileşen testi yoktur; gerçek tarayıcıda elle doğrulanır.
+
+**Referanslar:** D-053, D-004, D-034, D-045, D-046, D-047 · Kod: `api/documents.py` (`retry_classification`, `_lock_for_retry`, `_is_classification_retryable`, `_extract_into`), `models/document.py` (`ocr_fallback`), `alembic/versions/261a2937eb7c_add_ocr_fallback.py`, `frontend/src/App.tsx` (`retryClassification`, `retryItem`, `retryFromRecords`), `frontend/src/records.ts` (`retryConflict`)

@@ -150,6 +150,7 @@ Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde 
 | POST | `/api/documents/prepare` | Belgeyi doğrular, saklar ve metnini çıkarır (`status = prepared`); sınıflandırma yapmaz |
 | POST | `/api/documents/{document_id}/classify` | Hazırlanmış belgeyi kayıttaki metinle sınıflandırır |
 | DELETE | `/api/documents/{document_id}/prepared` | Sınıflandırılmamış belgeyi ve dosyasını siler |
+| POST | `/api/documents/{document_id}/retry-classification` | Sınıflandırması başarısız belgeyi yeniden yüklemeden, kayıttaki metinle tekrar sınıflandırır |
 | POST | `/api/documents/classify` | Legacy tek adımlı akış (yükleme + sınıflandırma); arayüz kullanmaz |
 | GET | `/api/documents` | Kayıt listesi; en yeni önce, `prepared` kayıtlar hariç |
 | GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metin dahil |

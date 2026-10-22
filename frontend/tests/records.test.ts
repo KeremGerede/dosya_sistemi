@@ -14,6 +14,7 @@ import {
   findEvidenceInText,
   filterRecords,
   recordDisplayState,
+  retryConflict,
   routingEvidenceSection,
 } from '../src/records.ts'
 import type { RoutingEvidence } from '../src/records.ts'
@@ -495,5 +496,20 @@ describe('findEvidenceInText ("Metinde göster", F-04)', () => {
   test('metin null veya ifade boşsa null döner', () => {
     assert.equal(findEvidenceInText(null, 'kaldırım'), null)
     assert.equal(findEvidenceInText(TEXT, ''), null)
+  })
+})
+
+describe('retryConflict (D-053: tekrar denemede 409 sonrası güncel kayıt)', () => {
+  test('kayıt başka bir istekte sınıflandırıldıysa mesaj yoktur', () => {
+    assert.equal(retryConflict({ status: 'classified', retryable: false }), null)
+    assert.equal(retryConflict({ status: 'needs_review', retryable: false }), null)
+  })
+
+  test('kayıt hâlâ failed ve uygunsa başka bir istek sürüyordur', () => {
+    assert.equal(retryConflict({ status: 'failed', retryable: true }), 'busy')
+  })
+
+  test('kayıt failed ama uygun değilse belge yeniden yüklenmelidir', () => {
+    assert.equal(retryConflict({ status: 'failed', retryable: false }), 'not_allowed')
   })
 })

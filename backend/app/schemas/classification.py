@@ -104,6 +104,8 @@ class ClassifyResponse(BaseModel):
     validated_institution_id: str | None
     validated_institution_name: str | None
     validated_at: datetime | None
+    # D-053: kayıt sınıflandırma aşamasında başarısız oldu ve aynı metinle tekrar denenebilir. Backend hesaplar.
+    retryable: bool
 
 
 class FailedClassifyResponse(ClassifyResponse):

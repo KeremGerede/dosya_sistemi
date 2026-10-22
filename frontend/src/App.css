@@ -371,6 +371,18 @@ dl.result-primary {
   margin-top: 1rem;
 }
 
+/* Kayıtlar'da failed kaydın "Tekrar Dene" satırı (D-053): onay kontrolleriyle aynı yerde */
+.retry {
+  margin-top: 1rem;
+}
+
+/* Tamamlanan tekrar denemenin kısa bilgisi; süren işlem göstergesi (.status) değildir */
+.retry-note {
+  margin: 0.5rem 0 0;
+  color: var(--ok-text);
+  font-size: 0.875rem;
+}
+
 .validation .status {
   margin: 0.5rem 0 0;
 }

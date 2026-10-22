@@ -11,6 +11,7 @@ import {
   filterRecords,
   findEvidenceInText,
   recordDisplayState,
+  retryConflict,
   routingEvidenceSection,
 } from './records'
 import type { RecordFilters, RoutingEvidence } from './records'
@@ -54,6 +55,12 @@ const VALIDATION_NOT_FOUND_MESSAGE = 'Belge bulunamadı; onay kaydedilemedi.'
 const VALIDATION_CONFLICT_MESSAGE = 'Bu belge onaylanamaz; yalnız sınıflandırılmış belgeler onaylanabilir.'
 const VALIDATION_INVALID_MESSAGE = 'Seçilen değer geçerli değil.'
 const VALIDATION_FAILED_MESSAGE = 'Onay kaydedilemedi. Lütfen tekrar deneyin.'
+const RETRY_BUSY_MESSAGE = 'Belge şu anda başka bir işlemde; biraz sonra tekrar deneyin.'
+const RETRY_NOT_ALLOWED_MESSAGE = 'Bu belge yeniden sınıflandırılamaz; gerekirse belgeyi yeniden yükleyin.'
+const RETRY_NOT_FOUND_MESSAGE = 'Belge bulunamadı. Lütfen kayıtları yenileyin.'
+const RETRY_FAILED_MESSAGE = 'Tekrar deneme tamamlanamadı; birazdan yeniden deneyebilirsiniz.'
+const RETRY_WAIT_MESSAGE = 'Analiz sürerken tekrar denenemez; işlem bitince yeniden deneyin.'
+const RETRY_SUCCESS_MESSAGE = 'Belge yeniden sınıflandırıldı.'
 
 type DocumentStatus = 'classified' | 'needs_review' | 'failed'
 
@@ -80,6 +87,8 @@ type ClassifyResponse = {
   validated_institution_id: string | null
   validated_institution_name: string | null
   validated_at: string | null
+  // D-053: sınıflandırması başarısız ve aynı metinle tekrar denenebilir; backend hesaplar.
+  retryable: boolean
   message?: string
 }
 
@@ -109,6 +118,7 @@ type BatchItem = {
   state: BatchState
   selected: boolean
   removing: boolean // discard isteği sürüyor
+  retrying: boolean // D-053: sıradaki/çalışan istek classify değil, failed kaydın tekrar denenmesi
   prepared: PreparedDocument | null
   result: ClassifyResponse | null // prepare'in failed (422) gövdesi veya sınıflandırma sonucu
   error: string | null // yalnız genel Türkçe mesaj; teknik ayrıntı gösterilmez
@@ -219,6 +229,34 @@ function requestProblem(result: RequestResult): string {
   return errorMessage(result.status, result.body)
 }
 
+type RetryOutcome = { record: ClassifyResponse | null; error: string | null }
+
+// Tekrar deneme (D-053): kayıttaki metinle yeniden sınıflandırma. 409'da backend Gemini'yi çağırmadı; kaydın gerçek
+// durumu mevcut detay endpoint'inden okunur (D-046 deseni). Mesajlar genel Türkçe metinlerdir, backend ayrıntısı
+// gösterilmez. record null ise kayıt bilinmiyor ya da istek tamamlanamadı; çağıran eldeki kaydı korur.
+async function retryClassification(documentId: string): Promise<RetryOutcome> {
+  const result = await request(`/api/documents/${documentId}/retry-classification`, { method: 'POST' })
+  if (result.status === 200) {
+    return { record: result.body as ClassifyResponse, error: null }
+  }
+  if (result.status === 502) {
+    return { record: isFailedBody(result.body) ? (result.body as ClassifyResponse) : null, error: errorMessage(502, result.body) }
+  }
+  if (result.status === 404) {
+    return { record: null, error: RETRY_NOT_FOUND_MESSAGE }
+  }
+  if (result.status === 409) {
+    const current = await request(`/api/documents/${documentId}`)
+    if (current.status !== 200) {
+      return { record: null, error: RETRY_BUSY_MESSAGE }
+    }
+    const record = current.body as DocumentDetail
+    const conflict = retryConflict(record)
+    return { record, error: conflict === null ? null : conflict === 'busy' ? RETRY_BUSY_MESSAGE : RETRY_NOT_ALLOWED_MESSAGE }
+  }
+  return { record: null, error: result.status === null ? requestProblem(result) : RETRY_FAILED_MESSAGE }
+}
+
 // Onay hatası (D-049): kısa Türkçe mesaj; FastAPI'nin 422 ayrıntısı gösterilmez.
 function validationProblem(result: RequestResult): string {
   if (result.status === null) {
@@ -295,8 +333,20 @@ function FileTypeIcon({ fileType }: { fileType: string }) {
   )
 }
 
-function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) => void }) {
+// Kayıtlar'daki tekrar deneme durumu (D-053): hangi kayıt için, istek sürüyor mu, son mesaj.
+type RecordRetryState = { documentId: string; pending: boolean; error: string | null; succeeded: boolean }
+
+function RecordsView({
+  onValidated,
+  onRetry,
+  busy,
+}: {
+  onValidated: (updated: DocumentSummary) => void
+  onRetry: (documentId: string) => Promise<RetryOutcome | null>
+  busy: boolean // analiz listesinde istek sürüyor; tek istek kuralı (D-045)
+}) {
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null)
+  const [retryState, setRetryState] = useState<RecordRetryState | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -329,6 +379,7 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
 
   async function toggle(documentId: string) {
     setEvidenceSelection(null)
+    setRetryState(null)
     if (openId === documentId) {
       setOpenId(null)
       setDetail(null)
@@ -350,6 +401,26 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
     } finally {
       setDetailLoading(false)
     }
+  }
+
+  // Tekrar deneme (D-053): yanıt yalnız ilgili kaydı değiştirir; created_at listedeki kayıttan korunur.
+  async function retry(item: DocumentSummary) {
+    setRetryState({ documentId: item.document_id, pending: true, error: null, succeeded: false })
+    const outcome = await onRetry(item.document_id)
+    if (outcome === null) {
+      setRetryState({ documentId: item.document_id, pending: false, error: RETRY_WAIT_MESSAGE, succeeded: false })
+      return
+    }
+    const record = outcome.record
+    if (record !== null) {
+      setDocuments((current) =>
+        current === null
+          ? current
+          : current.map((existing) => (existing.document_id === record.document_id ? { ...existing, ...record } : existing)),
+      )
+    }
+    const succeeded = record !== null && record.status !== 'failed' && outcome.error === null
+    setRetryState({ documentId: item.document_id, pending: false, error: outcome.error, succeeded })
   }
 
   // Onay yanıtı yalnız ilgili kaydı değiştirir; liste, sayaçlar, filtre ve detay yeniden istek atmadan güncellenir.
@@ -565,6 +636,39 @@ function RecordsView({ onValidated }: { onValidated: (updated: DocumentSummary) 
                         )}
 
                         {item.status !== 'failed' && <ValidationControls record={item} onValidated={applyValidation} />}
+                        {/* D-053: yalnız backend'in retryable dediği failed kayıtta; aynı kayıt ve metin kullanılır. */}
+                        {item.status === 'failed' && item.retryable && (
+                          <div className="retry">
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => void retry(item)}
+                              disabled={busy || retryState?.pending === true}
+                              title={busy ? RETRY_WAIT_MESSAGE : undefined}
+                            >
+                              Tekrar Dene
+                            </button>
+                          </div>
+                        )}
+                        {retryState?.documentId === item.document_id && (
+                          <>
+                            {retryState.pending && (
+                              <p className="status" role="status">
+                                Yeniden sınıflandırılıyor...
+                              </p>
+                            )}
+                            {retryState.succeeded && (
+                              <p className="retry-note" role="status">
+                                {RETRY_SUCCESS_MESSAGE}
+                              </p>
+                            )}
+                            {retryState.error !== null && (
+                              <p className="validation-error" role="alert">
+                                {retryState.error}
+                              </p>
+                            )}
+                          </>
+                        )}
                         <RoutingEvidenceSection
                           record={item}
                           text={detail?.extracted_text ?? null}
@@ -1227,6 +1331,7 @@ function App() {
           state: 'queued',
           selected: false,
           removing: false,
+          retrying: false,
           prepared: null,
           result: null,
           error: null,
@@ -1259,6 +1364,8 @@ function App() {
         }
         if (next.state === 'queued') {
           await prepareItem(next)
+        } else if (next.retrying) {
+          await retryItem(next)
         } else {
           await analyzeItem(next)
         }
@@ -1327,13 +1434,74 @@ function App() {
     }
   }
 
+  // Tekrar deneme (D-053): kayıt failed kalır, yalnız sınıflandırma kayıttaki metinle yeniden çalışır. Satır sıralı
+  // çalıştırıcıdan geçer; aynı anda tek istek kuralı (D-045) korunur. Sonuç yoksa eldeki failed sonuç korunur.
+  async function retryItem(item: BatchItem) {
+    const documentId = item.result?.document_id
+    if (documentId === undefined) {
+      patch(item.key, { state: 'failed', retrying: false, error: UNEXPECTED_MESSAGE })
+      return
+    }
+    patch(item.key, { state: 'analyzing', error: null })
+    const outcome = await retryClassification(documentId)
+    const record = outcome.record ?? item.result
+    patch(item.key, {
+      state: record === null ? 'failed' : stateForStatus(record.status),
+      result: record,
+      error: outcome.error,
+      retrying: false,
+    })
+  }
+
+  function retryFailed(key: number) {
+    const item = itemsRef.current.find((candidate) => candidate.key === key)
+    if (item === undefined || item.removing || item.state !== 'failed' || item.result?.retryable !== true) {
+      return
+    }
+    patch(key, { state: 'waiting', retrying: true, error: null })
+    void runQueue()
+  }
+
+  // Kayıtlar'dan tekrar deneme de aynı tek istek kuralına uyar (D-045): çalıştırıcı meşgulken başlamaz, sürerken
+  // çalıştırıcı bekler; arada eklenen dosyalar sonra sıradan devam eder. Başarılı sonuç analiz listesine de yansır.
+  async function retryFromRecords(documentId: string): Promise<RetryOutcome | null> {
+    if (runningRef.current) {
+      return null
+    }
+    runningRef.current = true
+    setRunning(true)
+    try {
+      const outcome = await retryClassification(documentId)
+      if (outcome.record !== null && outcome.record.status !== 'failed') {
+        applyRetried(outcome.record)
+      }
+      return outcome
+    } finally {
+      runningRef.current = false
+      setRunning(false)
+      void runQueue()
+    }
+  }
+
+  // Kayıtlar'da tekrar denenip sınıflandırılan belgeyi gösteren analiz satırı da güncellenir; listede failed kalmaz.
+  function applyRetried(updated: ClassifyResponse) {
+    commit(
+      itemsRef.current.map((item) =>
+        item.result?.document_id === updated.document_id && item.state === 'failed'
+          ? { ...item, result: updated, state: stateForStatus(updated.status), error: null }
+          : item,
+      ),
+    )
+  }
+
   // Kaldır: sunucuda prepared kaydı olan satır discard edilir (D-046); sıradaki ve terminal satırlar yalnız listeden çıkar.
+  // Tekrar denemeyi bekleyen satırın kaydı failed'dır (kalıcı): o da yalnız listeden çıkar.
   async function removeItem(key: number) {
     const item = itemsRef.current.find((candidate) => candidate.key === key)
     if (item === undefined || item.removing || item.state === 'preparing' || item.state === 'analyzing') {
       return
     }
-    if (item.prepared === null || (item.state !== 'ready' && item.state !== 'waiting')) {
+    if (item.prepared === null || item.retrying || (item.state !== 'ready' && item.state !== 'waiting')) {
       drop([key])
       return
     }
@@ -1443,7 +1611,7 @@ function App() {
       </nav>
 
       {view === 'records' ? (
-        <RecordsView onValidated={applyValidation} />
+        <RecordsView onValidated={applyValidation} onRetry={retryFromRecords} busy={running} />
       ) : (
         <>
           <section
@@ -1545,6 +1713,17 @@ function App() {
                             >
                               {isOpen ? 'Kapat' : item.state === 'done' || item.state === 'review' ? 'Sonucu Gör' : 'Önizle'}
                             </button>
+                            {/* D-053: yalnız backend'in retryable dediği failed satırda; metin çıkarımı hatasında yok. */}
+                            {item.state === 'failed' && item.result?.retryable === true && !item.removing && (
+                              <button
+                                type="button"
+                                className="secondary small"
+                                onClick={() => retryFailed(item.key)}
+                                aria-label={`${item.file.name} için tekrar dene`}
+                              >
+                                Tekrar Dene
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="secondary small"

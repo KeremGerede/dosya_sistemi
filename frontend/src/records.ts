@@ -116,6 +116,18 @@ export function findEvidenceInText(text: string | null, quote: string): Evidence
   return { before: source.slice(0, start), quote: source.slice(start, end), after: source.slice(end) }
 }
 
+// Tekrar denemede 409 (D-053): backend Gemini'yi çağırmadan reddetti; kaydın güncel durumu okunduktan sonra kullanıcıya
+// ne söyleneceği. İşlenmişse (başka sekme bitirmiş) mesaj yok; hâlâ uygunsa başka bir istek sürüyordur; uygun değilse
+// belge yeniden yüklenmelidir. Backend'in 409 metni gösterilmez.
+export type RetryConflict = 'busy' | 'not_allowed' | null
+
+export function retryConflict(record: { status: string; retryable: boolean }): RetryConflict {
+  if (record.status !== 'failed') {
+    return null
+  }
+  return record.retryable ? 'busy' : 'not_allowed'
+}
+
 export type RecordDisplayState = 'classified' | 'needs_review' | 'validated' | 'failed'
 
 // Durum filtresindeki sıra da budur.

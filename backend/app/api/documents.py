@@ -4,6 +4,7 @@
   metin yoksa Gemini transkripsiyonu, gerekirse Tesseract yedeği; D-047) → Gemini sınıflandırması → veritabanı.
 - V1.4 iki adımlı akış (D-045, D-046): POST /prepare (kabul → storage → metin çıkarımı → prepared kaydı),
   POST /{id}/classify (kayıttaki metinle Gemini) ve DELETE /{id}/prepared (hazırlanmış kaydı ve dosyasını siler).
+- POST /{id}/retry-classification: sınıflandırması başarısız olan kaydı aynı metinle yeniden sınıflandırır (D-053).
 - PUT /{id}/validation: kullanıcı onayı (D-049); AI sonucu ve status değişmez, Gemini çağrılmaz.
 - Salt okunur kayıt endpoint'leri (D-043).
 
@@ -21,6 +22,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, create_model
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -48,6 +50,9 @@ DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."
 ALREADY_PROCESSED_MESSAGE = "Belge zaten işlenmiş."
 SOURCE_FILE_MISSING_MESSAGE = "Belgenin orijinal dosyasına ulaşılamadı; belgeyi kaldırıp yeniden yükleyin."
 VALIDATION_NOT_ALLOWED_MESSAGE = "Yalnız sınıflandırılmış belgeler onaylanabilir."
+RETRY_NOT_ALLOWED_MESSAGE = "Bu belge yeniden sınıflandırılamaz; gerekirse belgeyi yeniden yükleyin."
+DOCUMENT_BUSY_MESSAGE = "Belge şu anda işleniyor; lütfen biraz sonra tekrar deneyin."
+LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"  # PostgreSQL lock_not_available: FOR UPDATE NOWAIT çakışması (D-053)
 
 PREPARED_STATUS = "prepared"  # metni çıkarılmış, henüz sınıflandırılmamış belge (D-046)
 PREPARED_TTL = timedelta(hours=24)  # sahipsiz prepared kayıtlar bundan eskiyse sonraki prepare'de temizlenir (D-046)
@@ -201,6 +206,8 @@ def _extract_into(document: Document, content: bytes) -> tuple[int, str] | None:
         return 422, TEXT_EXTRACTION_FAILED_MESSAGE
 
     document.extracted_text = extracted_text
+    # D-053: metin kaynağı kalıcı tutulur; sınıflandırma hatası needs_review'u temizlese de retry bunu kullanır.
+    document.ocr_fallback = ocr_fallback
     if ocr_fallback:
         document.needs_review = True
         document.review_reason = OCR_FALLBACK_REVIEW_REASON
@@ -307,6 +314,94 @@ def classify_prepared_document(document_id: uuid.UUID, db: Annotated[Session, De
         db.rollback()
         raise
     return _respond(body, failure)
+
+
+@router.post(
+    "/{document_id}/retry-classification",
+    response_model=ClassifyResponse,
+    responses={
+        404: {"description": DOCUMENT_NOT_FOUND_MESSAGE},
+        409: {
+            "description": (
+                f"{DOCUMENT_BUSY_MESSAGE} / {ALREADY_PROCESSED_MESSAGE} / {RETRY_NOT_ALLOWED_MESSAGE} / "
+                f"{SOURCE_FILE_MISSING_MESSAGE} Gemini çağrılmaz, kayıt değişmez."
+            )
+        },
+        502: {
+            "model": FailedClassifyResponse,
+            "description": "Gemini ile sınıflandırma yine tamamlanamadı; kayıt değişmeden failed kalır.",
+        },
+    },
+    summary="Sınıflandırması başarısız olan belgeyi kayıttaki metinle yeniden sınıflandırır",
+)
+def retry_classification(document_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]):
+    """Failed kaydın tekrar denenmesi (D-053): aynı kayıt, dosya ve çıkarılan metin kullanılır; OCR tekrar çalışmaz.
+
+    Satır FOR UPDATE NOWAIT ile kilitlenir ve kilit Gemini cevabı ile commit/rollback'e kadar tutulur; aynı belgeye
+    eşzamanlı ikinci istek Gemini çağrılmadan 409 alır. Uygunluk kilit altında kontrol edilir. Gemini yine başarısız
+    olursa hiçbir alan yazılmaz (rollback): kayıt önceki failed hâliyle kalır. Kayıt hiçbir zaman prepared'a
+    çekilmez; prepared TTL temizliği kalıcı kayda dokunmamalıdır (INV-5).
+    """
+    document = _lock_for_retry(document_id, db)
+    try:
+        if not _is_classification_retryable(document):
+            processed = document.status in VALIDATABLE_STATUSES
+            raise HTTPException(status_code=409, detail=ALREADY_PROCESSED_MESSAGE if processed else RETRY_NOT_ALLOWED_MESSAGE)
+        if _stored_file_path(document) is None:
+            logger.warning("Belge %s: orijinal dosya storage'da bulunamadı; tekrar sınıflandırma yapılmadı.", document_id)
+            raise HTTPException(status_code=409, detail=SOURCE_FILE_MISSING_MESSAGE)
+
+        # Prepared kaydın taşıdığı yedek OCR işareti yalnız bellekte geri kurulur; _classify_into onu korur (D-047).
+        document.needs_review = bool(document.ocr_fallback)
+        document.review_reason = OCR_FALLBACK_REVIEW_REASON if document.ocr_fallback else None
+        failure = _classify_into(document)
+        body = _response_body(document, failure)
+        if failure is not None:
+            db.rollback()  # failed kayıt olduğu gibi kalır; kilit bırakılır
+            return _respond(body, failure)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        # Kayıt önceki failed hâlinde kalır; rollback kilidi bırakır, istek tekrar denenebilir.
+        logger.error("Belge %s: tekrar sınıflandırma sonucu kaydedilemedi (%s); işlem geri alınıyor.", document_id, type(exc).__name__)
+        db.rollback()
+        raise
+    return _respond(body, failure)
+
+
+def _lock_for_retry(document_id: uuid.UUID, db: Session) -> Document:
+    """Kaydı satır kilidiyle okur (D-053). Kilit çakışması 409'a çevrilir; diğer veritabanı hataları 500 kalır.
+
+    NOWAIT yalnız PostgreSQL'de çalışır; SQLite FOR UPDATE'i yok sayar (otomatik testler kilidi sınayamaz).
+    """
+    try:
+        document = db.get(Document, document_id, with_for_update={"nowait": True})
+    except OperationalError as exc:
+        db.rollback()
+        if getattr(exc.orig, "sqlstate", None) == LOCK_NOT_AVAILABLE_SQLSTATE:
+            logger.info("Belge %s başka bir istekte işleniyor; tekrar deneme reddedildi.", document_id)
+            raise HTTPException(status_code=409, detail=DOCUMENT_BUSY_MESSAGE) from None
+        raise
+    if document is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND_MESSAGE)
+    return document
+
+
+def _is_classification_retryable(document: Document) -> bool:
+    """Tek kural (D-053): yalnız sınıflandırma aşamasında başarısız olmuş kayıt tekrar denenebilir.
+
+    ocr_fallback yalnız metin çıkarımı başarılıysa yazılır; NULL ya çıkarım hatasıdır (422) ya da metin kaynağı
+    bilinmeyen eski kayıttır ve tahminle tekrar denenmez. Metin uzunluğu savunma amacıyla yeniden kontrol edilir.
+    Orijinal dosyanın varlığı burada değil, endpoint'te kontrol edilir (liste dosya sistemine dokunmaz).
+    """
+    return (
+        document.status == "failed"
+        and document.ocr_fallback is not None
+        and len(document.extracted_text or "") >= file_service.MIN_TEXT_LENGTH
+    )
 
 
 @router.delete(
@@ -468,6 +563,8 @@ def _classify_fields(document: Document) -> dict:
         "validated_institution_id": document.validated_institution_id,
         "validated_institution_name": classification_service.INSTITUTION_NAMES.get(document.validated_institution_id),
         "validated_at": document.validated_at,
+        # D-053: arayüzün "Tekrar Dene" düğmesi; endpoint'teki uygunluk kuralıyla aynı fonksiyondan gelir.
+        "retryable": _is_classification_retryable(document),
     }
 
 

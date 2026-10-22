@@ -139,6 +139,7 @@ Tek tablo: **`documents`**. Şema Alembic migration'larıyla yönetilir; `Base.m
 | `validated_institution_id` | string, null | Kullanıcının onayladığı kurum (katalog `id`); onaylı kayıtta da `null` olabilir ("Belirlenemedi") |
 | `validated_at` | timestamp (tz), null | Son onay zamanı; doluysa `validated_document_type` da doludur |
 | `routing_evidence` | json, null | Kaynakta doğrulanmış ifadeler `[{quote, supports}]` (D-050). `NULL`: evidence üretilmedi (eski kayıt, `prepared`, `failed`); `[]`: sınıflandırma çalıştı, doğrulanan ifade yok. Yalnız başarılı sınıflandırma yazar |
+| `ocr_fallback` | boolean, null | Metin kaynağı (D-053): `true` Tesseract yedeği, `false` dijital metin veya Gemini transkripsiyonu; metin çıkarımı başarılıysa yazılır. `NULL`: çıkarım tamamlanmadı ya da kayıt bu alandan önce oluştu. Failed kaydın tekrar denenmesi buna dayanır |
 | `status` | string, not null | `classified` \| `needs_review` \| `failed` (kalıcı) · `prepared` (V1.4 ara durumu) |
 | `created_at` | timestamp (tz), not null | |
 

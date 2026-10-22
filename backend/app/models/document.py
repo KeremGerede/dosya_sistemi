@@ -32,5 +32,9 @@ class Document(Base):
     # D-050: [{"quote", "supports"}] — yalnız kaynakta doğrulanmış ifadeler. NULL: evidence üretilmedi (eski, prepared,
     # failed); []: sınıflandırma çalıştı, doğrulanan ifade yok. None her zaman SQL NULL olarak yazılır (JSON null değil).
     routing_evidence: Mapped[list[dict] | None] = mapped_column(JSON(none_as_null=True))
+    # D-053: metnin kaynağı; metin çıkarımı başarılıysa yazılır. True: Tesseract yedeği (D-047), False: dijital metin
+    # veya Gemini transkripsiyonu. NULL: çıkarım tamamlanmadı (422) ya da kayıt bu alandan önce oluştu. Sınıflandırma
+    # hatası needs_review'u temizlese de (D-004) bu bilgi kalır; failed kaydın tekrar denenmesi buna dayanır.
+    ocr_fallback: Mapped[bool | None]
     status: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

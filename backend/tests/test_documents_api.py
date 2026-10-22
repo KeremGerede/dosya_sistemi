@@ -40,6 +40,7 @@ RESPONSE_FIELDS = {
     "document_id", "file_name", "file_type", "document_type", "document_type_name", "institution_id", "institution_name",
     "needs_review", "review_reason", "summary", "sender_name", "sender_institution", "status",
     "routing_evidence",  # D-050
+    "retryable",  # D-053: bilinçli API sözleşmesi değişikliği
 } | VALIDATION_FIELDS
 SUMMARY = "Vatandaş sokaktaki çöplerin toplanmadığını bildirip gereğinin yapılmasını istiyor."
 SENDER_NAME = "Ayşe Yılmaz"
@@ -214,6 +215,7 @@ def test_valid_document_is_classified(client, session_factory, storage_dir, fake
         "summary": SUMMARY, "sender_name": SENDER_NAME, "sender_institution": SENDER_INSTITUTION,
         "routing_evidence": [],  # sınıflandırma çalıştı, doğrulanan ifade yok (D-050)
         **dict.fromkeys(VALIDATION_FIELDS),  # yeni sınıflandırılan belge onaysızdır (D-049)
+        "retryable": False,  # D-053: yalnız sınıflandırması başarısız kayıt tekrar denenebilir
     }
     [document] = all_documents(session_factory)
     assert str(document.id) == body["document_id"]
@@ -751,6 +753,7 @@ def test_model_columns_match_migrated_schema():
         "summary", "sender_name", "sender_institution",  # D-044
         "validated_document_type", "validated_institution_id", "validated_at",  # D-049
         "routing_evidence",  # D-050
+        "ocr_fallback",  # D-053
     )
     columns = set(Document.__table__.columns.keys())
     assert set(nullable_columns) <= columns
@@ -2245,4 +2248,319 @@ def test_routing_evidence_migration_follows_validation_head():
     script = ScriptDirectory.from_config(AlembicConfig(str(pathlib.Path(__file__).resolve().parents[1] / "alembic.ini")))
 
     assert script.get_revision("5ed883607e08").down_revision == "c32c5dc8f72e"
-    assert script.get_heads() == ["5ed883607e08"]
+    # Tek head kontrolü D-053 migration testine taşındı (kasıtlı: yeni head 261a2937eb7c).
+
+
+# --- D-053: sınıflandırması başarısız olan belgenin tekrar denenmesi ---
+
+RETRY_NOT_ALLOWED_MESSAGE = "Bu belge yeniden sınıflandırılamaz; gerekirse belgeyi yeniden yükleyin."
+DOCUMENT_BUSY_MESSAGE = "Belge şu anda işleniyor; lütfen biraz sonra tekrar deneyin."
+
+
+def retry_url(document_id) -> str:
+    return f"{LIST_URL}/{document_id}/retry-classification"
+
+
+def insert_failed(session_factory, storage_dir, **overrides) -> Document:
+    """Sınıflandırma aşamasında başarısız kayıt (D-004 alanları): metin ve dosya yerinde, metin kaynağı biliniyor."""
+    fields = {
+        "status": "failed", "document_type": None, "institution_id": None, "needs_review": False,
+        "review_reason": None, "extracted_text": PDF_TEXT, "ocr_fallback": False,
+    }
+    return insert_with_file(session_factory, storage_dir, **(fields | overrides))
+
+
+def row_snapshot(session_factory, document_id) -> dict:
+    """Kaydın bütün kolonları; tekrar denemenin hiçbir alanı değiştirmediğini kanıtlamak için."""
+    document = stored_document(session_factory, document_id)
+    return {column.name: getattr(document, column.name) for column in Document.__table__.columns}
+
+
+@pytest.fixture
+def tracked_session(session_factory):
+    """Kurulunca istek session'ının commit ve rollback çağrılarını sırasıyla kaydeder."""
+    calls = []
+
+    def tracking_get_db():
+        with session_factory() as session:
+            original_commit, original_rollback = session.commit, session.rollback
+
+            def commit():
+                calls.append("commit")
+                original_commit()
+
+            def rollback():
+                calls.append("rollback")
+                original_rollback()
+
+            session.commit, session.rollback = commit, rollback
+            yield session
+
+    def install():
+        app.dependency_overrides[get_db] = tracking_get_db
+        return calls
+
+    return install
+
+
+class FakeDriverError(Exception):
+    """psycopg hatası yerine geçer; yalnız sqlstate taşır."""
+
+    def __init__(self, sqlstate):
+        super().__init__("sürücü hatası")
+        self.sqlstate = sqlstate
+
+
+@pytest.fixture
+def failing_lock(session_factory, monkeypatch):
+    """Kurulunca satır kilidi isteğini (with_for_update ile get) verilen sqlstate'li OperationalError ile düşürür.
+
+    SQLite FOR UPDATE'i yok saydığı için PostgreSQL kilit çakışması (55P03) yalnız bu yolla simüle edilir; gerçek
+    kilit davranışı PostgreSQL üzerinde ayrıca doğrulanır.
+    """
+    rollbacks = []
+
+    def install(sqlstate):
+        def locking_get_db():
+            with session_factory() as session:
+                original_get, original_rollback = session.get, session.rollback
+
+                def get(entity, ident, **kwargs):
+                    if kwargs.get("with_for_update"):
+                        raise OperationalError("SELECT ... FOR UPDATE NOWAIT", None, FakeDriverError(sqlstate))
+                    return original_get(entity, ident, **kwargs)
+
+                def rollback():
+                    rollbacks.append(True)
+                    original_rollback()
+
+                session.get, session.rollback = get, rollback
+                yield session
+
+        app.dependency_overrides[get_db] = locking_get_db
+        return rollbacks
+
+    return install
+
+
+def test_ocr_fallback_migration_follows_routing_evidence_head():
+    script = ScriptDirectory.from_config(AlembicConfig(str(pathlib.Path(__file__).resolve().parents[1] / "alembic.ini")))
+
+    assert script.get_revision("261a2937eb7c").down_revision == "5ed883607e08"
+    assert script.get_heads() == ["261a2937eb7c"]
+
+
+@pytest.mark.parametrize("source", ["digital", "gemini", "tesseract", "insufficient"])
+def test_extraction_records_ocr_fallback_source(client, session_factory, transcription, tesseract, source):
+    if source == "digital":
+        response = prepare(client, "dilekce.pdf", make_pdf(PDF_TEXT))
+    elif source == "gemini":
+        transcription.result = TRANSCRIPT_TEXT
+        response = prepare(client, "foto.jpg", make_image())
+    elif source == "tesseract":
+        tesseract()
+        response = prepare(client, "foto.png", make_image(image_format="png"))
+    else:
+        tesseract("kısa")
+        response = prepare(client, "foto.png", make_image(image_format="png"))
+
+    expected = {"digital": False, "gemini": False, "tesseract": True, "insufficient": None}[source]
+    [document] = all_documents(session_factory)
+    assert document.ocr_fallback is expected
+    assert response.json()["retryable"] is False  # prepared ya da çıkarım hatası tekrar denenemez
+    assert response.status_code == (422 if source == "insufficient" else 200)
+
+
+@pytest.mark.parametrize("ocr_fallback", [False, True], ids=["digital_text", "tesseract_text"])
+def test_retry_classification_success_uses_same_record_without_reextracting(
+    client, session_factory, storage_dir, transcription, fake_classify, forbid_text_extraction, ocr_fallback
+):
+    document = insert_failed(session_factory, storage_dir, ocr_fallback=ocr_fallback)
+    before = row_snapshot(session_factory, document.id)
+    file_bytes = (storage_dir / document.file_reference).read_bytes()
+    extraction_calls = forbid_text_extraction()
+    calls = fake_classify(classification())
+
+    response = client.post(retry_url(document.id))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS
+    expected = ("needs_review", True, OCR_FALLBACK_REASON) if ocr_fallback else ("classified", False, None)
+    assert (body["status"], body["needs_review"], body["review_reason"]) == expected  # D-047 işareti geri kuruldu
+    assert (body["document_id"], body["summary"], body["retryable"]) == (str(document.id), SUMMARY, False)
+    assert calls == [PDF_TEXT]  # kayıttaki metinle tek Gemini çağrısı
+    assert extraction_calls == [] and transcription.calls == []  # metin çıkarımı/OCR tekrar çalışmadı
+    after = row_snapshot(session_factory, document.id)
+    for unchanged in ("id", "file_name", "file_type", "file_reference", "extracted_text", "created_at", "ocr_fallback"):
+        assert after[unchanged] == before[unchanged]
+    assert (after["status"], after["document_type"], after["institution_id"]) == (expected[0], DOCUMENT_TYPE, INSTITUTION)
+    assert (storage_dir / document.file_reference).read_bytes() == file_bytes
+    # Human Validation tekrar denenen kayıtta da aynı çalışır; AI sonucu değişmez (D-049).
+    assert validate(client, document.id).status_code == 200
+    assert stored(session_factory, document.id).document_type == DOCUMENT_TYPE
+
+
+@pytest.mark.parametrize("ocr_fallback", [False, True], ids=["digital_text", "tesseract_text"])
+def test_retry_classification_error_rolls_back_and_keeps_failed_record(
+    client, session_factory, storage_dir, fake_classify, tracked_session, caplog, ocr_fallback
+):
+    document = insert_failed(session_factory, storage_dir, ocr_fallback=ocr_fallback)
+    before = row_snapshot(session_factory, document.id)
+    file_bytes = (storage_dir / document.file_reference).read_bytes()
+    session_calls = tracked_session()
+    calls = fake_classify(classification_error())
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(retry_url(document.id))
+
+    assert response.status_code == 502
+    body = response.json()
+    assert set(body) == RESPONSE_FIELDS | {"message"}
+    assert (body["status"], body["message"], body["needs_review"], body["review_reason"]) == (
+        "failed", CLASSIFICATION_FAILED_MESSAGE, False, None,  # D-004
+    )
+    assert body["retryable"] is True  # kullanıcı tekrar deneyebilir
+    assert calls == [PDF_TEXT]
+    assert session_calls == ["rollback"]  # hiçbir alan yazılmadı, kilit bırakıldı
+    assert row_snapshot(session_factory, document.id) == before
+    assert (storage_dir / document.file_reference).read_bytes() == file_bytes
+    assert SECRET_MARKER not in caplog.text
+
+    # Kilit/transaction açık kalmadı: aynı kayıt bir sonraki denemede sınıflandırılabilir.
+    fake_classify(classification())
+    assert client.post(retry_url(document.id)).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"status": "classified", "document_type": DOCUMENT_TYPE, "institution_id": INSTITUTION}, ALREADY_PROCESSED_MESSAGE),
+        ({"status": "needs_review", "document_type": DOCUMENT_TYPE, "needs_review": True}, ALREADY_PROCESSED_MESSAGE),
+        ({"status": "prepared"}, RETRY_NOT_ALLOWED_MESSAGE),
+        ({"ocr_fallback": None}, RETRY_NOT_ALLOWED_MESSAGE),  # D-053 öncesi kayıt: metin kaynağı bilinmiyor
+        ({"ocr_fallback": None, "extracted_text": None}, RETRY_NOT_ALLOWED_MESSAGE),  # metin çıkarımı hatası (422)
+        ({"extracted_text": "kısa"}, RETRY_NOT_ALLOWED_MESSAGE),  # savunma: metin yetersiz
+    ],
+    ids=["classified", "needs_review", "prepared", "unknown_source", "extraction_failed", "short_text"],
+)
+def test_retry_rejects_non_retryable_record_with_409(
+    client, session_factory, storage_dir, fake_classify, tracked_session, overrides, message
+):
+    document = insert_failed(session_factory, storage_dir, **overrides)
+    before = row_snapshot(session_factory, document.id)
+    session_calls = tracked_session()
+    calls = fake_classify(classification())
+
+    response = client.post(retry_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": message}
+    assert calls == []  # Gemini çağrılmadı
+    assert "commit" not in session_calls and session_calls[-1] == "rollback"
+    assert row_snapshot(session_factory, document.id) == before
+
+
+def test_retry_without_source_file_returns_409_and_keeps_record(client, session_factory, storage_dir, fake_classify):
+    document = insert_failed(session_factory, storage_dir)
+    (storage_dir / document.file_reference).unlink()
+    before = row_snapshot(session_factory, document.id)
+    calls = fake_classify(classification())
+
+    response = client.post(retry_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": SOURCE_FILE_MISSING_MESSAGE}
+    assert calls == []
+    assert row_snapshot(session_factory, document.id) == before
+
+
+def test_retry_unknown_or_invalid_document(client, fake_classify):
+    calls = fake_classify(classification())
+
+    assert client.post(retry_url(uuid.uuid4())).json() == {"detail": "Belge bulunamadı."}
+    assert client.post(retry_url(uuid.uuid4())).status_code == 404
+    assert client.post(retry_url("belge-degil")).status_code == 422
+    assert calls == []
+
+
+def test_retry_commit_failure_returns_500_and_keeps_failed_record(
+    client, session_factory, storage_dir, fake_classify, failing_commit
+):
+    document = insert_failed(session_factory, storage_dir)
+    before = row_snapshot(session_factory, document.id)
+    fake_classify(classification())
+    rollbacks = failing_commit()
+
+    response = client.post(retry_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
+    assert rollbacks == [True]
+    assert row_snapshot(session_factory, document.id) == before
+
+
+def test_retry_lock_conflict_returns_409_without_gemini_call(client, session_factory, storage_dir, fake_classify, failing_lock):
+    document = insert_failed(session_factory, storage_dir)
+    before = row_snapshot(session_factory, document.id)
+    calls = fake_classify(classification())
+    rollbacks = failing_lock("55P03")
+
+    response = client.post(retry_url(document.id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": DOCUMENT_BUSY_MESSAGE}
+    assert calls == []
+    assert rollbacks == [True]
+    assert row_snapshot(session_factory, document.id) == before
+
+
+def test_retry_other_database_error_is_500_not_busy(client, session_factory, storage_dir, fake_classify, failing_lock):
+    document = insert_failed(session_factory, storage_dir)
+    calls = fake_classify(classification())
+    rollbacks = failing_lock("08006")  # bağlantı hatası: kilit çakışması değildir
+
+    response = client.post(retry_url(document.id))
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"  # teknik ayrıntı sızmaz (INV-6)
+    assert calls == []
+    assert rollbacks == [True]
+
+
+def test_classification_failures_are_retryable_and_keep_d004_fields(
+    client, session_factory, storage_dir, transcription, tesseract, fake_classify
+):
+    # Legacy tek adım: metin yedek OCR ile okundu, sınıflandırma başarısız (D-004 alanları değişmez).
+    tesseract()
+    fake_classify(classification_error())
+    legacy = upload(client, "foto.png", make_image(image_format="png")).json()
+    assert (legacy["status"], legacy["needs_review"], legacy["review_reason"], legacy["retryable"]) == (
+        "failed", False, None, True,
+    )
+    assert stored(session_factory, uuid.UUID(legacy["document_id"])).ocr_fallback is True
+
+    # İki adım: prepared → classify 502.
+    prepared_id = prepare(client, "dilekce.docx", make_docx(DOCX_TEXT)).json()["document_id"]
+    failed = client.post(classify_url(prepared_id)).json()
+    assert (failed["status"], failed["document_type"], failed["needs_review"], failed["retryable"]) == (
+        "failed", None, False, True,
+    )
+    assert stored(session_factory, uuid.UUID(prepared_id)).ocr_fallback is False
+
+    # Mevcut classify endpoint'i failed kaydı hâlâ reddeder (D-046); retry ayrı endpoint'tedir.
+    assert client.post(classify_url(prepared_id)).status_code == 409
+
+    # Liste ve detay aynı alanı taşır.
+    listed = {item["document_id"]: item["retryable"] for item in client.get(LIST_URL).json()}
+    assert listed == {legacy["document_id"]: True, prepared_id: True}
+    assert client.get(f"{LIST_URL}/{prepared_id}").json()["retryable"] is True
+
+
+def test_extraction_failure_is_not_retryable(client, session_factory, transcription, tesseract):
+    tesseract("kısa")
+
+    body = upload(client, "foto.png", make_image(image_format="png")).json()
+
+    assert (body["status"], body["retryable"]) == ("failed", False)
+    assert stored(session_factory, uuid.UUID(body["document_id"])).ocr_fallback is None
