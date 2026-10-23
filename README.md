@@ -125,6 +125,8 @@ Vite, `/api` isteklerini `http://127.0.0.1:8000` adresine proxy'ler. Bu nedenle 
 
 Günlük kullanımda `docker compose up -d`, `alembic upgrade head`, `uvicorn` ve `npm run dev` yeterlidir.
 
+**Windows'ta tek tıkla başlatma:** Kurulum bir kez tamamlandıktan sonra repo kökündeki `Dosya_Sistemi_Baslat.bat` dosyasına çift tıklayın. Dosya önce Docker, `backend/.env` (`DATABASE_URL` 5434), backend sanal ortamı, Node/npm ve `frontend/node_modules` varlığını kontrol eder; ardından PostgreSQL'i `docker compose up -d` ile başlatıp hazır olmasını bekler, şemanın en güncel migration'da olduğunu doğrular, backend ve frontend'i ayrı pencerelerde açar ve ikisi yanıt verince `http://localhost:5173` adresini tarayıcıda açar. Zaten çalışan backend veya frontend ikinci kez açılmaz; 8000 ya da 5173 portu başka bir uygulamadaysa o uygulamaya dokunmadan durur. Migration, bağımlılık kurulumu, `.env` değişikliği ve veritabanı silme yapmaz. Durdurmak için backend ve frontend pencerelerini kapatın; PostgreSQL Docker'da çalışmaya devam eder.
+
 > **Uyarı:** `docker compose down -v` yerel veritabanı volume'unu (`dosya_sistemi_pgdata`) siler. Yalnız bilerek kullanın.
 
 ## Ortam Değişkenleri
