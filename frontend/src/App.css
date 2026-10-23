@@ -661,6 +661,48 @@ button.secondary.revise:hover:not(:disabled) {
   cursor: pointer;
 }
 
+/* Belge metni araması (D-055): filtre satırının altında isteğe bağlı kutu ve kısa durum satırı */
+.text-search {
+  margin: -0.25rem 0 1rem;
+}
+
+.text-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.text-search-toggle input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.text-search-hint {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.825rem;
+}
+
+.text-search-hint.failed {
+  color: var(--err-text);
+}
+
+/* Satırda dosya adının altında eşleşme nedeni (D-055) */
+.record-name-cell {
+  min-width: 0;
+}
+
+.match-reason {
+  display: block;
+  margin: 0.15rem 0 0 0.8rem;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 .records-table {
   width: 100%;
   /* fixed: sütun genişlikleri içeriğe göre şişmez, uzun adlar ellipsis ile kısalır */

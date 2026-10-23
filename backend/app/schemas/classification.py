@@ -2,7 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.file_service import normalize_text
 
 RoutingEvidenceSupport = Literal["document_type", "institution", "both"]
 ROUTING_EVIDENCE_SUPPORTS = get_args(RoutingEvidenceSupport)
@@ -142,6 +144,36 @@ class RoutingValidationRequest(BaseModel):
 
     document_type: str
     institution_id: str | None
+
+
+TEXT_SEARCH_MIN_LENGTH = 3
+TEXT_SEARCH_MAX_LENGTH = 200
+
+
+class TextSearchRequest(BaseModel):
+    """POST /api/documents/text-search gövdesi (D-055). Sorgu URL'de taşınmaz; ek alan kabul edilmez.
+
+    Sorgu, kayıttaki metinle aynı kuralla normalleştirilir (ardışık boşluk teke, baş/son kırpılır); uzunluk
+    normalleştirilmiş sorguya uygulanır. Kural dışı sorgu FastAPI'nin standart 422 gövdesini alır.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    query: str
+
+    @field_validator("query")
+    @classmethod
+    def normalize_query(cls, value: str) -> str:
+        normalized = normalize_text(value)
+        if not TEXT_SEARCH_MIN_LENGTH <= len(normalized) <= TEXT_SEARCH_MAX_LENGTH:
+            raise ValueError(f"Sorgu {TEXT_SEARCH_MIN_LENGTH}–{TEXT_SEARCH_MAX_LENGTH} karakter olmalı.")
+        return normalized
+
+
+class TextSearchResponse(BaseModel):
+    """Belge metni araması yanıtı (D-055): yalnız eşleşen kalıcı kayıtların ID'leri; metin ve alıntı dönmez."""
+
+    document_ids: list[uuid.UUID]
 
 
 class CatalogItem(BaseModel):

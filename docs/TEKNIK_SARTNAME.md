@@ -18,7 +18,7 @@
 | F-04 | Belgedeki ilgili ifade | Uygulandı (2026-10-07) | D-050, D-052 |
 | F-05 | Hazırla → önizle → sınıflandır | Uygulandı | D-020, D-039, D-040, D-045, D-046 |
 | F-06 | Kullanıcı onayı ve yönlendirme düzeltmesi | Uygulandı (2026-10-06) | D-049 |
-| F-07 | Kayıtlar | Uygulandı | D-043, D-048 |
+| F-07 | Kayıtlar | Uygulandı; gelişmiş arama uygulandı (2026-10-23; kullanıcı testi T-16'da) | D-043, D-048, D-055 |
 | F-08 | API ve hata sözleşmesi | Uygulandı | D-019, D-032, D-034 |
 | F-09 | Başarısız sınıflandırmayı tekrar deneme | Uygulandı (2026-10-22) | D-053 |
 | F-10 | Kalıcı belge silme | Uygulandı (2026-10-23) | D-054 |
@@ -346,7 +346,8 @@ Endpoint sözleşmesi F-08'dedir (`PUT /api/documents/{document_id}/validation`,
 
 - Liste kalıcı kayıtları en yeni önce gösterir; `prepared` kayıtlar listede yoktur. Satırda dosya adı, effective belge türü ve hedef kurum (F-06), durum, tarih ve indirme bağlantısı bulunur.
 - Detayda özet, effective tür ve kurum (onaylanan değer AI önerisinden farklıysa AI önerisi ikincil satırda), gönderen, inceleme nedeni, onay kontrolleri (F-06), belgedeki ilgili ifade (F-04) ve çıkarılan metin bulunur. Kalıcı silme detaydan yapılır (F-10).
-- Arama ve filtre yalnız istemci tarafındadır ve `GET /api/documents` yanıtı üzerinde çalışır. Arama dosya adındadır; büyük/küçük harf ve Türkçe karakter farkını gözetmez, bulanık değildir. Belge türü, hedef kurum ve durum filtreleri birlikte uygulanır: tür ve kurum effective değerle, durum gösterim durumuyla (Sınıflandırıldı / İnceleme gerekli / Onaylandı / Başarısız) filtrelenir. Türü ya da kurumu olmayan kayıtlar "Belirlenemedi" seçeneğindedir.
+- Arama ve filtre yalnız istemci tarafındadır ve `GET /api/documents` yanıtı üzerinde çalışır. Arama dosya adındadır; büyük/küçük harf ve Türkçe karakter farkını gözetmez, bulanık değildir. Belge türü, hedef kurum ve durum filtreleri birlikte uygulanır: tür ve kurum effective değerle, durum gösterim durumuyla (Sınıflandırıldı / İnceleme gerekli / Onaylandı / Başarısız) filtrelenir. Türü ya da kurumu olmayan kayıtlar "Belirlenemedi" seçeneğindedir. Bu maddenin arama kısmı gelişmiş aramayla (D-055) genişledi; güncel davranış aşağıdaki maddededir.
+- **Gelişmiş arama (D-055):** Arama kutusu dosya adı, gönderen kişi, gönderen kurum ve AI özetinde anlık arar (istemci; en az karakter sınırı yok; `null` alan eşleşmez). "Belge metninde de ara" kutusu işaretliyse çıkarılan metin `POST /api/documents/text-search` ile sunucuda aranır: en az 3 karakter; daha kısa sorguda istek gitmez, kayıt bilgisi araması sürer. İki tarafta aynı kural: boşluklar teke indirilir ve kırpılır; büyük/küçük harf ve Türkçe karakter farkı gözetilmez; normalleştirilmiş sorgu alanda kesintisiz geçmelidir (bütün ifade, kısmi eşleşme, bulanık değil). Liste "kayıt bilgisi VEYA belge metni eşleşmesi"dir; tür, kurum ve durum filtreleri üstüne uygulanır, sayılar etkilenmez. Satırda eşleşme nedeni gösterilir (gönderen, özet, belge metni); alıntı gösterilmez. Yalnız en son sorgunun yanıtı uygulanır; hata veya zaman aşımında mesaj gösterilir, kayıt bilgisi sonuçları kalır.
 - Üç özet sayısı tüm yüklü kayıtlardan hesaplanır ve filtreden etkilenmez: Toplam Kayıt, İnceleme Gereken (onaylanmamış `needs_review`), Başarısız.
 - Endpoint'ler F-08'dedir (liste, detay, indirme); ayrıntılı kurallar D-043 ve D-048'dedir.
 
@@ -355,13 +356,16 @@ Endpoint sözleşmesi F-08'dedir (`PUT /api/documents/{document_id}/validation`,
 - Liste en yeni önce gelir; `extracted_text` ve `file_reference` dönmez; `prepared` kayıt listelenmez ama detay ve indirme çalışır — `api::test_list_returns_documents_newest_first`, `api::test_list_hides_extracted_text_and_file_reference`, `api::test_list_hides_prepared_documents_but_detail_and_download_work`.
 - Detay çıkarılan metni döndürür, `file_reference` döndürmez; bilinmeyen kayıt `404` alır — `api::test_detail_returns_extracted_text_but_not_file_reference`, `api::test_detail_returns_404_for_unknown_document`.
 - İndirme orijinal baytları özgün dosya adı ve doğru media type ile döndürür; dosya yoksa ayrıntısız `404` döner — `api::test_download_returns_original_pdf_bytes_with_original_file_name`, `api::test_download_returns_docx_with_correct_media_type`, `api::test_download_returns_404_without_details_when_stored_file_is_missing`.
+- Belge metni araması (backend, D-055): Türkçe karakter ve büyük/küçük harf katlama, kısmi eşleşme — `api::test_text_search_folds_turkish_characters_and_case_and_matches_partially`; bütün ifade ve boşluk normalleştirmesi — `api::test_text_search_matches_whole_phrase_after_whitespace_normalization`; `%`, `_`, `\` harfiyen — `api::test_text_search_treats_like_wildcards_literally`; yalnız kalıcı kayıtlar, `NULL` metin hatasız, en yeni önce — `api::test_text_search_covers_permanent_records_only_and_skips_null_text`; geçersiz istek `422` ve normalleştirilmiş uzunluk sınırı — `api::test_text_search_rejects_invalid_requests_with_422`, `api::test_text_search_length_limits_apply_to_normalized_query`; yalnız ID döner, sorgu ve metin loglanmaz, kayıt değişmez — `api::test_text_search_returns_only_ids_and_never_logs_query_or_text`; rota çakışması yok — `api::test_text_search_route_does_not_clash_with_document_routes`. SQLite'ta `translate()` test katmanında tanımlanır; PostgreSQL davranışı ayrıca doğrulanır.
+- Gelişmiş arama (istemci, D-055): gönderen kişi/kurum ve özet aranır, Türkçe karakter ve büyük harf katlanır; boşluklar normalleştirilir ve bütün ifade aranır; kısa sorgu da kayıt bilgisinde aranır; `null` alan hatasızdır; belge metni eşleşmesi sunucudan gelen ID'lerle eklenir ve filtreler yine uygulanır; eşleşme nedenleri — `records:` "gönderen kişi, gönderen kurum ve özet aranır; Türkçe karakter ve büyük harf katlanır", "özet ve sorgudaki boşluklar normalleştirilir; bütün ifade aranır", "dosya adı araması korunur; kısa sorgu da kayıt bilgisinde aranır", "null gönderen ve özet hata vermez, eşleşme sayılmaz", "belge metni eşleşmesi sunucudan gelen ID ile eklenir; filtreler yine uygulanır", "eşleşen alanlar sırayla gösterilir; dosya adı nedeni yoktur"; sorgu sınırı — "belge metni araması normalleştirilmiş 3–200 karakter ister". Arayüz akışı (istek zamanlaması, eski yanıtın yok sayılması, hata ve bekleme mesajları) bileşen testi olmadan tarayıcıda sahte API'yle doğrulandı (2026-10-23, masaüstü ve 375px).
 - Arama, filtre ve sayılar — `records:` "dosya adı araması büyük/küçük harfe duyarsızdır", "Türkçe karakterler sade eşleriyle iki yönde eşleşir", "bulanık arama yapılmaz: harf eksik ya da yanlışsa eşleşmez", "tür, kurum ve durum filtreleri birlikte uygulanır", "toplam, inceleme gereken ve başarısız sayıları çakışmaz".
 
 **Sınırlar**
 
 - **Kayıtlar (D-048):** Liste sayfalamasız tek istekte gelir; arama ve filtre istemci tarafındadır. Kayıt sayısı çok artarsa sunucu tarafı sayfalama/filtre ayrı karar gerektirir.
+- **Belge metni araması (D-055):** İndeks yoktur; arama tam tablo taramasıdır. 1.000 kayıtta 1 saniye bir ölçüm kriteridir; aşılırsa indeks ancak ayrı kararla eklenir. Ölçüm (2026-10-23, gerçek PostgreSQL): 1.000 kayıt × ~50.000 karakterde sorgu başına ~3,8 sn; kriter aşıldı, süre toplam metin uzunluğuyla ölçeklenir (`CURRENT_STATE.md` → "Son gerçek ortam doğrulamaları").
 
-**Referanslar:** D-043, D-048, D-049, D-054 · Kod: `api/documents.py` (`list_documents`, `get_document`, `download_document`), `frontend/src/records.ts` (`filterRecords`, `filterOptions`, `countRecords`), `frontend/src/App.tsx` · Görev: T-06
+**Referanslar:** D-043, D-048, D-049, D-054, D-055 · Kod: `api/documents.py` (`list_documents`, `get_document`, `download_document`, `search_document_text`), `schemas/classification.py` (`TextSearchRequest`), `frontend/src/records.ts` (`filterRecords`, `filterOptions`, `countRecords`, `matchReasons`, `textSearchQuery`), `frontend/src/App.tsx` · Görev: T-06
 
 ## F-08 — API ve hata sözleşmesi
 
@@ -390,6 +394,7 @@ Kayıtları görüntülemek için salt okunur endpoint'ler (D-043):
 | **`GET /api/documents`** | Kalıcı kayıtlar `created_at` azalan sırada; aşağıdaki alanlar + `created_at`. `prepared` kayıtlar listelenmez; `extracted_text` ve `file_reference` dönmez |
 | **`GET /api/documents/{document_id}`** | Aynı alanlar + `extracted_text`; `prepared` dahil her durum. Kayıt yoksa `404` |
 | **`GET /api/documents/{document_id}/download`** | Orijinal dosya, kullanıcının yüklediği adla ve `file_type`'a uygun media type ile; kayıt ya da dosya yoksa ayrıntısız `404` |
+| **`POST /api/documents/text-search`** | Belge metninde salt okunur arama (D-055). Gövde `{"query": "..."}`, ek alan kabul edilmez; normalleştirilmiş sorgu 3–200 karakter. `200` ve `{"document_ids": [...]}`: yalnız eşleşen kalıcı kayıtların ID'leri, `created_at` azalan; `prepared` hariç; metin ve alıntı dönmez · `422` (sorgu eksik, kısa, uzun ya da ek alan). Sorgu URL'de taşınmaz ve loglanmaz |
 
 Kullanıcı onayı ve katalog (D-049):
 
@@ -483,7 +488,7 @@ Dışarıdan bakıldığında kabul sonrası hata ayrımı basit tutulur:
 **Sınırlar**
 
 - Authentication ve yetkilendirme yoktur (D-025): API'ye erişebilen herkes, kalıcı silme dahil her endpoint'i çağırabilir. CORS middleware yoktur; geliştirmede Vite proxy kullanılır (D-038). CORS'un olmaması ve yerel adreste dinleme yetkilendirme değildir. Dağıtım kararları T-12'dedir; dış erişimden önce silme endpoint'i sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır (D-054, T-17).
-- Endpoint'lerde arama, filtre ve sayfalama yoktur (D-043, D-048).
+- Liste, detay ve indirme endpoint'lerinde arama, filtre ve sayfalama yoktur (D-043, D-048). Belge metni araması ayrı, salt okunur `POST /api/documents/text-search` endpoint'indedir (D-055).
 
 **Referanslar:** D-019, D-032, D-034, D-043, D-046, D-049, D-050, D-053, D-054 · Kod: `api/documents.py`, `api/catalogs.py`, `main.py`, `schemas/classification.py`, `database.py` · Görev: T-05, T-12, T-17
 

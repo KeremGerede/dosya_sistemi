@@ -15,7 +15,10 @@ import {
   findEvidenceInText,
   filterRecords,
   keepAvailableFilters,
+  matchReasons,
+  normalizeSearch,
   recordDisplayState,
+  textSearchQuery,
   retryConflict,
   routingEvidenceSection,
 } from '../src/records.ts'
@@ -554,5 +557,92 @@ describe('keepAvailableFilters (D-054: silme sonrası filtreler)', () => {
 
   test('boş filtre ("tümü") değişmez', () => {
     assert.deepEqual(keepAvailableFilters(NO_FILTERS, [], []), NO_FILTERS)
+  })
+})
+
+// Gelişmiş arama (D-055): gönderen, özet ve sunucudan gelen belge metni eşleşmesi.
+const ADVANCED = [
+  {
+    ...record({ file_name: 'dilekce-1.pdf' }),
+    document_id: 'd1',
+    sender_name: 'Ayşe Yılmaz',
+    sender_institution: 'Çiğdem Mahallesi Muhtarlığı',
+    summary: 'Vatandaş  sokaktaki çöplerin\ntoplanmadığını bildiriyor.',
+  },
+  {
+    ...record({ file_name: 'basvuru-2.pdf', status: 'failed' }),
+    document_id: 'd2',
+    sender_name: null,
+    sender_institution: null,
+    summary: null,
+  },
+  {
+    ...record({ file_name: 'IŞIK-arizasi.pdf' }),
+    document_id: 'd3',
+    sender_name: 'İsmail Öztürk',
+    sender_institution: null,
+    summary: 'Sokak lambası yanmıyor.',
+  },
+]
+
+describe('normalizeSearch ve textSearchQuery (D-055)', () => {
+  test('ardışık boşluklar teke iner, baş ve son kırpılır', () => {
+    assert.equal(normalizeSearch('  çöp \t\n  konteyneri  '), 'çöp konteyneri')
+  })
+
+  test('belge metni araması normalleştirilmiş 3–200 karakter ister', () => {
+    assert.deepEqual(textSearchQuery('   '), { query: null, problem: null })
+    assert.deepEqual(textSearchQuery(' ab '), { query: null, problem: 'short' })
+    assert.deepEqual(textSearchQuery(' a   b '), { query: 'a b', problem: null })
+    assert.deepEqual(textSearchQuery('x'.repeat(200) + '   '), { query: 'x'.repeat(200), problem: null })
+    assert.deepEqual(textSearchQuery('x'.repeat(201)), { query: null, problem: 'long' })
+  })
+})
+
+describe('filterRecords (gelişmiş arama, D-055)', () => {
+  const find = (query: string, textMatches?: Set<string>) =>
+    names(filterRecords(ADVANCED, { ...NO_FILTERS, query }, textMatches))
+
+  test('gönderen kişi, gönderen kurum ve özet aranır; Türkçe karakter ve büyük harf katlanır', () => {
+    assert.deepEqual(find('ayse yilmaz'), ['dilekce-1.pdf'])
+    assert.deepEqual(find('CIGDEM MAHALLESI'), ['dilekce-1.pdf'])
+    assert.deepEqual(find('ismail'), ['IŞIK-arizasi.pdf'])
+    assert.deepEqual(find('lambası'), ['IŞIK-arizasi.pdf'])
+  })
+
+  test('özet ve sorgudaki boşluklar normalleştirilir; bütün ifade aranır', () => {
+    assert.deepEqual(find('  sokaktaki   çöplerin toplanmadığını '), ['dilekce-1.pdf'])
+    assert.deepEqual(find('çöplerin sokaktaki'), [])
+  })
+
+  test('dosya adı araması korunur; kısa sorgu da kayıt bilgisinde aranır', () => {
+    assert.deepEqual(find('isik'), ['IŞIK-arizasi.pdf'])
+    assert.deepEqual(find('ay'), ['dilekce-1.pdf'])
+  })
+
+  test('null gönderen ve özet hata vermez, eşleşme sayılmaz', () => {
+    assert.deepEqual(find('null'), [])
+    assert.deepEqual(find('basvuru'), ['basvuru-2.pdf'])
+  })
+
+  test('belge metni eşleşmesi sunucudan gelen ID ile eklenir; filtreler yine uygulanır', () => {
+    assert.deepEqual(find('ihale numarası', new Set(['d2'])), ['basvuru-2.pdf'])
+    assert.deepEqual(
+      names(filterRecords(ADVANCED, { ...NO_FILTERS, query: 'ihale numarası', status: 'classified' }, new Set(['d2']))),
+      [],
+    )
+  })
+})
+
+describe('matchReasons (D-055)', () => {
+  test('eşleşen alanlar sırayla gösterilir; dosya adı nedeni yoktur', () => {
+    assert.deepEqual(matchReasons(ADVANCED[0], 'ayşe', false), ['gönderen'])
+    assert.deepEqual(matchReasons(ADVANCED[0], 'mahalle', true), ['gönderen kurum', 'belge metni'])
+    assert.deepEqual(matchReasons(ADVANCED[0], 'dilekce', false), [])
+  })
+
+  test('boş sorguda neden yoktur; null alanlar atlanır', () => {
+    assert.deepEqual(matchReasons(ADVANCED[0], '   ', true), [])
+    assert.deepEqual(matchReasons(ADVANCED[1], 'basvuru', true), ['belge metni'])
   })
 })

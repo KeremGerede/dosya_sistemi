@@ -1,5 +1,5 @@
-// Kayıtlar görünümü (D-048): yüklü kayıtlar üzerinde istemci tarafı arama, filtre ve özet sayıları.
-// Backend'e istek atılmaz; yalnız GET /api/documents yanıtındaki alanlar kullanılır.
+// Kayıtlar görünümü (D-048, D-055): yüklü kayıtlar üzerinde istemci tarafı arama, filtre ve özet sayıları. Yalnız
+// GET /api/documents yanıtındaki alanlar kullanılır; belge metni araması sunucudadır ve buraya eşleşen ID'ler gelir.
 import { fold } from './documentPreview.ts'
 
 // Effective yönlendirmenin okuduğu alanlar (D-049); App'teki ClassifyResponse bu şekle uyar.
@@ -20,6 +20,11 @@ type RecordFields = RoutingFields & {
   file_name: string
   needs_review: boolean
   status: string
+  // Gelişmiş arama alanları (D-055); App'teki kayıtlarda her zaman vardır, eski testlerdeki kayıtlarda olmayabilir.
+  document_id?: string
+  sender_name?: string | null
+  sender_institution?: string | null
+  summary?: string | null
 }
 
 export type EffectiveRouting = {
@@ -171,14 +176,73 @@ export const NO_FILTERS: RecordFilters = { query: '', documentType: '', institut
 // Türü ya da kurumu belirlenemeyen kayıtların filtre değeri; katalog ID'leriyle çakışmaz.
 export const UNDETERMINED = 'none'
 
-// Arama yalnız dosya adındadır; büyük/küçük harf ve Türkçe karakter farkı (ş/s, ı/i ...) gözetilmez, bulanık değildir.
+// Arama metni normalleştirmesi (D-055): ardışık boşluklar teke iner, baş ve son kırpılır (backend normalize_text ile aynı).
+export function normalizeSearch(text: string): string {
+  return text.replace(/\s+/gu, ' ').trim()
+}
+
+// Belge metni araması sunucudadır ve normalleştirilmiş sorgu için 3–200 karakter ister (D-055). Kısa ya da uzun sorguda
+// istek gönderilmez; kayıt bilgisi araması yine çalışır.
+export const TEXT_SEARCH_MIN_LENGTH = 3
+export const TEXT_SEARCH_MAX_LENGTH = 200
+
+export type TextSearchQuery = { query: string | null; problem: 'short' | 'long' | null }
+
+export function textSearchQuery(raw: string): TextSearchQuery {
+  const query = normalizeSearch(raw)
+  if (query === '') {
+    return { query: null, problem: null }
+  }
+  if (query.length < TEXT_SEARCH_MIN_LENGTH) {
+    return { query: null, problem: 'short' }
+  }
+  return query.length > TEXT_SEARCH_MAX_LENGTH ? { query: null, problem: 'long' } : { query, problem: null }
+}
+
+// Kayıt bilgisi alanları ve satırda gösterilen eşleşme nedeni; dosya adı satırda zaten göründüğü için nedeni yoktur.
+const METADATA_FIELDS = [
+  { key: 'file_name', label: null },
+  { key: 'sender_name', label: 'gönderen' },
+  { key: 'sender_institution', label: 'gönderen kurum' },
+  { key: 'summary', label: 'özet' },
+] as const
+
+const TEXT_MATCH_LABEL = 'belge metni'
+
+function metadataMatches(record: RecordFields, foldedQuery: string): (typeof METADATA_FIELDS)[number][] {
+  return METADATA_FIELDS.filter(({ key }) => {
+    const value = record[key]
+    return typeof value === 'string' && fold(normalizeSearch(value)).includes(foldedQuery)
+  })
+}
+
+// Satırda gösterilen eşleşme nedenleri (D-055); boş sorguda neden yoktur. Belge metni eşleşmesi sunucudan gelir.
+export function matchReasons(record: RecordFields, query: string, textMatched: boolean): string[] {
+  const folded = fold(normalizeSearch(query))
+  if (folded === '') {
+    return []
+  }
+  const labels: string[] = metadataMatches(record, folded).flatMap(({ label }) => (label === null ? [] : [label]))
+  return textMatched ? [...labels, TEXT_MATCH_LABEL] : labels
+}
+
+// Arama dosya adı, gönderen kişi, gönderen kurum ve AI özetindedir (D-055); belge metni eşleşmesi sunucudan gelen ID'lerle
+// eklenir. Büyük/küçük harf ve Türkçe karakter farkı (ş/s, ı/i ...) gözetilmez; bütün ifade aranır, bulanık değildir.
 // Tür ve kurum effective değerle, durum gösterim durumuyla filtrelenir (D-049).
-export function filterRecords<T extends RecordFields>(records: T[], filters: RecordFilters): T[] {
-  const query = fold(filters.query.trim())
+export function filterRecords<T extends RecordFields>(
+  records: T[],
+  filters: RecordFilters,
+  textMatches: ReadonlySet<string> = new Set(),
+): T[] {
+  const query = fold(normalizeSearch(filters.query))
   return records.filter((record) => {
     const routing = effectiveRouting(record)
+    const matched =
+      query === '' ||
+      metadataMatches(record, query).length > 0 ||
+      (record.document_id !== undefined && textMatches.has(record.document_id))
     return (
-      fold(record.file_name).includes(query) &&
+      matched &&
       (filters.documentType === '' || (routing.documentTypeId ?? UNDETERMINED) === filters.documentType) &&
       (filters.institution === '' || (routing.institutionId ?? UNDETERMINED) === filters.institution) &&
       (filters.status === '' || recordDisplayState(record) === filters.status)

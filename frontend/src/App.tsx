@@ -12,9 +12,11 @@ import {
   filterRecords,
   findEvidenceInText,
   keepAvailableFilters,
+  matchReasons,
   recordDisplayState,
   retryConflict,
   routingEvidenceSection,
+  textSearchQuery,
 } from './records'
 import type { RecordFilters, RoutingEvidence } from './records'
 import './App.css'
@@ -68,6 +70,11 @@ const DELETE_BUSY_MESSAGE = 'Belge şu anda başka bir işlemde olduğu için si
 const DELETE_FAILED_MESSAGE = 'Belge silinemedi; kayıt yerinde duruyor. Lütfen tekrar deneyin.'
 const DELETE_UNVERIFIED_MESSAGE = 'Silme sonucu doğrulanamadı. Kayıtları yenileyip belgenin durumunu kontrol edin.'
 const DELETE_WAIT_MESSAGE = 'Analiz sürerken belge silinemez; işlem bitince yeniden deneyin.'
+const TEXT_SEARCH_SHORT_MESSAGE = 'Belge metninde arama için en az 3 karakter yazın; belge adı, gönderen ve özet araması sürüyor.'
+const TEXT_SEARCH_LONG_MESSAGE = 'Belge metninde arama en fazla 200 karakterle yapılır.'
+const TEXT_SEARCH_PENDING_MESSAGE = 'Belge metninde aranıyor…'
+const TEXT_SEARCH_FAILED_MESSAGE = 'Belge metninde arama yapılamadı; belge adı, gönderen ve özet sonuçları gösteriliyor.'
+const TEXT_SEARCH_DELAY_MS = 300 // D-055: yazma bittikten sonra tek istek
 
 type DocumentStatus = 'classified' | 'needs_review' | 'failed'
 
@@ -267,6 +274,21 @@ async function retryClassification(documentId: string): Promise<RetryOutcome> {
 
 type DeleteResult = { deleted: boolean; error: string | null }
 
+// Belge metni araması (D-055): sonuç hangi sorguya aitse onunla saklanır; ids null ise arama başarısız oldu.
+type TextSearchResult = { query: string; ids: Set<string> | null }
+
+const NO_TEXT_MATCHES: ReadonlySet<string> = new Set()
+
+function isTextSearchBody(body: unknown): body is { document_ids: string[] } {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'document_ids' in body &&
+    Array.isArray(body.document_ids) &&
+    body.document_ids.every((id) => typeof id === 'string')
+  )
+}
+
 // Kalıcı silme (D-054). 409'da kayıt korunur. 500, ağ hatası ve zaman aşımında başarı varsayılmaz: backend silmeyi
 // tamamlamış ya da dosyayı silip commit edememiş olabilir; kaydın gerçek durumu mevcut detay endpoint'inden okunur.
 async function deleteDocument(documentId: string): Promise<DeleteResult> {
@@ -404,8 +426,14 @@ function RecordsView({
   const [detailLoading, setDetailLoading] = useState(false)
   const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  // Arama ve filtre yalnız istemci tarafındadır (D-048); Yenile'de korunur.
+  // Arama ve filtre istemci tarafındadır (D-048); belge metni araması sunucudadır (D-055). Yenile'de korunur.
   const [filters, setFilters] = useState<RecordFilters>(NO_FILTERS)
+  // Belge metni araması isteğe bağlıdır (D-055); kutu varsayılan olarak kapalıdır.
+  const [textSearch, setTextSearch] = useState(false)
+  const [textResult, setTextResult] = useState<TextSearchResult | null>(null)
+  const [loadCount, setLoadCount] = useState(0)
+  const searchSequence = useRef(0)
+  const searchQuery = textSearchQuery(filters.query)
 
   // Durum yalnızca istek sonuçlandığında güncellenir; efekt içinde senkron setState yapılmaz.
   const load = useCallback(async () => {
@@ -417,6 +445,7 @@ function RecordsView({
       }
       setDocuments((await response.json()) as DocumentSummary[])
       setMessage(null)
+      setLoadCount((count) => count + 1)
     } catch {
       setMessage(RECORDS_FAILED_MESSAGE)
     }
@@ -428,6 +457,32 @@ function RecordsView({
     // oxlint-disable-next-line react/set-state-in-effect
     void load()
   }, [load])
+
+  // Belge metni araması (D-055): yazma bittikten kısa süre sonra tek istek gider; sorgu gövdededir, URL'de taşınmaz.
+  // Yalnız en son isteğin yanıtı uygulanır, eski yanıt yenisinin üzerine yazılmaz. Kayıtlar yenilenince aynı sorgu
+  // yeniden aranır. Kutu kapalıysa ya da sorgu kısa/uzunsa istek gitmez.
+  useEffect(() => {
+    const query = searchQuery.query
+    if (!textSearch || query === null) {
+      return
+    }
+    const sequence = ++searchSequence.current
+    const timer = setTimeout(() => {
+      void (async () => {
+        const result = await request('/api/documents/text-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        })
+        if (sequence !== searchSequence.current) {
+          return
+        }
+        const ids = result.status === 200 && isTextSearchBody(result.body) ? new Set(result.body.document_ids) : null
+        setTextResult({ query, ids })
+      })()
+    }, TEXT_SEARCH_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [textSearch, searchQuery.query, loadCount])
 
   async function toggle(documentId: string) {
     setEvidenceSelection(null)
@@ -519,10 +574,27 @@ function RecordsView({
   // Silmeyle seçeneği kalmayan tür/kurum filtresi "tümü" sayılır; liste ve açılır menü aynı şeyi gösterir (D-054).
   const activeFilters = keepAvailableFilters(filters, typeOptions, institutionOptions)
   // Tür, kurum ve durum tek kuraldan gelir: effective yönlendirme ve gösterim durumu (D-049).
-  const rows = filterRecords(records, activeFilters).map((item) => ({
+  // Belge metni sonucu yalnız güncel sorguya aitse kullanılır; sonuç gelene kadar kayıt bilgisi araması görünür.
+  const textActive = textSearch && searchQuery.query !== null
+  const currentText = textActive && textResult?.query === searchQuery.query ? textResult : null
+  const textMatches = currentText?.ids ?? NO_TEXT_MATCHES
+  const textFailed = currentText !== null && currentText.ids === null
+  const textPending = textActive && currentText === null
+  let textHint: string | null = null
+  if (textSearch && searchQuery.problem === 'short') {
+    textHint = TEXT_SEARCH_SHORT_MESSAGE
+  } else if (textSearch && searchQuery.problem === 'long') {
+    textHint = TEXT_SEARCH_LONG_MESSAGE
+  } else if (textPending) {
+    textHint = TEXT_SEARCH_PENDING_MESSAGE
+  } else if (textFailed) {
+    textHint = TEXT_SEARCH_FAILED_MESSAGE
+  }
+  const rows = filterRecords(records, activeFilters, textMatches).map((item) => ({
     item,
     routing: effectiveRouting(item),
     state: recordDisplayState(item),
+    reasons: matchReasons(item, activeFilters.query, textMatches.has(item.document_id)),
   }))
   const filtering = Object.values(activeFilters).some((value) => value.trim() !== '')
 
@@ -579,8 +651,8 @@ function RecordsView({
           <div className="records-filters">
             <input
               type="search"
-              placeholder="Belge adında ara"
-              aria-label="Belge adında ara"
+              placeholder="Belge adı, gönderen veya özette ara"
+              aria-label="Belge adı, gönderen veya özette ara"
               value={activeFilters.query}
               onChange={(event) => setFilters({ ...activeFilters, query: event.target.value })}
             />
@@ -622,7 +694,20 @@ function RecordsView({
             </select>
           </div>
 
-          {rows.length === 0 && <p className="empty">Filtrelerle eşleşen kayıt yok.</p>}
+          <div className="text-search">
+            <label className="text-search-toggle">
+              <input type="checkbox" checked={textSearch} onChange={(event) => setTextSearch(event.target.checked)} />
+              Belge metninde de ara
+            </label>
+            {textHint !== null && (
+              <p className={textFailed ? 'text-search-hint failed' : 'text-search-hint'} role="status">
+                {textHint}
+              </p>
+            )}
+          </div>
+
+          {/* Belge metni sonucu beklenirken "eşleşen yok" denmez; durum satırı "aranıyor" gösterir. */}
+          {rows.length === 0 && !textPending && <p className="empty">Filtrelerle eşleşen kayıt yok.</p>}
         </>
       )}
 
@@ -639,23 +724,27 @@ function RecordsView({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ item, routing, state }) => (
+            {rows.map(({ item, routing, state, reasons }) => (
               <Fragment key={item.document_id}>
                 <tr className={openId === item.document_id ? 'open' : undefined}>
                   <td data-label="Belge Adı">
                     {/* Detayı yalnızca bu buton açar; indirme ayrı hücrede olduğundan tıklamalar çakışmaz. */}
                     {/* Tam ad DOM içinde kalır; kısaltma yalnızca görseldir. title fare kullanıcısı içindir ve düğmenin
                         kendisindedir: bazı tarayıcılar (ör. Firefox) düğme içindeki öğelerin title'ını göstermez. */}
-                    <button
-                      type="button"
-                      className="record-main"
-                      title={item.file_name}
-                      onClick={() => void toggle(item.document_id)}
-                      aria-expanded={openId === item.document_id}
-                    >
-                      <span className="chevron" aria-hidden="true" />
-                      <span className="record-name">{item.file_name}</span>
-                    </button>
+                    <div className="record-name-cell">
+                      <button
+                        type="button"
+                        className="record-main"
+                        title={item.file_name}
+                        onClick={() => void toggle(item.document_id)}
+                        aria-expanded={openId === item.document_id}
+                      >
+                        <span className="chevron" aria-hidden="true" />
+                        <span className="record-name">{item.file_name}</span>
+                      </button>
+                      {/* D-055: sorgu dosya adı dışında bir alanda eşleştiyse nedeni kısa satırda; alıntı yoktur. */}
+                      {reasons.length > 0 && <span className="match-reason">Eşleşme: {reasons.join(' · ')}</span>}
+                    </div>
                   </td>
                   <td data-label="Belge Türü" className="col-type">
                     {routing.documentTypeName ?? 'Belirlenemedi'}

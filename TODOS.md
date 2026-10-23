@@ -9,13 +9,13 @@ Yaşayan backlog: aktif işler, araştırmalar, bakım, aday workstream'ler, kap
 
 ## Now
 
-- **T-16** · Açık · Kayıtlar'da gelişmiş arama (yol haritası 2). Sıradaki aktif iş; PLAN bekliyor, BUILD onayı yok. T-06'nın hacim sorusuyla birlikte değerlendirilir; sunucu tarafı arama ve filtre bugün kapsam dışıdır (D-048, `PROJECT_BRAIN.md` §12).
+- **T-16** · Devam ediyor · Kayıtlar'da gelişmiş arama (yol haritası 2; D-055, F-07). Branch `feature/records-advanced-search`. PLAN onaylandı (hibrit arama: kayıt bilgileri istemcide, belge metni `POST /api/documents/text-search` ile sunucuda). S1 (karar ve dokümantasyon), S2 (backend endpoint'i ve testleri) ve S3 (gerçek PostgreSQL doğrulaması ve ölçümü; 1 sn kriteri aşıldı, ~3,8 sn / 1.000 × 50 bin karakter; kullanıcı kararıyla MVP sınırı) ve S4 (Kayıtlar arayüzü, sahte API'li tarayıcı kontrolü) yapıldı; sonraki dilimler (kullanıcının laptop testi, kapanış) her biri ayrı onay bekler. Sayfalama ve sunucu tarafı filtre T-06'da kalır.
 
 ## Next
 
 Kullanıcının 2026-10-22'de onayladığı sıra: T-15 (kapandı) → T-16 → T-17 → T-18 → T-01. Her madde başlamadan önce kendi PLAN onayını alır; hiçbiri için BUILD onayı yoktur.
 
-- **T-17** · Açık · AWS staging / canlı demo (yol haritası 3). Ön koşul kararları T-12'dedir (`CURRENT_STATE.md` → "Dağıtıma hazır değil"). **Zorunlu ön koşul (D-054):** dış erişim açılmadan önce kalıcı silme endpoint'i (`DELETE /api/documents/{document_id}`) sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır; arayüz onayı, CORS ve yerel adres bunun yerine geçmez.
+- **T-17** · Açık · AWS staging / canlı demo (yol haritası 3). Ön koşul kararları T-12'dedir (`CURRENT_STATE.md` → "Dağıtıma hazır değil"). **Zorunlu ön koşul (D-054):** dış erişim açılmadan önce kalıcı silme endpoint'i (`DELETE /api/documents/{document_id}`) sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır; arayüz onayı, CORS ve yerel adres bunun yerine geçmez. Belge metni araması (`POST /api/documents/text-search`, D-055) da diğer endpoint'lerle birlikte korunmalıdır.
 - **T-18** · Açık · OCR ve dashboard iyileştirmelerinin değerlendirilmesi (yol haritası 4). T-11 bu değerlendirmenin adaylarındandır.
 
 ## Validate / Research

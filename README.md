@@ -155,6 +155,7 @@ Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde 
 | GET | `/api/documents` | Kayıt listesi; en yeni önce, `prepared` kayıtlar hariç |
 | GET | `/api/documents/{document_id}` | Belge detayı; çıkarılan metin dahil |
 | GET | `/api/documents/{document_id}/download` | Orijinal dosyayı indirir |
+| POST | `/api/documents/text-search` | Kalıcı kayıtların çıkarılan metninde arar; gövde `{"query": "..."}` (boşluk normalleştirmesinden sonra 3–200 karakter), yanıt yalnız eşleşen `document_ids`; metin dönmez, sorgu loglanmaz |
 | PUT | `/api/documents/{document_id}/validation` | Tür ve kurum sonucunu onaylar veya katalog içinden düzeltir; AI sonucu değişmez |
 | DELETE | `/api/documents/{document_id}` | Kalıcı kaydı ve orijinal dosyasını geri alınamaz şekilde siler; `prepared` kayda uygulanmaz |
 | GET | `/api/catalogs` | Belge türü ve kurum katalogları |

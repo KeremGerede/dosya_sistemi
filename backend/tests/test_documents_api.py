@@ -11,7 +11,7 @@ import pytest
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import JSON, create_engine, select
+from sqlalchemy import JSON, create_engine, event, select
 from sqlalchemy import text as sql_text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
@@ -163,10 +163,20 @@ def storage_dir(tmp_path, monkeypatch):
     return path
 
 
+def sqlite_translate(text, source, target):
+    """PostgreSQL translate(): source'taki her karakter target'ta aynı sıradaki karaktere çevrilir; NULL NULL kalır."""
+    if text is None:
+        return None
+    return text.translate(str.maketrans(source, target))
+
+
 @pytest.fixture
 def session_factory(tmp_path):
     # İzole SQLite test veritabanı. create_all yalnızca testte kullanılır; gerçek şema Alembic ile yönetilir (D-030).
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    # SQLite'ta PostgreSQL'in yerleşik translate() fonksiyonu yoktur; belge metni araması (D-055) için yalnız test
+    # katmanında aynı anlamla tanımlanır. Gerçek PostgreSQL davranışı bu testlerle kanıtlanmış sayılmaz.
+    event.listen(engine, "connect", lambda connection, _record: connection.create_function("translate", 3, sqlite_translate))
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine)
     engine.dispose()
@@ -2731,3 +2741,134 @@ def test_delete_other_database_error_is_500_and_keeps_record_and_file(client, se
     assert rollbacks == [True]
     assert stored_document(session_factory, document.id) is not None
     assert (storage_dir / document.file_reference).exists()
+
+
+# --- D-055: belge metninde arama ---
+
+SEARCH_URL = f"{LIST_URL}/text-search"
+TURKISH_TEXT = "Sayın Başkanlığa, Kavaklıdere Mahallesi'nde ÇÖP KONTEYNERİ taşmış. Iğdır İSTANBUL şubesi bilgilendirildi."
+
+
+def search(client: TestClient, query) -> TestClient:
+    return client.post(SEARCH_URL, json={"query": query})
+
+
+def found(client: TestClient, query) -> list[str]:
+    response = search(client, query)
+    assert response.status_code == 200, response.text
+    return response.json()["document_ids"]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Kavaklıdere", "KAVAKLIDERE", "kavaklidere", "çöp konteyneri", "COP KONTEYNERI", "başkanlığa", "baskanliga",
+        "konteyn", "iğdır", "IGDIR", "istanbul", "İstanbul", "ISTANBUL", "şubesi",
+    ],
+)
+def test_text_search_folds_turkish_characters_and_case_and_matches_partially(client, session_factory, query):
+    document = insert_document(session_factory, extracted_text=TURKISH_TEXT)
+    insert_document(session_factory, extracted_text="Parktaki salıncak kırık; onarım talep ediliyor.")
+
+    assert found(client, query) == [str(document.id)]
+
+
+def test_text_search_matches_whole_phrase_after_whitespace_normalization(client, session_factory):
+    document = insert_document(session_factory, extracted_text="Evsel atıklar iki haftadır toplanmıyor.")
+
+    assert found(client, "  evsel   ATIKLAR\t iki  ") == [str(document.id)]
+    assert found(client, "atıklar evsel") == []  # kelime sırası korunur
+    assert found(client, "evsel toplanmıyor") == []  # ifade kesintisiz geçmelidir
+
+
+@pytest.mark.parametrize(
+    ("query", "match", "other"),
+    [
+        ("%50", "İndirim %50 oranında uygulandı.", "İndirim 150 oranında uygulandı."),
+        ("a_a", "Dosya adı rapor_a_ab olarak kaydedildi.", "Dosya adı raporaxab olarak kaydedildi."),
+        ("\\ye", "Yol C:\\yedek\\belge olarak yazıldı.", "Yol C:xyedek olarak yazıldı."),
+    ],
+    ids=["percent", "underscore", "backslash"],
+)
+def test_text_search_treats_like_wildcards_literally(client, session_factory, query, match, other):
+    matching = insert_document(session_factory, extracted_text=match)
+    insert_document(session_factory, extracted_text=other)
+
+    assert found(client, query) == [str(matching.id)]
+
+
+def test_text_search_covers_permanent_records_only_and_skips_null_text(client, session_factory):
+    marker = "sentetik arama işareti"
+    now = datetime.now(timezone.utc)
+    insert_document(session_factory, status="prepared", document_type=None, institution_id=None, extracted_text=marker)
+    insert_document(session_factory, status="failed", document_type=None, institution_id=None, extracted_text=None)
+    expected = [
+        insert_document(session_factory, status="classified", extracted_text=marker, created_at=now - timedelta(minutes=1)),
+        insert_document(
+            session_factory, status="needs_review", needs_review=True, review_reason="Kurum belirsiz.", institution_id=None,
+            extracted_text=marker, created_at=now - timedelta(minutes=2),
+        ),
+        insert_document(
+            session_factory, status="failed", document_type=None, institution_id=None, ocr_fallback=False,
+            extracted_text=marker, created_at=now - timedelta(minutes=3),
+        ),
+        insert_document(
+            session_factory, extracted_text=marker, validated_document_type=DOCUMENT_TYPE, validated_institution_id=INSTITUTION,
+            validated_at=now, created_at=now - timedelta(minutes=4),
+        ),
+    ]
+
+    assert found(client, "SENTETIK arama") == [str(document.id) for document in expected]  # en yeni önce
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None, {}, {"query": None}, {"query": 123}, {"query": ""}, {"query": "   "}, {"query": "ab"}, {"query": " a  "},
+        {"query": "x" * 201}, {"query": "abc", "limit": 5},
+    ],
+    ids=["no-body", "empty-object", "null", "number", "empty", "spaces", "two-chars", "one-char-padded", "too-long", "extra-field"],
+)
+def test_text_search_rejects_invalid_requests_with_422(client, session_factory, payload):
+    insert_document(session_factory, extracted_text="abc " + "x" * 300)
+
+    response = client.post(SEARCH_URL, json=payload) if payload is not None else client.post(SEARCH_URL)
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_text_search_length_limits_apply_to_normalized_query(client, session_factory):
+    document = insert_document(session_factory, extracted_text="a b c " + "x" * 300)
+
+    assert found(client, "  a   b  ") == [str(document.id)]  # normalleştirilmiş "a b": 3 karakter
+    assert found(client, "x" * 200 + "    ") == [str(document.id)]
+
+
+def test_text_search_returns_only_ids_and_never_logs_query_or_text(client, session_factory, storage_dir, caplog):
+    secret_query = f"{SECRET_MARKER} arama"
+    document = insert_with_file(session_factory, storage_dir, file_name="gizli_dosya.pdf", extracted_text=f"Metin: {SECRET_MARKER} arama.")
+    before = row_snapshot(session_factory, document.id)
+    files_before = stored_files(storage_dir)
+
+    with caplog.at_level(logging.DEBUG):
+        response = search(client, secret_query)
+
+    assert response.status_code == 200
+    assert response.json() == {"document_ids": [str(document.id)]}
+    assert SECRET_MARKER not in response.text and "gizli_dosya" not in response.text and "file_reference" not in response.text
+    assert SECRET_MARKER not in caplog.text  # sorgu ve belge metni loglanmaz (INV-6)
+    assert "Belge metni araması: 1 sonuç." in caplog.text
+    # Salt okunur: kayıt ve dosyalar değişmez.
+    assert row_snapshot(session_factory, document.id) == before
+    assert stored_files(storage_dir) == files_before
+
+
+def test_text_search_route_does_not_clash_with_document_routes(client, session_factory, storage_dir):
+    document = insert_with_file(session_factory, storage_dir, extracted_text="Rota çakışması kontrol metni.")
+
+    assert found(client, "rota çakışması") == [str(document.id)]
+    assert client.get(f"{LIST_URL}/{document.id}").status_code == 200
+    assert [item["document_id"] for item in client.get(LIST_URL).json()] == [str(document.id)]
+    responses = app.openapi()["paths"][SEARCH_URL]["post"]["responses"]
+    assert {"200", "422"} <= set(responses)

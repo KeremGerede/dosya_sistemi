@@ -7,6 +7,7 @@
 - POST /{id}/retry-classification: sınıflandırması başarısız olan kaydı aynı metinle yeniden sınıflandırır (D-053).
 - DELETE /{id}: kalıcı kaydı ve orijinal dosyasını kalıcı olarak siler (D-054); prepared kayda dokunmaz.
 - PUT /{id}/validation: kullanıcı onayı (D-049); AI sonucu ve status değişmez, Gemini çağrılmaz.
+- POST /text-search: kalıcı kayıtların çıkarılan metninde salt okunur arama; yalnız ID döner (D-055).
 - Salt okunur kayıt endpoint'leri (D-043).
 
 Endpoint'ler bilinçli olarak senkron (def): metin çıkarımı, Gemini çağrısı ve veritabanı erişimi bloklayıcıdır ve
@@ -22,7 +23,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, create_model
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -34,6 +35,8 @@ from app.schemas.classification import (
     DocumentSummary,
     FailedClassifyResponse,
     RoutingValidationRequest,
+    TextSearchRequest,
+    TextSearchResponse,
     ValidationErrorResponse,
 )
 from app.services import classification_service, file_service
@@ -59,6 +62,11 @@ LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"  # PostgreSQL lock_not_available: FOR UPDA
 PREPARED_STATUS = "prepared"  # metni çıkarılmış, henüz sınıflandırılmamış belge (D-046)
 PREPARED_TTL = timedelta(hours=24)  # sahipsiz prepared kayıtlar bundan eskiyse sonraki prepare'de temizlenir (D-046)
 VALIDATABLE_STATUSES = ("classified", "needs_review")  # prepared ve failed onaylanamaz (D-049)
+# Belge metni araması (D-055): Türkçe karakterler sade eşlerine katlanır, sonra küçük harfe çevrilir. Frontend'deki
+# fold() ile aynı eşleme; translate veritabanının dil ayarından bağımsızdır.
+SEARCH_FOLD_FROM = "ÇĞİIÖŞÜÂÎÛçğıöşüâîû"
+SEARCH_FOLD_TO = "cgiiosuaiucgiosuaiu"
+SEARCH_FOLD_TABLE = str.maketrans(SEARCH_FOLD_FROM, SEARCH_FOLD_TO)
 
 # Onay gövdesi: izinli ID'ler kataloglardan gelir (D-009, D-049). Katalog dışı, eksik ya da fazla alan FastAPI'nin
 # standart 422 gövdesini döndürür; yeni bir 422 biçimi eklenmez.
@@ -510,6 +518,30 @@ def validate_document(
         raise
     logger.info("Belge %s onaylandı.", document_id)
     return DocumentSummary(**_record_fields(document))
+
+
+@router.post(
+    "/text-search",
+    response_model=TextSearchResponse,
+    responses={422: {"model": ValidationErrorResponse, "description": "Sorgu eksik, 3 karakterden kısa, 200 karakterden uzun ya da ek alan var."}},
+    summary="Kalıcı kayıtların çıkarılan metninde arar; yalnız eşleşen belge ID'lerini döndürür",
+)
+def search_document_text(body: TextSearchRequest, db: Annotated[Session, Depends(get_db)]) -> TextSearchResponse:
+    """Belge metni araması (D-055): salt okunur; prepared kayıtlar aranmaz, metin ve alıntı dönmez.
+
+    Sorgu ve metin aynı kuralla katlanır; normalleştirilmiş sorgu metinde kesintisiz geçmelidir (bütün ifade, kısmi
+    eşleşme). %, _ ve \\ harfiyen aranır. İndeks yoktur (tam tablo taraması). Sorgu metni loglanmaz (INV-6).
+    """
+    folded = body.query.translate(SEARCH_FOLD_TABLE).lower()
+    pattern = "%" + folded.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    folded_text = func.lower(func.translate(Document.extracted_text, SEARCH_FOLD_FROM, SEARCH_FOLD_TO))
+    document_ids = db.scalars(
+        select(Document.id)
+        .where(Document.status != PREPARED_STATUS, folded_text.like(pattern, escape="\\"))
+        .order_by(Document.created_at.desc(), Document.id)
+    ).all()
+    logger.info("Belge metni araması: %d sonuç.", len(document_ids))
+    return TextSearchResponse(document_ids=list(document_ids))
 
 
 @router.get(

@@ -540,7 +540,7 @@
 - **Gerekçe:** Kullanıcı yanlış veya büyük dosyada anında geri bildirim alır; gereksiz yükleme ve sunucu işi önlenir. İstemci kontrolü atlatılabileceği için güvenlik sınırı sayılmaz. 5 dosya, sıralı işlemede bekleme süresini ve tek ekranda gözden geçirmeyi yönetilebilir tutar. 50 MB sınırı bu nedenle frontend'de de yazılır; sınır değişirse iki yer birlikte güncellenmelidir.
 
 ### D-048 — Kayıtlar görünümü: belge türü, istemci tarafı arama/filtre ve özet sayıları
-- **Durum:** Aktif · **Git:** giriş 2026-10-04, son değişiklik 2026-10-06 · **Referans:** F-07; T-06
+- **Durum:** Aktif (arama hükümleri 2026-10-23'te D-055 ile genişledi: istemci araması gönderen ve özeti de kapsar, belge metni `POST /api/documents/text-search` ile sunucuda aranır; filtre, sayaç ve "sayfalama yok" hükümleri geçerli) · **Git:** giriş 2026-10-04, son değişiklik 2026-10-06 · **Referans:** F-07; T-06; D-055
 - **Karar:**
   - Kayıtlar listesinde ve kayıt detayında effective belge türü gösterilir (D-049: onaylıysa onaylanan, değilse AI türü; yoksa "Belirlenemedi").
   - Arama ve filtre yalnız istemci tarafındadır ve `GET /api/documents`'ın döndürdüğü kayıtlar üzerinde çalışır:
@@ -549,3 +549,30 @@
   - Üç özet sayısı gösterilir: Toplam Kayıt, İnceleme Gereken (onaylanmamış `needs_review`: `needs_review` doğru ve `validated_at` boş — D-049), Başarısız (`failed`). Sayılar tüm yüklü kayıtlardandır; filtreden etkilenmez.
   - Backend, API, şema ve veritabanı değişmez. Endpoint'lerde arama, filtre ve sayfalama yoktur (D-043); kayıt sayısı istemcide işlenemeyecek kadar büyürse sunucu tarafı filtre/sayfalama ayrı bir karardır.
 - **Gerekçe:** Liste endpoint'i gereken bütün alanları sayfalamasız döndürdüğü için yeni endpoint, sorgu katmanı veya analytics altyapısı gerekmez (D-024). "Sınıflandırıldı" sayısı gösterilmez: `needs_review` belgeler de sınıflandırılmıştır; seçilen üç sayı birbiriyle çakışmaz ve aksiyon gerektiren kayıtları öne çıkarır. Saf yardımcılar `node:test` ile test edilir (D-037).
+
+### D-055 — Kayıtlar'da gelişmiş arama: kayıt bilgileri istemcide, belge metni sunucuda
+- **Durum:** Aktif · **Tarih:** 2026-10-23 · **Referans:** F-07, F-08; D-043, D-048, D-025; INV-6; T-16, T-06, T-17
+- **Karar:**
+  - **İstemci araması (anlık):** Kayıtlar'daki arama kutusu dosya adında, gönderen kişide (`sender_name`), gönderen kurumda (`sender_institution`) ve AI özetinde (`summary`) arar. Alanlar `GET /api/documents` yanıtında zaten vardır; yeni istek yoktur. Değeri `null` olan alan eşleşmez. En az karakter sınırı yoktur; dosya adı araması bugünkü gibi çalışır.
+  - **Sunucu araması (isteğe bağlı):** "Belge metninde de ara" kutusu işaretliyse çıkarılan metin (`extracted_text`) sunucuda aranır. Kutu varsayılan olarak kapalıdır.
+  - **`POST /api/documents/text-search`:** Salt okunurdur; kayda yazmaz.
+    - Gövde `{"query": "..."}`; ek alan kabul edilmez. Sorgu URL'de taşınmaz: arama metni kişisel veri içerebilir ve standart erişim loglarına girmemelidir.
+    - Normalleştirilmiş sorgu 3–200 karakter olmalıdır; aksi hâlde FastAPI'nin standart `422` gövdesi döner.
+    - Yanıt `{"document_ids": [...]}`: yalnız eşleşen kalıcı kayıtların ID'leri, `created_at` azalan sırada. `prepared` kayıtlar dahil değildir. Metin, alıntı veya eşleşme konumu dönmez.
+    - Arama metni ve belge metni loglanmaz (INV-6); log yalnız sonuç sayısını içerebilir.
+    - Route, `/{document_id}` route'larıyla çakışmayacak şekilde tanımlanır.
+  - **Eşleşme kuralı (iki tarafta aynı):**
+    - Boşluk normalleştirmesi: ardışık boşluk karakterleri tek boşluğa indirilir, baş ve sondaki boşluk atılır (backend `normalize_text` ile aynı kural). Sorguya istemcide ve sunucuda, aranan alanlara istemcide uygulanır; `extracted_text` zaten bu kuralla saklanır.
+    - Türkçe karakter katlama: büyük/küçük harf farkı yoktur; ç/c, ğ/g, ı/i, İ/i, I/i, ö/o, ş/s, ü/u, â/a, î/i, û/u eşleşir. İstemcide mevcut `fold` kullanılır; sunucuda aynı eşleme `lower(translate(...))` ile yapılır.
+    - Kısmi ve bütün ifade eşleşmesi: normalleştirilmiş ve katlanmış sorgu, alanın içinde kesintisiz geçmelidir. Çok kelimeli sorgu kelimelere bölünmez. Bulanık eşleşme, kök bulma ve sıralama puanı yoktur. Sunucuda `%`, `_` ve `\` joker karakter olarak değil, harfiyen aranır.
+  - **Sonuç:** Liste "kayıt bilgisi eşleşmesi VEYA belge metni eşleşmesi" ile oluşur; tür, hedef kurum ve durum filtreleri bunun üstüne uygulanır (D-048). Özet sayıları filtreden ve aramadan etkilenmez.
+  - **Arayüz:** Arama kutusu "Belge adı, gönderen veya özette ara" olur; altında "Belge metninde de ara" kutusu vardır.
+    - Kutu açıkken sorgu 3 karakterden kısaysa sunucuya istek gitmez, kısa bir ipucu gösterilir; kayıt bilgisi araması çalışmaya devam eder.
+    - Yazma bittikten kısa süre sonra istek gider. Yalnız en son sorgunun yanıtı uygulanır; eski yanıtlar yeni sonucun üzerine yazılmaz.
+    - İstek sürerken "Belge metninde aranıyor…" gösterilir. Hata ya da zaman aşımında "Belge metninde arama yapılamadı" mesajı gösterilir ve kayıt bilgisi sonuçları görünmeye devam eder.
+    - Eşleşen satırda neden küçük bir satırla gösterilir (ör. "Eşleşme: gönderen · özet · belge metni"); dosya adı eşleşmesi ayrıca yazılmaz. Belge metninden alıntı gösterilmez.
+    - Arama bir okuma isteğidir; tek istek çalıştırıcısına (D-045) bağlanmaz.
+  - **Performans:** İndeks, `pg_trgm`, full-text search altyapısı, arama motoru, vektör veritabanı, yeni LLM çağrısı ve migration yoktur; arama tam tablo taramasıdır. Gerçek PostgreSQL'de 1.000 sentetik kayıtta (kayıt başına ~50 bin karakter) sorgu süresi ölçülür; 1 saniye bir ölçüm kriteridir. Aşılırsa bu durum kaydedilir; indeks veya mimari değişikliği ancak ayrı bir kararla eklenir. Ölçüm (2026-10-23, gerçek PostgreSQL): 1.000 kayıt × ~50.000 karakterde sorgu başına ~3,8 sn; kriter aşıldı. Kullanıcı kararıyla bu süre MVP için kabul edilen sınırdır: metin araması isteğe bağlı kutuyla açılır, arama sürerken durum gösterilir ve gerçek belge metinleri bu en kötü durumdan çok kısadır. Gerçek hacimde ihtiyaç görülürse indeks ayrı karardır (T-06).
+  - **Yetki:** Endpoint'te yetki yoktur (D-025). Detay endpoint'i aynı metni zaten açtığı için yeni bir veri açığı yaratmaz, ama dış erişimden (T-17) önce diğer endpoint'lerle birlikte korunmalıdır.
+  - **Kapsam dışı:** Sunucu tarafı filtre ve sayfalama (T-06), metinden alıntı, sonuç sıralaması, kelime bazlı veya bulanık arama, aramanın kaydedilmesi.
+- **Gerekçe:** Kullanıcı belge adını bilmeden gönderen, özet veya belge metniyle kayıt bulabilmelidir. Gönderen ve özet liste yanıtında zaten olduğu için istemcide aranır; arama anlık kalır ve D-048'in liste, filtre ve sayaç modeli korunur. Belge metni sınırsız uzunluktadır ve kişisel veri içerebilir: tüm kayıtların metnini tarayıcıya göndermek büyük veri aktarımı ve toplu veri açığı demektir. Bu yüzden metin sunucuda aranır ve yalnız ID'ler döner. POST gövdesi, sorgunun erişim loglarına girmesini önler. Katlama `translate` ile yapıldığı için veritabanının dil ayarından bağımsızdır.
