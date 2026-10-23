@@ -1,0 +1,2 @@
+# Windows batch dosyaları checkout sırasında her makinede CRLF satır sonlarıyla oluşturulur.
+*.bat text eol=crlf
