@@ -45,7 +45,7 @@ Seçim gerekçeleri: D-005 (backend ve frontend), D-006 (PostgreSQL, senkron SQL
 
 Ortam değişkenleri, zorunlulukları ve şablon değerleri: `README.md` "Ortam Değişkenleri" (tek kaynak; şablon `backend/.env.example`).
 
-Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_KEY` veya `GEMINI_MODEL` tanımlı değilse Gemini istemcisi yüklenirken (uygulama başlangıcı) açık bir yapılandırma hatası verilir (fail fast); sessizce bir modele düşülmez. `DATABASE_URL` `settings.py` yüklenirken kontrol edilir. `TESSDATA_PREFIX` opsiyoneldir ve yokluğu uygulamayı durdurmaz. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
+Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_KEY` veya `GEMINI_MODEL` tanımlı değilse Gemini istemcisi yüklenirken (uygulama başlangıcı) açık bir yapılandırma hatası verilir (fail fast); sessizce bir modele düşülmez. `DATABASE_URL` `settings.py` yüklenirken kontrol edilir. `TESSDATA_PREFIX` opsiyoneldir ve yokluğu uygulamayı durdurmaz. `OCR_ENABLED` opsiyoneldir (varsayılan `true`); `true`/`false` dışındaki değer başlangıçta açık hata verir (D-055). Production container düzeni: D-056. `.env` ve yüklenen dosyalar repoya commit edilmez; `.env.example` commit edilir.
 
 ## F-01 — Belge kabulü ve depolama
 
@@ -117,6 +117,7 @@ Akıştaki yeri: `PROJECT_BRAIN.md` §2, 4. ve 5. adım.
 - Tesseract, `TESSDATA_PREFIX` tanımlı değilse veya hata verirse atlanır; o durumda yeterli metin yoksa belge `failed` + `422` olur.
 - DOCX'te paragrafların yanında tablo hücrelerindeki metin de alınır (python-docx `paragraphs` tabloları kapsamaz).
 - Normalizasyon: ardışık boşluk karakterleri (boşluk, sekme, satır sonu) tek boşluğa indirilir, baştaki ve sondaki boşluklar kırpılır.
+- **OCR kapalı (D-055):** `OCR_ENABLED=false` iken (production Compose) OCR gereken belge — görüntü ve D-003 koşulunu sağlayan PDF, hybrid PDF dahil — Gemini transkripsiyonuna ve Tesseract'a girmeden `failed` + `422` olur; mesaj metin tabanlı PDF, DOC veya DOCX yüklenmesini ister. Kısmi (yalnız gömülü) metinle devam edilmez. Metin tabanlı belgeler ve sınıflandırma değişmez.
 - Normalize edilmiş metin **en az 10 karakter** olmalıdır; aynı sınır transkripsiyonun başarılı sayılması için de kullanılır. Nihai metin daha kısaysa veya çıkarım hata verirse (bozuk, şifreli dosya vb.) belge Gemini sınıflandırmasına gönderilmez ve `failed` kaydedilir.
 
 **Transkripsiyon sözleşmesi (D-047):**
@@ -140,6 +141,7 @@ Akıştaki yeri: `PROJECT_BRAIN.md` §2, 4. ve 5. adım.
 - Transkripsiyonda boş yanıt yeniden denenir; kısa ama boş olmayan yanıt ve kalıcı hata yeniden denenmez; en fazla 3 gerçek istek yapılır — `llm::test_empty_transcription_is_invalid_output_and_retried`, `llm::test_short_but_non_empty_transcription_is_returned_without_retry`, `llm::test_transcription_permanent_client_errors_are_not_retried`, `llm::test_real_sdk_transcription_sends_at_most_three_http_requests`.
 - Nihai metin 10 karakterden kısaysa ya da çıkarım hata verirse belge `failed` olur ve `422` döner — `api::test_text_extraction_failure_returns_422_with_failed_record`, `api::test_short_tesseract_fallback_text_is_failed_with_422`, `file::test_text_shorter_than_10_characters_is_rejected`, `file::test_corrupt_or_encrypted_documents_raise_text_extraction_error`.
 - `TESSDATA_PREFIX` tanımlı değilse yedek OCR atlanır — `file::test_ocr_is_skipped_when_tessdata_prefix_is_not_configured`.
+- OCR kapalıyken OCR gereken belge (PNG, JPG, taranmış ve hybrid PDF; legacy classify ve prepare) transkripsiyon ve Tesseract çağrılmadan `failed` + `422` olur, dosya saklanır; metin tabanlı PDF, DOC ve DOCX sınıflandırılır; `OCR_ENABLED` yalnız `true`/`false` kabul eder — `api::test_ocr_disabled_rejects_document_needing_ocr_without_transcription_or_tesseract`, `api::test_ocr_disabled_keeps_digital_text_extraction_and_classification`, `settings::test_env_flag_reads_true_false_or_default`, `settings::test_env_flag_rejects_unknown_value`.
 - Çıkarılan metnin tamamı saklanır; 50.000 karakter sınırı yalnız Gemini çağrısı içindir — `file::test_full_text_is_returned_without_truncation`, `api::test_full_extracted_text_is_stored_and_passed_to_classification`.
 - Transkripsiyon logları transkripti, dosya baytlarını ve ham API gövdesini içermez — `llm::test_transcription_logs_hide_transcript_file_bytes_and_raw_api_body`.
 
@@ -150,7 +152,7 @@ Akıştaki yeri: `PROJECT_BRAIN.md` §2, 4. ve 5. adım.
 - DOC ve DOCX'te OCR yapılmaz; header/footer, gömülü görüntü, makro ve biçimlendirme okunmaz (`PROJECT_BRAIN.md` §12; `services/file_service.py`).
 - Görüntüler için otomatik döndürme ve ön işleme yoktur (`PROJECT_BRAIN.md` §12; aday: T-11).
 
-**Referanslar:** D-002, D-003, D-026, D-033, D-042, D-047 · Kod: `services/file_service.py` (`needs_ocr`, `transcription_parts`, `extract_text`, `_merge_page_text`), `api/documents.py` (`_extract_into`, `_transcribe`), `services/classification_service.py` (`transcribe_document`, `TRANSCRIPTION_PROMPT`) · Görev: T-11
+**Referanslar:** D-002, D-003, D-026, D-033, D-042, D-047, D-055 · Kod: `services/file_service.py` (`needs_ocr`, `transcription_parts`, `extract_text`, `_merge_page_text`), `api/documents.py` (`_extract_into`, `_transcribe`), `services/classification_service.py` (`transcribe_document`, `TRANSCRIPTION_PROMPT`) · Görev: T-11
 
 ## F-03 — Sınıflandırma, özet ve gönderen
 

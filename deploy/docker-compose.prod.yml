@@ -1,0 +1,129 @@
+# Dosya Sistemi production Compose (Linux sunucu; ilk hedef AWS Lightsail staging, /opt/citech/dosya).
+# Yerel geliştirme için kök dizindeki docker-compose.yml kullanılır; bu dosya ondan bağımsızdır.
+#
+# Hiçbir servis host portu yayınlamaz. Dış erişim ayrı aşamadaki Caddy ile, yalnız "edge" ağındaki web
+# servisine verilir: Caddy "citech-dosya_edge" ağına harici ağ olarak katılır ve "dosya-web:8080"e yönlendirir.
+# Uygulamada kimlik doğrulama yok (D-025, T-17): S3 korumaları tamamlanmadan internete açılmaz.
+#
+# Kullanım (repo kökünden):
+#   docker compose -f deploy/docker-compose.prod.yml build
+#   docker compose -f deploy/docker-compose.prod.yml up -d db
+#   docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+name: citech-dosya
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-api-image: &api-image citech-dosya-api:local
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dosya_sistemi
+      POSTGRES_USER: dosya_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/.env içinde POSTGRES_PASSWORD tanımlı değil}
+      DOSYA_MIGRATOR_PASSWORD: ${DOSYA_MIGRATOR_PASSWORD:?deploy/.env içinde DOSYA_MIGRATOR_PASSWORD tanımlı değil}
+      DOSYA_APP_PASSWORD: ${DOSYA_APP_PASSWORD:?deploy/.env içinde DOSYA_APP_PASSWORD tanımlı değil}
+    volumes:
+      # PostgreSQL 18+ image'ında veri /var/lib/postgresql/18/docker altında; volume üst dizine bağlanır.
+      - pgdata:/var/lib/postgresql
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dosya_admin -d dosya_sistemi"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    logging: *logging
+
+  # Şema değişikliği yalnız bu tek seferlik servisle yapılır; api başlarken migration çalıştırmaz.
+  migrate:
+    image: *api-image
+    pull_policy: never  # image "api" servisinin build'inden gelir
+    profiles: [migrate]
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://dosya_migrator:${DOSYA_MIGRATOR_PASSWORD}@db:5432/dosya_sistemi?connect_timeout=10
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [backend]
+    logging: *logging
+
+  api:
+    build: ../backend
+    image: *api-image
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://dosya_app:${DOSYA_APP_PASSWORD}@db:5432/dosya_sistemi?connect_timeout=10
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?deploy/.env içinde GEMINI_API_KEY tanımlı değil}
+      GEMINI_MODEL: ${GEMINI_MODEL:?deploy/.env içinde GEMINI_MODEL tanımlı değil}
+      # D-055: ilk yayın OCR'sizdir. Bilinçli olarak .env'den okunmaz; değiştirmek yeni karar gerektirir.
+      OCR_ENABLED: "false"
+    volumes:
+      - storage:/app/storage
+    # backend: db ve web ile iç ağ. egress: Gemini API'ye çıkış (iç ağın dışarı çıkışı yoktur).
+    # nginx api'ye tekil "dosya-api" adıyla gider; genel "api" adı başka bir projenin servisiyle karışmaz.
+    networks:
+      backend:
+        aliases: [dosya-api]
+      egress: {}
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
+    logging: *logging
+
+  web:
+    build: ../frontend
+    image: citech-dosya-web:local
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    # Caddy hedefi "dosya-web:8080": Caddy başka projelerin ağlarına da katılsa genel "web" adı belirsizleşmez.
+    networks:
+      backend: {}
+      edge:
+        aliases: [dosya-web]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        # 5 eşzamanlı 45 MB yüklemede 64M sınırına dayandı (S2 ölçümü); 128M pay bırakır.
+        limits: { cpus: "0.5", memory: 128M }
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  egress: {}
+  edge: {}
+
+volumes:
+  pgdata: {}
+  storage: {}

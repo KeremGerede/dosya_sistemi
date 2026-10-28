@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app import settings
 from app.database import get_db
 from app.models.document import Document
 from app.schemas.classification import (
@@ -45,6 +46,10 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB sınırını aşıyor."
 UNSUPPORTED_FILE_MESSAGE = "Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."
 TEXT_EXTRACTION_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
+OCR_DISABLED_MESSAGE = (
+    "Bu belge taranmış görünüyor veya görüntü dosyası; bu ortamda OCR kapalı olduğu için okunamadı. "
+    "Lütfen metin tabanlı PDF, DOC veya DOCX yükleyin."
+)
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
 OCR_FALLBACK_REVIEW_REASON = "Belge metni yedek OCR ile okundu; okuma hataları olabileceği için kontrol edilmelidir."
 DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."
@@ -196,6 +201,11 @@ def _extract_into(document: Document, content: bytes) -> tuple[int, str] | None:
     ocr_fallback = False
     try:
         if file_service.needs_ocr(content, document.file_type):
+            if not settings.OCR_ENABLED:
+                # D-055: Gemini transkripsiyonu ve Tesseract yedeği çalışmaz; kısmi (yalnız gömülü) metin kullanılmaz.
+                logger.warning("Belge %s: OCR gerekiyor ancak OCR kapalı; metin çıkarılmadı.", document.id)
+                document.status = "failed"
+                return 422, OCR_DISABLED_MESSAGE
             extracted_text = _transcribe(document, content)
             ocr_fallback = extracted_text is None
         if extracted_text is None:

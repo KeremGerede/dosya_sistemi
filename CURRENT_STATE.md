@@ -1,8 +1,10 @@
 # CURRENT_STATE
 
-> **Son güncelleme:** 2026-10-22
+> **Son güncelleme:** 2026-10-28
 >
-> `main`'in güncel durumu (snapshot). Geliştirme günlüğü veya backlog değildir; geçmiş ayrıntılar Git geçmişindedir.
+> Güncel durum (snapshot). Geliştirme günlüğü veya backlog değildir; geçmiş ayrıntılar Git geçmişindedir.
+>
+> **Dal durumu (2026-10-28):** Bu dosya `chore/windows-one-click-start` dalının durumunu anlatır. S2 production Docker hazırlığı (D-055, D-056) ve Windows tek tıkla başlatma betiği yalnız bu daldadır; **henüz `main`'e alınmadı**. Bu iki iş dışındaki içerik `main` ile aynıdır.
 >
 > Açık işler → `TODOS.md` · Kalıcı proje bilgisi ve mimari → `PROJECT_BRAIN.md` · Aktif kararlar → `DECISIONS.md` · Özellik davranışı ve sınırları → `docs/TEKNIK_SARTNAME.md` · Çalışma kuralları → `CLAUDE.md`
 
@@ -28,7 +30,7 @@
 
 Yerel Windows 11, Python 3.13.15, Node 24.20.0, npm 11.19.0.
 
-- **Backend:** `pytest` **507 passed** (1 uyarı: `starlette.testclient` kaynaklı `StarletteDeprecationWarning`); `pip check` temiz. Son doğrulama 2026-10-23, T-15 (`37f3337`) üzerinde.
+- **Backend:** `pytest` **528 passed** (Windows'ta 2 uyarı, Linux image'ında 1: `starlette.testclient` kaynaklı); `pip check` temiz. Son doğrulama 2026-10-28, S2 production Docker hazırlığında (D-055, D-056) Windows'ta ve Linux image'ı içinde.
 - **Frontend:** `npm test` **98 passed**; `npm run build` ve `npm run lint` temiz. Son doğrulama 2026-10-23, T-15 (`37f3337`) üzerinde.
 - **Veritabanı:** Tek `documents` tablosu. Alembic tek head `261a2937eb7c` (beş migration; D-053 `ocr_fallback`). `alembic check` çalışan veritabanı ister; son sonucu temiz (2026-10-22, aynı PostgreSQL sunucusunda geçici DB, upgrade/downgrade/upgrade sonrası). Masaüstü geliştirme DB'si `261a2937eb7c`'de; laptop doğrulanmadı (Yerel ortamlar).
 - Otomatik testler gerçek Gemini API'si veya Docker PostgreSQL gerektirmez: endpoint testleri geçici SQLite, sahte sınıflandırma ve sahte transkripsiyon kullanır; Gemini retry/timeout davranışı gerçek SDK + `httpx.MockTransport` ile test edilir.
@@ -68,4 +70,5 @@ Otomatik testlerin kapsamadığı davranış (gerçek Gemini, PostgreSQL, taray�
 
 Özellik sınırları ilgili kaydın "Sınırlar" bölümündedir: `docs/TEKNIK_SARTNAME.md` (F-01–F-09). Burada ürünün genel durumunu etkileyen sınır kalır.
 
+- **Production Docker hazırlığı (S2, 2026-10-28; yalnız yerelde, dağıtım yapılmadı):** D-055 (OCR kapalı) ve D-056 (container düzeni). Yerel Docker'da (Linux amd64) izole `dosya-s2test` projesiyle doğrulandı: image build; backend 528 test container içinde; boş volume'de roller, `alembic upgrade head`, `alembic check` temiz, downgrade/upgrade; uygulama rolü DDL ve `alembic_version` erişimi reddedildi; `edge` ağından gerçek Gemini ile dijital PDF ve DOCX sınıflandırma, PNG ve taranmış PDF `422` (OCR çağrısı yok), liste, detay, indirme, 413; `down`/`up` ve süreç SIGKILL sonrası veri ve dosyalar korundu; host portu yok. AWS'de denenmedi.
 - **Dağıtıma hazır değil:** Uygulama seviyesinde gövde sınırı yok (50 MB üstü yükleme önce geçici diske alınır), DOCX ZIP bomb koruması yok, authentication yok, CORS/reverse proxy kararı yok. Bunlar deployment adayının kapsamındadır (`TODOS.md` → T-12) ve AWS staging / canlı demonun (T-17) ön koşuludur. T-15 ile gelecek kalıcı silme endpoint'i de yetkisizdir; dış erişimden önce sunucu tarafında korunması zorunludur (D-054).

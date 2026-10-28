@@ -115,6 +115,15 @@
 - **Karar:** Desteklenen tüm dosya türleri (D-001) için sınır dosya başına 50 MB'dır. Aşan dosya storage'a yazılmadan ve `documents` kaydı oluşturulmadan `413` ile reddedilir.
 - **Gerekçe:** Sunucu kaynaklarını ve senkron istek süresini korur; metin tabanlı belgeler için yeterli pay bırakır.
 
+### D-055 — İlk AWS yayını OCR'siz: `OCR_ENABLED=false`
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** F-02, F-08; D-001, D-003, D-042, D-047, D-056; T-12, T-17, T-18
+- **Karar:**
+  - `OCR_ENABLED` ortam değişkeni (`true`/`false`) OCR'ın iki yolunu birlikte açar veya kapatır: Gemini transkripsiyonu (D-047) ve Tesseract yedeği (D-042). Tanımlı değilse `true`'dur; yerel geliştirme davranışı değişmez. Başka bir değer uygulamayı açık hatayla durdurur.
+  - Production Compose (D-056) `OCR_ENABLED=false` verir; değer `.env`'den okunmaz. Production image'ına Tesseract kurulmaz.
+  - OCR kapalıyken OCR gereken belge (JPG/JPEG/PNG ve D-003 koşulunu sağlayan PDF; taranmış ve hybrid PDF dahil) OCR'a girmeden `failed` kaydedilir ve `422` döner. Mesaj belgenin taranmış veya görüntü olduğunu ve metin tabanlı PDF, DOC veya DOCX yüklenmesi gerektiğini söyler. Hybrid PDF'in yalnız gömülü metniyle devam edilmez: kısmi metinle sınıflandırma yapılmaz. Orijinal dosya saklanır; kayıt indirilebilir ve kalıcı olarak silinebilir (D-054). Kayıt tekrar denenemez (D-053).
+  - Metin tabanlı PDF, DOC ve DOCX çıkarımı ile Gemini sınıflandırması (D-008) değişmez.
+- **Gerekçe:** OCR, ortak 4 GB sunucuda en büyük bellek ve CPU riskidir. Kodda Tesseract yedeği sayfayı 400 dpi'de render eder (`services/file_service.py`: `OCR_DPI`, `_ocr_page_text`); render'dan önce piksel veya pixmap sınırı ve OCR eşzamanlılık sınırı yoktur. Kabul edilen bir görüntünün piksel sayısı dosya boyutuyla sınırlı olmadığı için tek bir istek yüksek bellek kullanabilir. Endpoint'ler senkron, uvicorn tek worker'dır (D-020, D-056); uzun bir OCR, aynı süreçteki diğer istekleri yavaşlatabilir. Gemini transkripsiyonu da her OCR belgesinde dosyanın kendisini dışarı gönderir ve ek Gemini çağrısı yapar (F-02 "Sınırlar"). Bu korumalar gelmeden OCR'ı açmak aynı sunucudaki Stok uygulamasını da etkileyebilir. OCR'ın yeniden açılması T-18 kapsamında, kaynak sınırlarıyla birlikte değerlendirilir.
+
 ## Teknoloji
 
 ### D-005 — Backend ve frontend yığını
@@ -171,6 +180,19 @@
   - `DATABASE_URL`: `postgresql+psycopg://postgres:postgres@127.0.0.1:5434/dosya_sistemi?connect_timeout=10` (bağlantı zaman aşımı: D-041).
   - D-036'nın diğer maddeleri değişmeden geçerlidir: Compose'da yalnız `postgres` servisi (`postgres:18`, container `dosya-sistemi-postgres`, veritabanı `dosya_sistemi`), `dosya_sistemi_pgdata` volume'unun `/var/lib/postgresql` yoluna bağlanması, `localhost` yerine `127.0.0.1`, yalnız yerel geliştirme için `postgres` / `postgres`, backend ve frontend yerelde ve containerize edilmeden.
 - **Gerekçe:** Aynı makinede `stok` projesinin PostgreSQL container'ı `127.0.0.1:5433`'ü kullanıyor. İki proje aynı host portunu isteyince `dosya_sistemi` container'ı başlayamıyor ve backend, `DATABASE_URL` ile diğer projenin sunucusuna bağlanma riski taşıyordu. Ayrı host portu iki projenin aynı anda çalışmasına izin verir; volume ve veri değişmez.
+
+### D-056 — Production container düzeni (AWS Lightsail staging hazırlığı)
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** Ortak teknoloji; `README.md` "Production Docker"; D-017, D-020, D-025, D-028, D-038, D-039, D-051, D-055; T-12, T-17
+- **Karar:**
+  - Dosyalar: `backend/Dockerfile`, `frontend/Dockerfile` + `frontend/nginx.conf`, `deploy/docker-compose.prod.yml`, `deploy/.env.example`, `deploy/postgres/initdb/`. Yerel geliştirme düzeni (D-051) değişmez.
+  - Servisler: `db` (PostgreSQL 18), `api` (FastAPI, tek uvicorn worker, root olmayan kullanıcı), `web` (Vite build'i sunan yetkisiz nginx; yalnız `/api/` istekleri `api`'ye gider, `/docs`, `/openapi.json` ve `/health` dışarı açılmaz) ve tek seferlik `migrate`.
+  - Hiçbir servis host portu yayınlamaz. Ağlar: `backend` (iç ağ, dışarı çıkış yok: `db`, `api`, `web`, `migrate`), `egress` (yalnız `api`; Gemini'ye çıkış), `edge` (yalnız `web`). Dış erişim ayrı aşamada Caddy'nin `citech-dosya_edge` ağına harici ağ olarak katılmasıyla, yalnız `dosya-web:8080`'e verilir.
+  - Tekil DNS adları: `web`, `edge` ağında `dosya-web`; `api`, `backend` ağında `dosya-api` alias'ını taşır. Caddy ve nginx yalnız bu adları kullanır; genel `web`/`api` adları başka bir projenin (ör. aynı sunucudaki Stok) servisiyle karışabilir.
+  - Veritabanı rolleri: `dosya_admin` (superuser, yalnız bakım), `dosya_migrator` (veritabanı sahibi, yalnız migration), `dosya_app` (uygulama; tablolarda yalnız SELECT/INSERT/UPDATE/DELETE, DDL ve geçici tablo yok, `alembic_version`'a erişim yok). Roller boş volume'ün ilk başlatmasında oluşturulur.
+  - Migration `api` başlarken çalışmaz; `migrate` servisi `--profile migrate` ile elle ve ayrıca çalıştırılır.
+  - Kalıcılık: `pgdata` ve `storage` named volume'leri. Restart `unless-stopped`; her serviste healthcheck, CPU ve bellek sınırı (db 512M, api 768M, web 128M) ve log döndürme (10 MB × 3).
+  - Gövde sınırı: nginx `51m`; asıl 50 MB kontrolü backend'dedir (D-028). nginx proxy zaman aşımı 130 sn (istemci 120 sn, D-039).
+- **Gerekçe:** Ortak 4 GB sunucuda Stok uygulamasıyla çakışmayan, port yayınlamayan ve internete açılmadan önce ayrı bir proxy aşaması gerektiren en küçük düzen. Uygulama rolünün şema değiştirememesi ve migration'ın elle çalışması, yanlış bir sürümün veritabanını sessizce değiştirmesini önler. nginx katmanı uygulama koduna dokunmadan göreli `/api` yolunu (D-038) korur ve Caddy'ye tek bir hedef verir.
 
 ## LLM
 

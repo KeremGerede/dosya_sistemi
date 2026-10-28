@@ -139,6 +139,7 @@ Değerler `backend/.env` dosyasındadır; bu dosya Git'e girmez. Şablon ve aç�
 | `GEMINI_MODEL` | Evet | Transkripsiyon ve sınıflandırma modeli. Şablon değeri `gemini-3.5-flash-lite`; kodda varsayılan yoktur |
 | `DATABASE_URL` | Evet | PostgreSQL adresi (psycopg 3). Şablon değeri yerel Docker veritabanını gösterir (`127.0.0.1:5434`, `connect_timeout=10`) |
 | `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörü; `tur.traineddata` içermelidir. Tanımlı değilse yedek OCR atlanır |
+| `OCR_ENABLED` | Hayır | `true` (varsayılan) veya `false`. `false` iken OCR gereken belge OCR'a girmeden `422` alır (D-055); production Compose `false` verir |
 
 Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde `localhost` yerine `127.0.0.1` kullanın.
 
@@ -183,6 +184,23 @@ npm run lint
 Otomatik testler gerçek Gemini API'si veya Docker PostgreSQL gerektirmez; geçici SQLite ve sahte Gemini yanıtları kullanır. `alembic check` çalışan bir veritabanı ister.
 
 Son doğrulanmış baseline (tarih, commit, ortam ve sonuçlar): [`CURRENT_STATE.md`](CURRENT_STATE.md) → "Teknik baseline".
+
+## Production Docker
+
+Linux sunucu (ilk hedef AWS Lightsail staging, `/opt/citech/dosya`) için düzen: D-056. **Uygulamada kimlik doğrulama yok; S3 korumaları tamamlanmadan internete açmayın** (D-025, D-054). OCR kapalıdır (D-055).
+
+```bash
+cp deploy/.env.example deploy/.env   # değerleri doldurun; parolalar: openssl rand -hex 32
+docker compose -f deploy/docker-compose.prod.yml build
+docker compose -f deploy/docker-compose.prod.yml up -d --wait db
+docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate   # alembic upgrade head
+docker compose -f deploy/docker-compose.prod.yml up -d --wait
+```
+
+- Host portu yayınlanmaz. Dış erişim ayrı aşamada Caddy ile verilir: Caddy `citech-dosya_edge` ağına harici ağ olarak katılır ve `dosya-web:8080`'e yönlendirir. Genel `web` adı kullanılmaz: Caddy başka projelerin ağlarına da katıldığında aynı adlı servisle karışabilir.
+- Migration yalnız `migrate` servisiyle, `dosya_migrator` rolüyle çalışır; `api` şema değiştiremez. `alembic check` için: `... --profile migrate run --rm migrate alembic check`.
+- Veritabanı rolleri ve parolaları yalnız boş `pgdata` volume'üyle ilk başlatmada oluşturulur. Parola değiştirmek için önce `deploy/.env`'yi güncelleyin, sonra: `docker compose -f deploy/docker-compose.prod.yml exec db psql -U dosya_admin -d dosya_sistemi -c "ALTER ROLE dosya_app PASSWORD '<yeni>'"` ve servisi yeniden oluşturun.
+- Kalıcı veri: `citech-dosya_pgdata` ve `citech-dosya_storage` volume'leri. `down -v` ikisini de siler.
 
 ## Bilinen Sınırlar
 

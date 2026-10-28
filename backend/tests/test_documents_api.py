@@ -16,7 +16,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
-from app import database
+from app import database, settings
 from app.database import Base, get_db
 from app.main import app
 from app.models.document import Document
@@ -1650,6 +1650,80 @@ def test_documents_with_reliable_digital_text_are_never_transcribed(client, tran
     assert response.status_code == 200
     assert response.json()["status"] == "classified"
     assert transcription.calls == []
+
+
+# --- OCR kapalı (D-055) ---
+
+OCR_DISABLED_MESSAGE = (
+    "Bu belge taranmış görünüyor veya görüntü dosyası; bu ortamda OCR kapalı olduğu için okunamadı. "
+    "Lütfen metin tabanlı PDF, DOC veya DOCX yükleyin."
+)
+
+
+@pytest.fixture
+def ocr_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "OCR_ENABLED", False)
+
+
+@pytest.mark.parametrize("url", [CLASSIFY_URL, "/api/documents/prepare"], ids=["classify", "prepare"])
+@pytest.mark.parametrize(
+    "file_name, content",
+    [
+        ("foto.png", make_image(image_format="png")),
+        ("foto.jpg", make_image()),
+        ("tarama.pdf", make_pdf("")),
+        ("hybrid.pdf", make_hybrid_pdf("EVRAK KAYIT FORMU Bu belge kayit sistemine alinmistir.")),
+    ],
+    ids=["png", "jpg", "scanned-pdf", "hybrid-pdf"],
+)
+def test_ocr_disabled_rejects_document_needing_ocr_without_transcription_or_tesseract(
+    client, session_factory, storage_dir, transcription, tesseract, ocr_disabled, caplog, url, file_name, content
+):
+    transcription.result = TRANSCRIPT_TEXT  # çağrılsaydı başarılı olurdu
+    pages = tesseract()
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.post(url, files={"file": (file_name, content, "application/octet-stream")})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert (body["status"], body["message"], body["needs_review"], body["retryable"]) == (
+        "failed", OCR_DISABLED_MESSAGE, False, False,
+    )
+    assert transcription.calls == []  # Gemini transkripsiyonu çalışmadı
+    assert pages == []  # Tesseract yedeği çalışmadı
+    [document] = all_documents(session_factory)
+    assert (document.status, document.extracted_text, document.needs_review, document.review_reason) == (
+        "failed", None, False, None,
+    )
+    assert (storage_dir / document.file_reference).read_bytes() == content  # orijinal indirilebilir ve silinebilir
+    assert SECRET_MARKER not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "file_name, content, text",
+    [
+        ("dilekce.pdf", make_pdf(PDF_TEXT), PDF_TEXT),
+        ("dilekce.docx", make_docx(DOCX_TEXT), DOCX_TEXT),
+        ("dilekce.doc", DOC_FIXTURE.read_bytes(), None),
+    ],
+    ids=["text-pdf", "docx", "doc"],
+)
+def test_ocr_disabled_keeps_digital_text_extraction_and_classification(
+    client, session_factory, transcription, fake_classify, ocr_disabled, file_name, content, text
+):
+    calls = fake_classify(classification())
+
+    response = upload(client, file_name, content)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "classified"
+    assert transcription.calls == []
+    assert len(calls) == 1  # Gemini sınıflandırması açık kalır
+    [document] = all_documents(session_factory)
+    assert document.ocr_fallback is False
+    if text is not None:
+        assert document.extracted_text == text
 
 
 @pytest.mark.parametrize("transcript", [None, "abc", "   kısa   "], ids=["failed", "short", "short-whitespace"])

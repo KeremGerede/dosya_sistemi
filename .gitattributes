@@ -1,2 +1,4 @@
 # Windows batch dosyaları checkout sırasında her makinede CRLF satır sonlarıyla oluşturulur.
 *.bat text eol=crlf
+# Linux container'larında çalışan betikler her makinede LF ile oluşturulur.
+*.sh text eol=lf
