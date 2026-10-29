@@ -1,0 +1,12 @@
+# Gizli değerler, yerel ortam, yüklenen belgeler ve testler image'a girmez.
+.env
+.env.*
+.venv
+storage
+tests
+pytest.ini
+**/__pycache__
+**/*.pyc
+.pytest_cache
+Dockerfile
+.dockerignore

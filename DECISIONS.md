@@ -115,6 +115,58 @@
 - **Karar:** Desteklenen tüm dosya türleri (D-001) için sınır dosya başına 50 MB'dır. Aşan dosya storage'a yazılmadan ve `documents` kaydı oluşturulmadan `413` ile reddedilir.
 - **Gerekçe:** Sunucu kaynaklarını ve senkron istek süresini korur; metin tabanlı belgeler için yeterli pay bırakır.
 
+### D-055 — İlk AWS yayını OCR'siz: `OCR_ENABLED=false`
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** F-02, F-08; D-001, D-003, D-042, D-047, D-056; T-12, T-17, T-18
+- **Karar:**
+  - `OCR_ENABLED` ortam değişkeni (`true`/`false`) OCR'ın iki yolunu birlikte açar veya kapatır: Gemini transkripsiyonu (D-047) ve Tesseract yedeği (D-042). Tanımlı değilse `true`'dur; yerel geliştirme davranışı değişmez. Başka bir değer uygulamayı açık hatayla durdurur.
+  - Production Compose (D-056) `OCR_ENABLED=false` verir; değer `.env`'den okunmaz. Production image'ına Tesseract kurulmaz.
+  - OCR kapalıyken OCR gereken belge (JPG/JPEG/PNG ve D-003 koşulunu sağlayan PDF; taranmış ve hybrid PDF dahil) OCR'a girmeden `failed` kaydedilir ve `422` döner. Mesaj belgenin taranmış veya görüntü olduğunu ve metin tabanlı PDF, DOC veya DOCX yüklenmesi gerektiğini söyler. Hybrid PDF'in yalnız gömülü metniyle devam edilmez: kısmi metinle sınıflandırma yapılmaz. Orijinal dosya saklanır; kayıt indirilebilir ve kalıcı olarak silinebilir (D-054). Kayıt tekrar denenemez (D-053).
+  - Metin tabanlı PDF, DOC ve DOCX çıkarımı ile Gemini sınıflandırması (D-008) değişmez.
+- **Gerekçe:** OCR, ortak 4 GB sunucuda en büyük bellek ve CPU riskidir. Kodda Tesseract yedeği sayfayı 400 dpi'de render eder (`services/file_service.py`: `OCR_DPI`, `_ocr_page_text`); render'dan önce piksel veya pixmap sınırı ve OCR eşzamanlılık sınırı yoktur. Kabul edilen bir görüntünün piksel sayısı dosya boyutuyla sınırlı olmadığı için tek bir istek yüksek bellek kullanabilir. Endpoint'ler senkron, uvicorn tek worker'dır (D-020, D-056); uzun bir OCR, aynı süreçteki diğer istekleri yavaşlatabilir. Gemini transkripsiyonu da her OCR belgesinde dosyanın kendisini dışarı gönderir ve ek Gemini çağrısı yapar (F-02 "Sınırlar"). Bu korumalar gelmeden OCR'ı açmak aynı sunucudaki Stok uygulamasını da etkileyebilir. OCR'ın yeniden açılması T-18 kapsamında, kaynak sınırlarıyla birlikte değerlendirilir.
+
+### D-058 — DOCX açılım sınırları
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** F-01, F-02, F-08; D-001, D-028, D-056; T-12
+- **Karar:**
+  - DOCX, python-docx'e verilmeden önce arşiv parçaları akış hâlinde (1 MiB'lık parçalarla) açılıp **gerçek** baytlarla denetlenir; ZIP başlıklarındaki beyan edilen boyutlara güvenilmez. Sınırlar: en fazla 1.000 parça; bütün parçaların açılmış toplamı 64 MiB; `.xml`/`.rels` parçalarının açılmış toplamı 16 MiB; bu parçalardaki `<` sayısı (eleman sayısının üst sınırı) 500.000. Bir sınır aşıldığı anda okuma durur.
+  - Aşan DOCX ayrıştırılmaz, Gemini'ye gitmez: `failed` + `422`, "Belge güvenli işleme sınırını aşıyor (çok büyük veya karmaşık DOCX). Belgeyi bölerek ya da PDF olarak yükleyin." Orijinal dosya saklanır.
+  - Tür tespitinde `[Content_Types].xml` en fazla 1 MiB okunur; aşan dosya geçerli DOCX sayılmaz (`415`).
+  - Beyan edilen boyutu gerçeğinden küçük parça, beyan edilen boyutta kesilir ve CRC hatasıyla normal metin çıkarım hatası (`422`) olur.
+- **Gerekçe:** Ölçüm (2026-10-28, Linux container, sentetik DOCX; değişiklik öncesi): bellek ve CPU'yu XML eleman sayısı belirliyor. Metin paragraflarında ~13 MiB RSS / MiB XML (50 MiB → 733 MiB), boş paragraflarda ~38 MiB / MiB ve ~3,3 sn / MiB (25 MiB → 1.025 MiB, 83 sn); 0,23 MB'lık dosya 200 MiB metne açıldı. 100 MiB / 1.000 parça önerisi 768 MiB API sınırı için güvenli değildi. Yeni sınırlarla bütün bomba örnekleri ~0 MiB ek bellekle reddedildi; sınırın altındaki en ağır girdiler tek istekte en fazla +104 MiB RSS ve 9,2 sn CPU kullandı. Sınır, ~4 milyon karakterlik düz metne yetecek kadar geniştir.
+  - Eşzamanlı DOCX ayrıştırmadaki GIL çekişmesi (1 istek 2,9 sn, 2 istek 30 sn, 4 istek 118 sn; 6 istek `504`) D-059 ile çözüldü.
+
+### D-059 — DOCX ayrıştırması süreç içinde tek tek çalışır
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** F-01, F-08; D-020, D-056, D-058; T-12
+- **Karar:**
+  - python-docx ayrıştırması ve belge dolaşımı süreç içi bir kilitle (`threading.Lock`) tek tek çalışır. Kilit yalnız bu adımı kapsar. Dosya kabulü, açılım denetimi (D-058), PDF ve DOC çıkarımı, veritabanı ve Gemini çağrıları kilitlenmez.
+  - Açılım denetimi kilidin dışındadır: sınırı aşan DOCX sıra beklemeden reddedilir. Kilit, ayrıştırma hatasında da bırakılır.
+  - Kilitte zaman aşımı yoktur ve bekleme ayrı bir hata üretmez; istek sırasını bekler.
+  - Kilit süreç içidir. Birden fazla uvicorn worker'ı kullanılırsa her worker'ın kendi kilidi olur: aynı anda worker sayısı kadar ayrıştırma çalışır ve bellek tepesi worker sayısıyla artar. Production tek worker'dır (D-056).
+- **Gerekçe:** Ölçüm (2026-10-28, izole Docker yığını, `prepare` nginx üzerinden, sentetik DOCX). Sınırın altındaki 4,2 milyon karakterlik DOCX'te kilitsiz → kilitli: 1 istek 3,8 → 3,6 sn; 2 istek 33 → 6,9 sn; 3 istek 92 → 10,1 sn; 6 istek 130 sn'de hepsi `504` → 20 sn'de hepsi `200`. CPU kullanımı 6 istekte 131 → 20 CPU-sn: çekişme bekleme değil, boşa CPU harcıyordu. En ağır vakada (476 bin boş paragraf) 6 istek: hepsi `504` ve 767/768 MiB → 66 sn, hepsi `422` ve 544 MiB. Kilit beklerken `GET /health` en fazla 0,23 sn'de yanıt verdi. Sınırı düşürmek çekişmeyi çözmüyordu (D-058).
+- **Sınırlar:**
+  - Kuyruk doğrusal uzar: en ağır DOCX ~11 sn sürer. Yaklaşık 11'den fazla eşzamanlı en ağır istekte kuyruğun sonu nginx'in 130 sn sınırını aşar ve `504` alır; API isteği yine de işler. Tipik belge kilidi milisaniyeler tutar.
+  - Kod incelemesine göre (ölçülmedi) bekleyen `prepare` isteği, D-046 temizlik sorgusunun açtığı veritabanı bağlantısını beklerken de tutar. SQLAlchemy havuzu varsayılan 5 + 10 bağlantıdır.
+  - Büyük DOCX sonrası bellek tutma kilitten bağımsızdı; D-060 ile çözüldü.
+
+### D-060 — DOCX ayrıştırması her belge için yeni bir alt süreçte çalışır
+- **Durum:** Aktif · **Tarih:** 2026-10-29 · **Referans:** F-01; D-020, D-056, D-058, D-059
+- **Karar:**
+  - python-docx ayrıştırması ve belge dolaşımı her DOCX için yeni bir alt süreçte çalışır (`services/docx_parser.py`). Alt süreç yalnız metni döndürür ve iş bitince çıkar.
+  - D-059 kilidi kalır: alt süreç kilidin içinde başlar, aynı anda tek ayrıştırma çalışır. Açılım denetimi (D-058) kilidin ve alt sürecin dışında kalır.
+  - Linux'ta `forkserver` kullanılır. Forkserver ana modülü (`uvicorn`) ve `docx_parser`'ı önceden yükler. Windows geliştirme ortamında `spawn` kullanılır.
+  - Alt süreç `oom_score_adj` değerini 1000 yapar: container bellek sınırında çekirdek API sürecini değil alt süreci öldürür.
+  - Alt süreç hata verirse ya da öldürülürse istek `TextExtractionError` ile `failed` + `422` olur; API çalışmaya devam eder.
+- **Gerekçe:** python-docx'in serbest bıraktığı bellek glibc tarafından süreçte tutuluyordu (yalnız çıkarımda 15 çağrıda RSS 67 → 499 MiB; `malloc_trim(0)` sonrası 63 MiB). Süreç içi ayarlar (`MALLOC_ARENA_MAX`, mmap/trim eşikleri, `malloc_trim`) API'de OOM'u önlemedi. Ölçüm (2026-10-29, izole yığın, swap'sız `memswap_limit` = 768M, 4,2 milyon karakterlik sentetik DOCX):
+  - 40 sıralı istek: API anonim belleği D-059 ile 100 → 671 MiB; D-060 ile 101 → 212 MiB. Bunun üzerine 6 eşzamanlı istek: D-059 ile API yeniden başladı (`502`); D-060 ile hepsi `200`, restart 0, tepe 400 MiB.
+  - 118 ağır istekten sonra API süreci 341 MiB'de, tepe 404 MiB.
+  - Eşzamanlı 1/2/3/6/12 istek: 4,3/7,3/10,3/19,0/37,4 sn (D-059: 3,6/6,9/10,1/20,0/40,1). 12 istekte tepe 764 → 381 MiB.
+  - Küçük DOCX: medyan 0,030 → 0,074 sn. API başladıktan sonraki ilk DOCX forkserver'ı başlatır: ~1,3 sn.
+  - Container sınırı 220 MiB'e düşürülünce çekirdek alt süreci öldürdü (`oom_kill` 1): istek `422`, API yeniden başlamadı, sonraki istekler `200`.
+- **Alternatifler:** DOCX sınırlarını düşürmek (birikim sınırın altındaki belgelerle oluşuyordu); swap veya daha yüksek bellek sınırı (sorunu erteler).
+- **Sınırlar:**
+  - Ayrıştırma sonrası aşamalar (veritabanı yazımı, yanıt) API sürecinde kalır. Çıkarılan metnin üst sınırı yoktur; bu aşamalardaki bellek ölçüldü ama ayrıca sınırlanmadı (yukarıdaki 341 MiB).
+  - Alt sürecin belleği de container sınırına sayılır. Forkserver ~39 MiB, kaynak izleyici ~17 MiB sürekli bellek kullanır.
+  - Dijital PDF ve DOC çıkarımı API sürecinde kalır; bellek tutup tutmadıkları ölçülmedi.
+
 ## Teknoloji
 
 ### D-005 — Backend ve frontend yığını
@@ -171,6 +223,19 @@
   - `DATABASE_URL`: `postgresql+psycopg://postgres:postgres@127.0.0.1:5434/dosya_sistemi?connect_timeout=10` (bağlantı zaman aşımı: D-041).
   - D-036'nın diğer maddeleri değişmeden geçerlidir: Compose'da yalnız `postgres` servisi (`postgres:18`, container `dosya-sistemi-postgres`, veritabanı `dosya_sistemi`), `dosya_sistemi_pgdata` volume'unun `/var/lib/postgresql` yoluna bağlanması, `localhost` yerine `127.0.0.1`, yalnız yerel geliştirme için `postgres` / `postgres`, backend ve frontend yerelde ve containerize edilmeden.
 - **Gerekçe:** Aynı makinede `stok` projesinin PostgreSQL container'ı `127.0.0.1:5433`'ü kullanıyor. İki proje aynı host portunu isteyince `dosya_sistemi` container'ı başlayamıyor ve backend, `DATABASE_URL` ile diğer projenin sunucusuna bağlanma riski taşıyordu. Ayrı host portu iki projenin aynı anda çalışmasına izin verir; volume ve veri değişmez.
+
+### D-056 — Production container düzeni (AWS Lightsail staging hazırlığı)
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** Ortak teknoloji; `README.md` "Production Docker"; D-017, D-020, D-025, D-028, D-038, D-039, D-051, D-055; T-12, T-17
+- **Karar:**
+  - Dosyalar: `backend/Dockerfile`, `frontend/Dockerfile` + `frontend/nginx.conf`, `deploy/docker-compose.prod.yml`, `deploy/.env.example`, `deploy/postgres/initdb/`. Yerel geliştirme düzeni (D-051) değişmez.
+  - Servisler: `db` (PostgreSQL 18), `api` (FastAPI, tek uvicorn worker, root olmayan kullanıcı), `web` (Vite build'i sunan yetkisiz nginx; yalnız `/api/` istekleri `api`'ye gider, `/docs`, `/openapi.json` ve `/health` dışarı açılmaz) ve tek seferlik `migrate`.
+  - Hiçbir servis host portu yayınlamaz. Ağlar: `backend` (iç ağ, dışarı çıkış yok: `db`, `api`, `web`, `migrate`), `egress` (yalnız `api`; Gemini'ye çıkış), `edge` (yalnız `web`). Dış erişim ayrı aşamada Caddy'nin `citech-dosya_edge` ağına harici ağ olarak katılmasıyla, yalnız `dosya-web:8080`'e verilir.
+  - Tekil DNS adları: `web`, `edge` ağında `dosya-web`; `api`, `backend` ağında `dosya-api` alias'ını taşır. Caddy ve nginx yalnız bu adları kullanır; genel `web`/`api` adları başka bir projenin (ör. aynı sunucudaki Stok) servisiyle karışabilir.
+  - Veritabanı rolleri: `dosya_admin` (superuser, yalnız bakım), `dosya_migrator` (veritabanı sahibi, yalnız migration), `dosya_app` (uygulama; tablolarda yalnız SELECT/INSERT/UPDATE/DELETE, DDL ve geçici tablo yok, `alembic_version`'a erişim yok). Roller boş volume'ün ilk başlatmasında oluşturulur.
+  - Migration `api` başlarken çalışmaz; `migrate` servisi `--profile migrate` ile elle ve ayrıca çalıştırılır.
+  - Kalıcılık: `pgdata` ve `storage` named volume'leri. Restart `unless-stopped`; her serviste healthcheck, CPU ve bellek sınırı (db 512M, api 768M, web 128M) ve log döndürme (10 MB × 3).
+  - Gövde sınırı: nginx `51m`; asıl 50 MB kontrolü backend'dedir (D-028). nginx proxy zaman aşımı 130 sn (istemci 120 sn, D-039).
+- **Gerekçe:** Ortak 4 GB sunucuda Stok uygulamasıyla çakışmayan, port yayınlamayan ve internete açılmadan önce ayrı bir proxy aşaması gerektiren en küçük düzen. Uygulama rolünün şema değiştirememesi ve migration'ın elle çalışması, yanlış bir sürümün veritabanını sessizce değiştirmesini önler. nginx katmanı uygulama koduna dokunmadan göreli `/api` yolunu (D-038) korur ve Caddy'ye tek bir hedef verir.
 
 ## LLM
 
@@ -477,7 +542,18 @@
     - İstek sürerken düğmeler kilitlidir; analiz listesinde istek sürerken "Belgeyi Sil" kilitlidir (D-045).
     - `204` ve `404`'te kayıt listeden çıkar, detay kapanır, sayılar ve filtre seçenekleri güncellenir; aynı belge analiz listesindeyse oradan da çıkar. `409`'da kısa Türkçe mesaj gösterilir, kayıt listede kalır. `500`, ağ hatası ve zaman aşımında başarı varsayılmaz: kaydın durumu detay endpoint'inden okunur; kayıt yoksa silinmiş sayılır, varsa ya da okunamazsa mesaj gösterilir ve kayıt listede kalır.
   - **Kapsam dışı:** Toplu silme, analiz listesinden kalıcı silme, çöp kutusu ve geri alma, silme geçmişi, kullanıcı yönetimi, yedeklerden silme, worker ve kuyruk.
+- **Not (2026-10-28):** Kalıcı silme ortam bazında kapatılabilir (D-057); staging'de kapalıdır.
 - **Gerekçe:** Yanlış, test ya da demo amacıyla yüklenmiş kalıcı kayıtları temizlemenin bir yolu yoktu (INV-5). Kalıcı silme, kişisel veri içerebilen orijinal dosyanın gerçekten silinmesini gerektirir; soft delete bunu karşılamaz. Satır kilidi D-053'te zaten vardır ve retry ile silmenin aynı kaydı aynı anda değiştirmesini önler. Alternatifler ve sonuçlar ADR-001'dedir.
+
+### D-057 — Kalıcı silme ortam bazında kapatılabilir; staging'de kapalı
+- **Durum:** Aktif · **Tarih:** 2026-10-28 · **Referans:** F-10, F-08; INV-5; D-025, D-046, D-054, D-055, D-056; T-17
+- **Karar:**
+  - `PERMANENT_DELETE_ENABLED` (`true`/`false`, varsayılan `true`) `DELETE /api/documents/{document_id}`'yi açar veya kapatır. Yerel geliştirme davranışı değişmez. Başka bir değer uygulamayı açık hatayla durdurur.
+  - Production Compose (D-056) `false` verir; değer `.env`'den okunmaz.
+  - Kapalıyken endpoint kaydı okumadan ve kilitlemeden `403` döner: "Kalıcı silme bu ortamda kapalı." Kayıt ve dosya değişmez; olmayan bir ID de `403` alır, kaydın varlığı açığa çıkmaz.
+  - `DELETE /{document_id}/prepared` (Kaldır) ve 24 saatlik prepared temizliği (D-046) etkilenmez.
+  - Arayüz `403`'ü ayrı yorumlar: kayıt korunur, "Kalıcı silme bu ortamda kapalı; kayıt yerinde duruyor." gösterilir; detay sorgusu yapılmaz.
+- **Gerekçe:** D-054, dış erişimden önce endpoint'in sunucu tarafında yetkilendirilmesini ya da kapatılmasını zorunlu kılar. Uygulamada yetkilendirme yoktur (D-025); staging'deki Basic Auth tek ve ortak bir hesaptır, rol ayrımı sağlamaz. Kapatma en küçük sunucu tarafı korumadır. Uygulama içi rol tabanlı yetkilendirme gelince yeniden değerlendirilir.
 
 ### D-020 — Senkron işleme
 - **Durum:** Aktif · **Git:** giriş 2026-09-15, son değişiklik 2026-10-03 · **Referans:** F-05; `PROJECT_BRAIN.md` §2

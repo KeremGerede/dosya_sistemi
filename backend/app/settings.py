@@ -15,7 +15,25 @@ def require_env(name: str) -> str:
     return value
 
 
+def env_flag(name: str, default: bool) -> bool:
+    """Opsiyonel "true"/"false" ortam değişkeni; tanımsızsa varsayılan, başka bir değerde açık hatayla durur."""
+    value = (os.getenv(name) or "").strip().lower()
+    if not value:
+        return default
+    if value not in ("true", "false"):
+        raise RuntimeError(f"{name} ortam değişkeni yalnızca 'true' veya 'false' olabilir.")
+    return value == "true"
+
+
 DATABASE_URL = require_env("DATABASE_URL")
+
+# OCR (Gemini transkripsiyonu ve Tesseract yedeği) açık mı (D-055). Yerel geliştirmede varsayılan açıktır;
+# production Compose'da (ilk AWS yayını) "false" verilir. Kapalıyken OCR gereken belge OCR'a girmeden failed + 422 olur.
+OCR_ENABLED = env_flag("OCR_ENABLED", default=True)
+
+# Kayıtlar'dan kalıcı silme açık mı (D-057). Yerel geliştirmede varsayılan açıktır; production Compose'da (staging)
+# "false" verilir. Kapalıyken DELETE /api/documents/{id} hiçbir şeye dokunmadan 403 döner; Kaldır (/prepared) etkilenmez.
+PERMANENT_DELETE_ENABLED = env_flag("PERMANENT_DELETE_ENABLED", default=True)
 
 # Taranmış PDF sayfalarının OCR fallback'inde ve JPG/JPEG/PNG belgelerin doğrudan OCR'ında kullanılan
 # Tesseract tessdata klasörü (opsiyonel).

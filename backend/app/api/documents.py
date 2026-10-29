@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app import settings
 from app.database import get_db
 from app.models.document import Document
 from app.schemas.classification import (
@@ -45,6 +46,13 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 FILE_TOO_LARGE_MESSAGE = "Dosya boyutu 50 MB sınırını aşıyor."
 UNSUPPORTED_FILE_MESSAGE = "Yalnızca PDF, DOC, DOCX, JPG, JPEG veya PNG dosyaları kabul edilir."
 TEXT_EXTRACTION_FAILED_MESSAGE = "Belgeden sınıflandırma için yeterli metin çıkarılamadı."
+DOCUMENT_TOO_COMPLEX_MESSAGE = (
+    "Belge güvenli işleme sınırını aşıyor (çok büyük veya karmaşık DOCX). Belgeyi bölerek ya da PDF olarak yükleyin."
+)
+OCR_DISABLED_MESSAGE = (
+    "Bu belge taranmış görünüyor veya görüntü dosyası; bu ortamda OCR kapalı olduğu için okunamadı. "
+    "Lütfen metin tabanlı PDF, DOC veya DOCX yükleyin."
+)
 CLASSIFICATION_FAILED_MESSAGE = "Belge şu anda sınıflandırılamadı. Lütfen daha sonra tekrar deneyin."
 OCR_FALLBACK_REVIEW_REASON = "Belge metni yedek OCR ile okundu; okuma hataları olabileceği için kontrol edilmelidir."
 DOCUMENT_NOT_FOUND_MESSAGE = "Belge bulunamadı."
@@ -54,6 +62,7 @@ VALIDATION_NOT_ALLOWED_MESSAGE = "Yalnız sınıflandırılmış belgeler onayla
 RETRY_NOT_ALLOWED_MESSAGE = "Bu belge yeniden sınıflandırılamaz; gerekirse belgeyi yeniden yükleyin."
 DOCUMENT_BUSY_MESSAGE = "Belge şu anda işleniyor; lütfen biraz sonra tekrar deneyin."
 PREPARED_NOT_DELETABLE_MESSAGE = "Henüz sınıflandırılmamış belge kalıcı olarak silinmez; listeden kaldırın."
+PERMANENT_DELETE_DISABLED_MESSAGE = "Kalıcı silme bu ortamda kapalı."
 LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"  # PostgreSQL lock_not_available: FOR UPDATE NOWAIT çakışması (D-053, D-054)
 
 PREPARED_STATUS = "prepared"  # metni çıkarılmış, henüz sınıflandırılmamış belge (D-046)
@@ -196,6 +205,11 @@ def _extract_into(document: Document, content: bytes) -> tuple[int, str] | None:
     ocr_fallback = False
     try:
         if file_service.needs_ocr(content, document.file_type):
+            if not settings.OCR_ENABLED:
+                # D-055: Gemini transkripsiyonu ve Tesseract yedeği çalışmaz; kısmi (yalnız gömülü) metin kullanılmaz.
+                logger.warning("Belge %s: OCR gerekiyor ancak OCR kapalı; metin çıkarılmadı.", document.id)
+                document.status = "failed"
+                return 422, OCR_DISABLED_MESSAGE
             extracted_text = _transcribe(document, content)
             ocr_fallback = extracted_text is None
         if extracted_text is None:
@@ -205,6 +219,8 @@ def _extract_into(document: Document, content: bytes) -> tuple[int, str] | None:
         logger.warning("Belge %s: metin çıkarılamadı veya yetersiz (%s).", document.id, exc)
         document.extracted_text = extracted_text or None
         document.status = "failed"
+        if isinstance(exc, file_service.DocumentTooComplexError):
+            return 422, DOCUMENT_TOO_COMPLEX_MESSAGE  # D-058
         return 422, TEXT_EXTRACTION_FAILED_MESSAGE
 
     document.extracted_text = extracted_text
@@ -436,6 +452,7 @@ def discard_prepared_document(document_id: uuid.UUID, db: Annotated[Session, Dep
     "/{document_id}",
     status_code=204,
     responses={
+        403: {"description": f"{PERMANENT_DELETE_DISABLED_MESSAGE} Kayda ve dosyaya dokunulmaz (D-057)."},
         404: {"description": DOCUMENT_NOT_FOUND_MESSAGE},
         409: {
             "description": f"{DOCUMENT_BUSY_MESSAGE} / {PREPARED_NOT_DELETABLE_MESSAGE} Kayda ve dosyaya dokunulmaz."
@@ -449,7 +466,10 @@ def delete_document(document_id: uuid.UUID, db: Annotated[Session, Depends(get_d
     Satır tekrar denemeyle aynı kilitle alınır. Dosya silme ile commit atomik değildir: dosya silinemezse kayıt ve
     dosya yerinde kalır; dosya silindikten sonra commit başarısız olursa kayıt dosyasız kalır ve aynı istek
     tekrarlanınca silme tamamlanır. Endpoint'te yetki yoktur (D-025); dış erişimden önce korunmalıdır (T-17).
+    Silme kapalıysa (D-057) kayıt okunmadan ve kilitlenmeden 403 döner; kaydın varlığı da açığa çıkmaz.
     """
+    if not settings.PERMANENT_DELETE_ENABLED:
+        raise HTTPException(status_code=403, detail=PERMANENT_DELETE_DISABLED_MESSAGE)
     document = _lock_document(document_id, db)
     try:
         if document.status == PREPARED_STATUS:

@@ -125,6 +125,8 @@ Vite, `/api` isteklerini `http://127.0.0.1:8000` adresine proxy'ler. Bu nedenle 
 
 Günlük kullanımda `docker compose up -d`, `alembic upgrade head`, `uvicorn` ve `npm run dev` yeterlidir.
 
+**Windows'ta tek tıkla başlatma:** Kurulum bir kez tamamlandıktan sonra repo kökündeki `Dosya_Sistemi_Baslat.bat` dosyasına çift tıklayın. Dosya önce Docker, `backend/.env` (`DATABASE_URL` 5434), backend sanal ortamı, Node/npm ve `frontend/node_modules` varlığını kontrol eder; ardından PostgreSQL'i `docker compose up -d` ile başlatıp hazır olmasını bekler, şemanın en güncel migration'da olduğunu doğrular, backend ve frontend'i ayrı pencerelerde açar ve ikisi yanıt verince `http://localhost:5173` adresini tarayıcıda açar. Zaten çalışan backend veya frontend ikinci kez açılmaz; 8000 ya da 5173 portu başka bir uygulamadaysa o uygulamaya dokunmadan durur. Migration, bağımlılık kurulumu, `.env` değişikliği ve veritabanı silme yapmaz. Durdurmak için backend ve frontend pencerelerini kapatın; PostgreSQL Docker'da çalışmaya devam eder.
+
 > **Uyarı:** `docker compose down -v` yerel veritabanı volume'unu (`dosya_sistemi_pgdata`) siler. Yalnız bilerek kullanın.
 
 ## Ortam Değişkenleri
@@ -137,6 +139,8 @@ Değerler `backend/.env` dosyasındadır; bu dosya Git'e girmez. Şablon ve aç�
 | `GEMINI_MODEL` | Evet | Transkripsiyon ve sınıflandırma modeli. Şablon değeri `gemini-3.5-flash-lite`; kodda varsayılan yoktur |
 | `DATABASE_URL` | Evet | PostgreSQL adresi (psycopg 3). Şablon değeri yerel Docker veritabanını gösterir (`127.0.0.1:5434`, `connect_timeout=10`) |
 | `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörü; `tur.traineddata` içermelidir. Tanımlı değilse yedek OCR atlanır |
+| `OCR_ENABLED` | Hayır | `true` (varsayılan) veya `false`. `false` iken OCR gereken belge OCR'a girmeden `422` alır (D-055); production Compose `false` verir |
+| `PERMANENT_DELETE_ENABLED` | Hayır | `true` (varsayılan) veya `false`. `false` iken kalıcı silme `403` alır (D-057); production Compose `false` verir |
 
 Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde `localhost` yerine `127.0.0.1` kullanın.
 
@@ -161,7 +165,7 @@ Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde 
 
 Belge yanıtları AI sonucunu (`document_type`, `institution_id`), kullanıcı onayını (`validated_*`) ve doğrulanmış ifadeleri (`routing_evidence`) ayrı alanlarda döndürür.
 
-**Güvenlik notu:** API'de yetkilendirme yoktur; API'ye erişebilen herkes kalıcı silme dahil her endpoint'i çağırabilir. Yerel adreste dinleme ve CORS'un olmaması yetkilendirme değildir. Dış erişime açmadan önce silme endpoint'i sunucu tarafında korunmalı ya da kapatılmalıdır (D-054).
+**Güvenlik notu:** API'de yetkilendirme yoktur; API'ye erişebilen herkes kalıcı silme dahil her endpoint'i çağırabilir. Yerel adreste dinleme ve CORS'un olmaması yetkilendirme değildir. Dış erişime açmadan önce silme endpoint'i sunucu tarafında korunmalı ya da kapatılmalıdır (D-054); production Compose onu kapatır (D-057).
 
 Başlıca hata kodları: `404` kayıt yok, `409` kaydın durumu işleme uygun değil, `413` boyut, `415` format veya imza, `422` içerik işlenemedi ya da istek geçersiz, `502` Gemini sınıflandırması tamamlanamadı. Yanıt alanları ve tam HTTP sözleşmesi: [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) F-08.
 
@@ -181,6 +185,23 @@ npm run lint
 Otomatik testler gerçek Gemini API'si veya Docker PostgreSQL gerektirmez; geçici SQLite ve sahte Gemini yanıtları kullanır. `alembic check` çalışan bir veritabanı ister.
 
 Son doğrulanmış baseline (tarih, commit, ortam ve sonuçlar): [`CURRENT_STATE.md`](CURRENT_STATE.md) → "Teknik baseline".
+
+## Production Docker
+
+Linux sunucu (ilk hedef AWS Lightsail staging, `/opt/citech/dosya`) için düzen: D-056. **Uygulamada kimlik doğrulama yok; S3 korumaları tamamlanmadan internete açmayın** (D-025, D-054). OCR kapalıdır (D-055); kalıcı silme kapalıdır (D-057); DOCX açılım sınırları uygulanır (D-058).
+
+```bash
+cp deploy/.env.example deploy/.env   # değerleri doldurun; parolalar: openssl rand -hex 32
+docker compose -f deploy/docker-compose.prod.yml build
+docker compose -f deploy/docker-compose.prod.yml up -d --wait db
+docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate   # alembic upgrade head
+docker compose -f deploy/docker-compose.prod.yml up -d --wait
+```
+
+- Host portu yayınlanmaz. Dış erişim ayrı aşamada Caddy ile verilir: Caddy `citech-dosya_edge` ağına harici ağ olarak katılır ve `dosya-web:8080`'e yönlendirir. Genel `web` adı kullanılmaz: Caddy başka projelerin ağlarına da katıldığında aynı adlı servisle karışabilir.
+- Migration yalnız `migrate` servisiyle, `dosya_migrator` rolüyle çalışır; `api` şema değiştiremez. `alembic check` için: `... --profile migrate run --rm migrate alembic check`.
+- Veritabanı rolleri ve parolaları yalnız boş `pgdata` volume'üyle ilk başlatmada oluşturulur. Parola değiştirmek için önce `deploy/.env`'yi güncelleyin, sonra: `docker compose -f deploy/docker-compose.prod.yml exec db psql -U dosya_admin -d dosya_sistemi -c "ALTER ROLE dosya_app PASSWORD '<yeni>'"` ve servisi yeniden oluşturun.
+- Kalıcı veri: `citech-dosya_pgdata` ve `citech-dosya_storage` volume'leri. `down -v` ikisini de siler.
 
 ## Bilinen Sınırlar
 
