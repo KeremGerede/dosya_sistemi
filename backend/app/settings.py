@@ -31,6 +31,10 @@ DATABASE_URL = require_env("DATABASE_URL")
 # production Compose'da (ilk AWS yayını) "false" verilir. Kapalıyken OCR gereken belge OCR'a girmeden failed + 422 olur.
 OCR_ENABLED = env_flag("OCR_ENABLED", default=True)
 
+# Kayıtlar'dan kalıcı silme açık mı (D-057). Yerel geliştirmede varsayılan açıktır; production Compose'da (staging)
+# "false" verilir. Kapalıyken DELETE /api/documents/{id} hiçbir şeye dokunmadan 403 döner; Kaldır (/prepared) etkilenmez.
+PERMANENT_DELETE_ENABLED = env_flag("PERMANENT_DELETE_ENABLED", default=True)
+
 # Taranmış PDF sayfalarının OCR fallback'inde ve JPG/JPEG/PNG belgelerin doğrudan OCR'ında kullanılan
 # Tesseract tessdata klasörü (opsiyonel).
 # Tanımlı değilse OCR atlanır ve belge mevcut davranışla "yeterli metin yok" sayılır.

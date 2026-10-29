@@ -7,18 +7,20 @@ FileTooLargeError → 413, UnsupportedFileTypeError → 415, TextExtractionError
 import contextlib
 import io
 import logging
+import multiprocessing
 import re
+import threading
 import uuid
 import zipfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-import docx
 import legacy_doc
 import pymupdf
-from docx.text.paragraph import Paragraph
 from legacy_doc.ole import OleReader
 
 from app import settings
+from app.services import docx_parser
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,26 @@ _TOKEN_PATTERN = re.compile(r"[0-9a-z]{3,}")
 _DOCX_MAIN_CONTENT_TYPE = b"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 _OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # OLE Compound File (.doc, .xls, .ppt ortak)
 _DOC_WORD_STREAM = "WordDocument"  # yalnızca Word belgelerinde bulunur (D-001)
+# DOCX açılım sınırları (D-058). ZIP başlıklarındaki beyan edilen boyutlara güvenilmez; parçalar parser'dan önce
+# akış hâlinde açılıp gerçek baytlar sayılır. Bellek ve CPU'yu XML eleman sayısı belirlediği için XML'deki "<"
+# sayısı (eleman sayısının üst sınırı) da sınırlanır. Değerler 768 MiB API bellek sınırına göre ölçüldü (S3).
+DOCX_MAX_ENTRIES = 1_000
+DOCX_MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024  # bütün parçaların açılmış toplamı
+DOCX_MAX_XML_BYTES = 16 * 1024 * 1024  # .xml ve .rels parçalarının açılmış toplamı
+DOCX_MAX_XML_TAGS = 500_000  # .xml ve .rels parçalarındaki "<" toplamı
+DOCX_CONTENT_TYPES_MAX_BYTES = 1024 * 1024  # tür tespitinde okunan [Content_Types].xml
+_DOCX_READ_CHUNK = 1024 * 1024
+# python-docx ayrıştırması süreç içinde tek tek çalışır (D-059): eşzamanlı thread'ler GIL çekişmesiyle doğrusal
+# olmayan şekilde yavaşlıyor. Kilit süreç içidir; her uvicorn worker'ının kendi kilidi vardır.
+_DOCX_PARSE_LOCK = threading.Lock()
+# Ayrıştırma her DOCX için yeni bir alt süreçte çalışır (D-060): python-docx'in bıraktığı bellek glibc tarafından
+# süreçte tutuluyor; alt süreç çıkınca işletim sistemine döner. Linux'ta forkserver ana modülü ve docx_parser'ı
+# önceden yükler; yoksa her alt süreç ana modülü (uvicorn) yeniden yükler ve istek başına ~0,3 sn ekler.
+if "forkserver" in multiprocessing.get_all_start_methods():
+    _CHILD_CONTEXT = multiprocessing.get_context("forkserver")
+    _CHILD_CONTEXT.set_forkserver_preload(["__main__", "app.services.docx_parser"])
+else:  # Windows geliştirme ortamı
+    _CHILD_CONTEXT = multiprocessing.get_context("spawn")
 # Parser'ın dosya boyutu sınırı kabul sınırıyla aynı tutulur; diğer koruma limitleri varsayılan kalır.
 _DOC_OPTIONS = legacy_doc.ExtractionOptions(max_file_bytes=MAX_FILE_SIZE)
 
@@ -63,6 +85,10 @@ class UnsupportedFileTypeError(Exception):
 
 class TextExtractionError(Exception):
     """Kabul edilmiş dosyadan metin çıkarılamadı ya da normalize edilmiş metin çok kısa."""
+
+
+class DocumentTooComplexError(TextExtractionError):
+    """DOCX'in açılmış içeriği güvenli işleme sınırlarını aşıyor (D-058); parser çalıştırılmadı."""
 
 
 def check_file_size(size: int) -> None:
@@ -103,7 +129,12 @@ def _is_docx(content: bytes) -> bool:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             if not {"[Content_Types].xml", "word/document.xml"} <= set(archive.namelist()):
                 return False
-            return _DOCX_MAIN_CONTENT_TYPE in archive.read("[Content_Types].xml")
+            # D-058: tür tespiti büyük bir parçayı belleğe açmasın; okuma sınırı aşılırsa geçerli DOCX sayılmaz.
+            with archive.open("[Content_Types].xml") as entry:
+                content_types = entry.read(DOCX_CONTENT_TYPES_MAX_BYTES + 1)
+            if len(content_types) > DOCX_CONTENT_TYPES_MAX_BYTES:
+                return False
+            return _DOCX_MAIN_CONTENT_TYPE in content_types
     except Exception:  # ZIP değil, bozuk ya da şifreli arşiv: geçerli DOCX sayılmaz
         return False
 
@@ -194,6 +225,8 @@ def extract_text(content: bytes, file_type: str) -> str:
             raw_text = _extract_docx_text(content)
         else:
             raw_text = _extract_image_text(content, file_type)
+    except DocumentTooComplexError:
+        raise
     except Exception as exc:  # bozuk, şifreli veya okunamayan dosya
         raise TextExtractionError(f"{file_type} metni çıkarılamadı: {exc}") from exc
     return normalize_text(raw_text)
@@ -298,22 +331,48 @@ def _extract_doc_text(content: bytes) -> str:
 
 
 def _extract_docx_text(content: bytes) -> str:
-    """Paragraflar ve tablo hücreleri belge sırasıyla alınır; header/footer, textbox vb. V1 dışında."""
-    document = docx.Document(io.BytesIO(content))
-    parts = []
-    for block in document.iter_inner_content():
-        if isinstance(block, Paragraph):
-            parts.append(block.text)
-            continue
-        seen_cells = set()
-        for row in block.rows:
-            for cell in row.cells:
-                # Birleştirilmiş hücreler row.cells içinde tekrar döner; aynı <w:tc> yalnızca bir kez alınır.
-                if cell._tc in seen_cells:
-                    continue
-                seen_cells.add(cell._tc)
-                parts.append(cell.text)
-    return "\n".join(parts)
+    """Açılım denetimi (D-058) kilidin dışındadır: sınırı aşan DOCX sıra beklemeden reddedilir.
+
+    Ayrıştırma kilit içinde (D-059) ve alt süreçte (D-060) çalışır; kilit hata durumunda da bırakılır. Alt süreç
+    hata verirse ya da öldürülürse (ör. bellek sınırı) hata extract_text'te TextExtractionError olur.
+    """
+    _check_docx_archive(content)
+    with _DOCX_PARSE_LOCK:
+        return _run_in_child(docx_parser.parse_docx, content)
+
+
+def _run_in_child(func, *args):
+    """func(*args)'ı yeni bir alt süreçte çalıştırır ve sonucunu döndürür; süreç iş bitince çıkar (D-060)."""
+    with ProcessPoolExecutor(max_workers=1, mp_context=_CHILD_CONTEXT) as executor:
+        return executor.submit(func, *args).result()
+
+
+def _check_docx_archive(content: bytes) -> None:
+    """DOCX'i python-docx'e vermeden önce açılım sınırlarını (D-058) gerçek baytlarla denetler.
+
+    Her parça _DOCX_READ_CHUNK'lık parçalar hâlinde açılır ve hemen bırakılır; bellek kullanımı parça boyutuyla
+    sınırlıdır. Bir sınır aşıldığı anda okuma durur. Beyan edilen boyut gerçeğinden küçükse zipfile beyan edilen
+    kadar okur ve CRC hatası verir; bu hata çağıranda normal metin çıkarım hatasıdır.
+    """
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        entries = archive.infolist()
+        if len(entries) > DOCX_MAX_ENTRIES:
+            raise DocumentTooComplexError(f"DOCX {len(entries)} parça içeriyor; sınır {DOCX_MAX_ENTRIES}.")
+        total = xml_bytes = xml_tags = 0
+        for info in entries:
+            is_xml = info.filename.endswith((".xml", ".rels"))
+            with archive.open(info) as entry:
+                while chunk := entry.read(_DOCX_READ_CHUNK):
+                    total += len(chunk)
+                    if is_xml:
+                        xml_bytes += len(chunk)
+                        xml_tags += chunk.count(b"<")
+                    if (
+                        total > DOCX_MAX_UNCOMPRESSED_BYTES
+                        or xml_bytes > DOCX_MAX_XML_BYTES
+                        or xml_tags > DOCX_MAX_XML_TAGS
+                    ):
+                        raise DocumentTooComplexError("DOCX açılım sınırları aşıldı.")
 
 
 def normalize_text(text: str) -> str:

@@ -526,6 +526,10 @@ describe('deleteOutcome (D-054: kalıcı silme yanıtı)', () => {
     assert.equal(deleteOutcome(409), 'busy')
   })
 
+  test('403 kalıcı silmenin bu ortamda kapalı olduğunu gösterir (D-057); kayıt korunur', () => {
+    assert.equal(deleteOutcome(403), 'disabled')
+  })
+
   test('500, ağ hatası ve zaman aşımında başarı varsayılmaz; durum ayrıca okunur', () => {
     assert.equal(deleteOutcome(500), 'unknown')
     assert.equal(deleteOutcome(422), 'unknown')

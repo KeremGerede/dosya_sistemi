@@ -357,6 +357,29 @@ def test_text_extraction_failure_returns_422_with_failed_record(client, session_
     assert (storage_dir / document.file_reference).read_bytes() == content
 
 
+DOCUMENT_TOO_COMPLEX_MESSAGE = (
+    "Belge güvenli işleme sınırını aşıyor (çok büyük veya karmaşık DOCX). Belgeyi bölerek ya da PDF olarak yükleyin."
+)
+
+
+@pytest.mark.parametrize("url", [CLASSIFY_URL, "/api/documents/prepare"], ids=["classify", "prepare"])
+def test_docx_over_archive_limits_returns_422_without_classification(
+    client, session_factory, storage_dir, monkeypatch, url
+):
+    # D-058: açılım sınırını aşan DOCX ayrıştırılmaz ve Gemini'ye gitmez (classify_text çağrılırsa test düşer).
+    monkeypatch.setattr(file_service, "DOCX_MAX_XML_TAGS", 1_000)
+    content = make_docx("Sayın yetkili. " * 2_000)
+
+    response = client.post(url, files={"file": ("buyuk.docx", content, "application/octet-stream")})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert (body["status"], body["message"], body["retryable"]) == ("failed", DOCUMENT_TOO_COMPLEX_MESSAGE, False)
+    [document] = all_documents(session_factory)
+    assert (document.status, document.extracted_text) == ("failed", None)
+    assert (storage_dir / document.file_reference).read_bytes() == content
+
+
 def test_classification_error_returns_502_with_failed_record(client, session_factory, storage_dir, fake_classify, caplog):
     fake_classify(classification_error())
     content = make_docx(DOCX_TEXT)
@@ -2707,6 +2730,46 @@ def test_delete_unknown_or_invalid_document(client):
     assert response.status_code == 404
     assert response.json() == {"detail": "Belge bulunamadı."}
     assert client.delete(delete_url("belge-degil")).status_code == 422
+
+
+PERMANENT_DELETE_DISABLED_MESSAGE = "Kalıcı silme bu ortamda kapalı."
+
+
+@pytest.fixture
+def permanent_delete_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "PERMANENT_DELETE_ENABLED", False)
+
+
+@pytest.mark.parametrize("overrides", PERMANENT_RECORDS.values(), ids=PERMANENT_RECORDS.keys())
+def test_disabled_permanent_delete_returns_403_and_changes_nothing(
+    client, session_factory, storage_dir, permanent_delete_disabled, overrides
+):
+    document = insert_with_file(session_factory, storage_dir, **overrides)
+    before = row_snapshot(session_factory, document.id)
+
+    response = client.delete(delete_url(document.id))
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": PERMANENT_DELETE_DISABLED_MESSAGE}
+    assert row_snapshot(session_factory, document.id) == before
+    assert client.get(f"{delete_url(document.id)}/download").status_code == 200  # dosya yerinde
+
+
+def test_disabled_permanent_delete_does_not_read_or_lock_the_record(
+    client, session_factory, storage_dir, permanent_delete_disabled, failing_lock
+):
+    # Kilit isteği 55P03 ile düşerdi (409); kapı kilitten önce olduğu için 403 döner. Kayıt varlığı da açığa çıkmaz.
+    failing_lock("55P03")
+
+    assert client.delete(delete_url(uuid.uuid4())).status_code == 403
+    assert client.delete(delete_url(insert_with_file(session_factory, storage_dir).id)).status_code == 403
+
+
+def test_disabled_permanent_delete_keeps_prepared_discard(client, session_factory, storage_dir, permanent_delete_disabled):
+    document = insert_prepared(session_factory, storage_dir)
+
+    assert client.delete(discard_url(document.id)).status_code == 204  # Kaldır (D-046) etkilenmez
+    assert all_documents(session_factory) == []
 
 
 def test_delete_works_when_storage_file_is_already_missing(client, session_factory, storage_dir):

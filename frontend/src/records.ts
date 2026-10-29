@@ -130,12 +130,16 @@ export function retryConflict(record: { status: string; retryable: boolean }): R
 
 // Kalıcı silme yanıtı (D-054). 204 ve 404 aynı sonuçtur: kayıt artık yok (404'te kaydı başka bir istek ya da zaman
 // aşımına uğramış önceki deneme silmiş olabilir). 409'da kayıt korunur. Diğer yanıtlarda (500, ağ hatası, zaman aşımı)
-// sonuç bilinmez: başarı varsayılmaz, kaydın gerçek durumu detay endpoint'inden okunur.
-export type DeleteOutcome = 'deleted' | 'busy' | 'unknown'
+// sonuç bilinmez: başarı varsayılmaz, kaydın gerçek durumu detay endpoint'inden okunur. 403: kalıcı silme bu ortamda
+// kapalıdır (D-057); backend kayda dokunmaz, tekrar denemenin anlamı yoktur.
+export type DeleteOutcome = 'deleted' | 'busy' | 'disabled' | 'unknown'
 
 export function deleteOutcome(status: number | null): DeleteOutcome {
   if (status === 204 || status === 404) {
     return 'deleted'
+  }
+  if (status === 403) {
+    return 'disabled'
   }
   return status === 409 ? 'busy' : 'unknown'
 }

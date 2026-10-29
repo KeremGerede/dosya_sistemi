@@ -1,6 +1,10 @@
 import io
 import logging
+import os
 import pathlib
+import threading
+import time
+import tracemalloc
 import uuid
 import zipfile
 
@@ -1097,3 +1101,239 @@ def test_image_is_one_unchanged_part(file_type, image_format):
     content = make_image(image_format=image_format)
 
     assert file_service.transcription_parts(content, file_type) == [content]
+
+
+# --- D-058: DOCX açılım sınırları ---
+
+MiB = 1024 * 1024
+
+
+def docx_with(extra_body: bytes = b"", extra_files: dict[str, bytes] | None = None) -> bytes:
+    """Geçerli bir DOCX'in document.xml gövdesine içerik ve arşive ek parça ekler (sıkıştırılmış)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(make_docx("Sayın yetkili, parktaki salıncak kırık."))) as src, zipfile.ZipFile(
+        out, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename == "word/document.xml":
+                data = data.replace(b"<w:body>", b"<w:body>" + extra_body, 1)
+            dst.writestr(info, data)
+        for name, data in (extra_files or {}).items():
+            dst.writestr(name, data)
+    return out.getvalue()
+
+
+def forge_declared_size(content: bytes, name: str, declared: int) -> bytes:
+    """Parçanın yerel ve merkez dizin başlığındaki açılmış boyutunu gerçeğinden küçük beyan eder."""
+    data = bytearray(content)
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        info = archive.getinfo(name)
+    data[info.header_offset + 22 : info.header_offset + 26] = declared.to_bytes(4, "little")  # yerel başlık
+    position = 0
+    while (position := data.find(b"PK\x01\x02", position)) != -1:  # merkez dizin kaydı
+        name_length = int.from_bytes(data[position + 28 : position + 30], "little")
+        if data[position + 46 : position + 46 + name_length].decode() == name:
+            data[position + 24 : position + 28] = declared.to_bytes(4, "little")
+            return bytes(data)
+        position += 4
+    raise AssertionError(f"{name} merkez dizinde bulunamadı")
+
+
+def peak_memory(function) -> tuple[int, object]:
+    """Python ayırma tepesi (bayt) ve sonuç ya da yükselen hata."""
+    tracemalloc.start()
+    try:
+        try:
+            outcome = function()
+        except Exception as exc:  # testte hata türü ayrıca doğrulanır
+            outcome = exc
+        return tracemalloc.get_traced_memory()[1], outcome
+    finally:
+        tracemalloc.stop()
+
+
+def test_normal_docx_passes_archive_limits():
+    content = docx_with(b"<w:p><w:r><w:t>Tablolu ve uzun bir dilekce metni.</w:t></w:r></w:p>" * 2_000)
+
+    text = extract_text(content, detect_file_type("dilekce.docx", content))
+
+    assert text.endswith("Sayın yetkili, parktaki salıncak kırık.") and text.count("uzun bir dilekce") == 2_000
+
+
+@pytest.mark.parametrize(
+    "limit, value, content",
+    [
+        ("DOCX_MAX_ENTRIES", 5, docx_with(extra_files={f"word/media/{i}.bin": b"x" for i in range(10)})),
+        ("DOCX_MAX_UNCOMPRESSED_BYTES", MiB, docx_with(extra_files={"word/media/x.bin": b"\0" * (2 * MiB)})),
+        ("DOCX_MAX_XML_BYTES", MiB, docx_with(b"<w:p><w:r><w:t>" + b"a" * (2 * MiB) + b"</w:t></w:r></w:p>")),
+        ("DOCX_MAX_XML_TAGS", 10_000, docx_with(b"<w:p/>" * 20_000)),
+        ("DOCX_MAX_XML_TAGS", 10_000, docx_with(extra_files={"word/header1.xml": b"<w:p/>" * 20_000})),
+    ],
+    ids=["entries", "uncompressed-bytes", "xml-bytes", "xml-tags", "xml-tags-in-other-part"],
+)
+def test_docx_over_archive_limit_is_rejected_before_parsing(monkeypatch, limit, value, content):
+    monkeypatch.setattr(file_service, limit, value)
+    monkeypatch.setattr(file_service, "_run_in_child", lambda *_: pytest.fail("python-docx çağrılmamalıydı"))
+
+    assert detect_file_type("dilekce.docx", content) == "docx"
+    with pytest.raises(file_service.DocumentTooComplexError):
+        extract_text(content, "docx")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        docx_with(extra_files={"word/media/bomba.bin": b"\0" * (200 * MiB)}),
+        docx_with(b"<w:p/>" * (8 * MiB // 6)),
+        docx_with(b"<w:p><w:r><w:t>" + b"a" * (200 * MiB) + b"</w:t></w:r></w:p>"),
+    ],
+    ids=["200mib-binary", "1.4m-empty-paragraphs", "200mib-text"],
+)
+def test_docx_bomb_with_real_limits_is_rejected_without_large_memory(content):
+    assert len(content) < MiB  # sıkıştırılmış dosya küçük; açılmış içerik çok büyük
+
+    peak, outcome = peak_memory(lambda: extract_text(content, "docx"))
+
+    assert isinstance(outcome, file_service.DocumentTooComplexError)
+    assert peak < 8 * MiB  # parça parça okunur; içerik belleğe açılmaz
+
+
+def test_docx_with_understated_declared_size_fails_without_large_memory():
+    # Başlık 1 KiB beyan eder, gerçek içerik 200 MiB: başlığa güvenilmez, okuma beyan edilen boyutta kesilir.
+    content = forge_declared_size(
+        docx_with(extra_files={"word/media/bomba.bin": b"\0" * (200 * MiB)}), "word/media/bomba.bin", 1024
+    )
+
+    peak, outcome = peak_memory(lambda: extract_text(content, "docx"))
+
+    assert isinstance(outcome, TextExtractionError)
+    assert peak < 8 * MiB
+
+
+def test_docx_with_oversized_content_types_is_not_accepted_as_docx():
+    padding = b"<!--" + b"x" * (2 * MiB) + b"-->"
+    content = make_zip(
+        {"[Content_Types].xml": DOCX_CONTENT_TYPES.replace(b"</Types>", padding + b"</Types>"), "word/document.xml": b"<w:document/>"}
+    )
+
+    peak, outcome = peak_memory(lambda: detect_file_type("dilekce.docx", content))
+
+    assert isinstance(outcome, UnsupportedFileTypeError)
+    assert peak < 4 * MiB
+
+
+# --- D-059: DOCX ayrıştırma kilidi ---
+
+
+def test_docx_parsing_runs_one_at_a_time(monkeypatch):
+    real_run = file_service._run_in_child
+    active, peak = 0, 0
+    counter = threading.Lock()
+
+    def counting_run(func, *args):
+        nonlocal active, peak
+        with counter:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)  # kilit yoksa diğer thread'ler bu sırada ayrıştırmaya girer
+        try:
+            return real_run(func, *args)
+        finally:
+            with counter:
+                active -= 1
+
+    contents = [make_docx(f"Sayın yetkili, {i} numaralı sokakta lamba yanmıyor.") for i in range(4)]
+    monkeypatch.setattr(file_service, "_run_in_child", counting_run)
+    results = [None] * 4
+
+    def extract(i):
+        results[i] = extract_text(contents[i], "docx")
+
+    threads = [threading.Thread(target=extract, args=(i,)) for i in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert peak == 1
+    assert results == [f"Sayın yetkili, {i} numaralı sokakta lamba yanmıyor." for i in range(4)]
+
+
+def test_docx_over_limits_is_rejected_without_waiting_for_parse_lock(monkeypatch):
+    monkeypatch.setattr(file_service, "DOCX_MAX_XML_TAGS", 10)
+    content = make_docx("Sayın yetkili, parktaki salıncak kırık.")
+
+    outcome = []
+
+    def extract():
+        try:
+            extract_text(content, "docx")
+        except Exception as exc:  # hata türü aşağıda doğrulanır
+            outcome.append(exc)
+
+    with file_service._DOCX_PARSE_LOCK:  # başka bir istek ayrıştırıyor
+        worker = threading.Thread(target=extract)
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive()  # denetim kilidi beklemeden bitti
+    worker.join(10)
+
+    assert len(outcome) == 1 and isinstance(outcome[0], file_service.DocumentTooComplexError)
+
+
+def test_docx_waits_for_parse_lock_and_then_completes():
+    content = make_docx("Sayın yetkili, parktaki salıncak kırık.")
+    result = []
+
+    with file_service._DOCX_PARSE_LOCK:
+        worker = threading.Thread(target=lambda: result.append(extract_text(content, "docx")))
+        worker.start()
+        worker.join(0.3)
+        assert worker.is_alive() and not result  # kilit tutulurken ayrıştırma başlamaz
+    worker.join(10)
+
+    assert result == ["Sayın yetkili, parktaki salıncak kırık."]
+
+
+def test_docx_parse_lock_is_released_after_parser_error(monkeypatch):
+    def broken_run(func, *args):
+        raise ValueError("bozuk belge")
+
+    content = make_docx("Sayın yetkili, parktaki salıncak kırık.")
+    monkeypatch.setattr(file_service, "_run_in_child", broken_run)
+
+    with pytest.raises(TextExtractionError):
+        extract_text(content, "docx")
+    assert not file_service._DOCX_PARSE_LOCK.locked()
+
+
+# --- D-060: DOCX ayrıştırması alt süreçte ---
+
+
+def test_docx_parsing_runs_in_a_child_process(monkeypatch):
+    calls = []
+    real_run = file_service._run_in_child
+
+    def recording_run(func, *args):
+        calls.append(func)
+        return real_run(func, *args)
+
+    monkeypatch.setattr(file_service, "_run_in_child", recording_run)
+
+    assert extract_text(make_docx("Sayın yetkili, parktaki salıncak kırık."), "docx") == "Sayın yetkili, parktaki salıncak kırık."
+    assert calls == [file_service.docx_parser.parse_docx]
+    assert file_service._run_in_child(os.getpid) != os.getpid()
+
+
+def test_killed_docx_child_becomes_extraction_error_and_next_docx_works(monkeypatch):
+    real_run = file_service._run_in_child
+    content = make_docx("Sayın yetkili, parktaki salıncak kırık.")
+    monkeypatch.setattr(file_service, "_run_in_child", lambda func, *args: real_run(os._exit, 9))
+
+    with pytest.raises(TextExtractionError):
+        extract_text(content, "docx")
+    assert not file_service._DOCX_PARSE_LOCK.locked()
+
+    monkeypatch.setattr(file_service, "_run_in_child", real_run)
+    assert extract_text(content, "docx") == "Sayın yetkili, parktaki salıncak kırık."

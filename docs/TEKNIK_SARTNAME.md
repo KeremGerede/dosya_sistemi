@@ -91,9 +91,11 @@ Model adı kodda sabit yazılmaz ve kodda varsayılan model yoktur. `GEMINI_API_
 
 - Aynı dosya tekrar yüklenirse yeni kayıt ve yeni Gemini çağrıları oluşur (tekilleştirme yok).
 - Desteklenenler dışındaki formatlar (GIF, TIFF, BMP, WebP, HEIC) kapsam dışıdır (`PROJECT_BRAIN.md` §12).
-- Uygulama seviyesinde gövde sınırı ve DOCX ZIP bomb koruması yoktur; dağıtım eksiği olarak `CURRENT_STATE.md` ve T-12'de izlenir.
+- Uygulama seviyesinde gövde sınırı yoktur; production'da nginx 51 MB üstünü reddeder (D-056). DOCX açılım sınırları D-058'dedir: aşan DOCX ayrıştırılmadan `failed` + `422` olur; `[Content_Types].xml` 1 MiB'ı aşan dosya DOCX sayılmaz (`415`) — `file::test_docx_over_archive_limit_is_rejected_before_parsing`, `file::test_docx_bomb_with_real_limits_is_rejected_without_large_memory`, `file::test_docx_with_understated_declared_size_fails_without_large_memory`, `file::test_docx_with_oversized_content_types_is_not_accepted_as_docx`, `file::test_normal_docx_passes_archive_limits`, `api::test_docx_over_archive_limits_returns_422_without_classification`.
+- DOCX ayrıştırması süreç içinde tek tek çalışır (D-059); açılım denetimi kilidin dışındadır. Eşzamanlı büyük DOCX'ler sırayla işlenir ve kuyruk doğrusal uzar; en ağır DOCX ~11 sn sürer — `file::test_docx_parsing_runs_one_at_a_time`, `file::test_docx_waits_for_parse_lock_and_then_completes`, `file::test_docx_over_limits_is_rejected_without_waiting_for_parse_lock`, `file::test_docx_parse_lock_is_released_after_parser_error`.
+- DOCX ayrıştırması her belge için yeni bir alt süreçte çalışır (D-060); ayrıştırma belleği alt süreç çıkınca işletim sistemine döner. Alt süreç öldürülürse (ör. bellek sınırı) belge `failed` + `422` olur ve API çalışmaya devam eder. Küçük DOCX'e ~45 ms, API başladıktan sonraki ilk DOCX'e ~1,3 sn eklenir — `file::test_docx_parsing_runs_in_a_child_process`, `file::test_killed_docx_child_becomes_extraction_error_and_next_docx_works`. Çıkarılan metnin üst sınırı yoktur; ayrıştırma sonrası aşamalar API sürecinde kalır.
 
-**Referanslar:** D-001, D-004, D-017, D-028, D-029 · Kod: `services/file_service.py` (`check_file_size`, `detect_file_type`, `save_file`), `api/documents.py` (`_create_document`) · Görev: T-12
+**Referanslar:** D-001, D-004, D-017, D-028, D-029, D-058, D-059, D-060 · Kod: `services/file_service.py` (`check_file_size`, `detect_file_type`, `save_file`), `services/docx_parser.py` (`parse_docx`), `api/documents.py` (`_create_document`) · Görev: T-12
 
 ## F-02 — Metin çıkarımı ve OCR
 
@@ -561,10 +563,11 @@ Arayüz davranışı için bileşen testi yoktur; tarayıcıda sahte API'yle ve 
 **Sınırlar**
 
 - **Yetki yok (D-025):** API'ye erişebilen herkes her kalıcı kaydı silebilir. Arayüzdeki onay adımı, sunucunun yerel adreste dinlemesi ve CORS middleware'inin olmaması yetkilendirme değildir. Dış erişimden (T-17 veya başka bir yol) önce endpoint sunucu tarafında yetkilendirilmeli ya da kapatılmalıdır.
+- **Ortam bazında kapatma (D-057):** `PERMANENT_DELETE_ENABLED=false` iken (production Compose) endpoint kaydı okumadan ve kilitlemeden `403` döner; Kaldır etkilenmez; arayüz "Kalıcı silme bu ortamda kapalı; kayıt yerinde duruyor." gösterir — `api::test_disabled_permanent_delete_returns_403_and_changes_nothing`, `api::test_disabled_permanent_delete_does_not_read_or_lock_the_record`, `api::test_disabled_permanent_delete_keeps_prepared_discard`, `records:` "403 kalıcı silmenin bu ortamda kapalı olduğunu gösterir".
 - Dosya silme ve commit atomik değildir (yukarıdaki "dosyasız kayıt" ara durumu).
 - Onay endpoint'i kilit kullanmaz: onay ile silme aynı anda gelirse onay hata (`500`) alabilir; gerçek PostgreSQL'de onay silmenin commit'ini bekler, sonra `500` alır. Bu, yalnız onay–silme çakışması için kabul edilen yerel MVP sınırıdır; diğer çakışmalar kendi kurallarıyla korunur (tekrar deneme: satır kilidi; `prepared` işlemleri: durum kontrolü).
 - İndirme kilit kullanmaz: indirme sürerken işletim sistemi açık dosyanın silinmesine izin vermezse (ör. Windows) silme `500` alır ve kayıt korunur.
 - Satır kilidi yalnız PostgreSQL'de çalışır; otomatik testler SQLite kullandığı için kilit çakışması simüle edilir.
 - Alınmış veritabanı ve storage yedekleri silinmez. Modül resmî saklama sistemi sayılmaz; gerçek kurum verisinde kullanılmadan önce saklama, silme ve yedek politikaları ayrıca doğrulanmalıdır. İlk kullanım yerel geliştirme ve sentetik/demo belgelerle sınırlıdır.
 
-**Referanslar:** D-054, ADR-001, D-019, D-025, D-046, D-049, D-053 · Kod: `api/documents.py` (`delete_document`, `_lock_document`, `_delete_with_file`), `frontend/src/App.tsx` (`deleteDocument`, `deleteFromRecords`, `RecordDeleteControls`), `frontend/src/records.ts` (`deleteOutcome`, `keepAvailableFilters`) · Görev: T-15, T-17
+**Referanslar:** D-054, D-057, ADR-001, D-019, D-025, D-046, D-049, D-053 · Kod: `api/documents.py` (`delete_document`, `_lock_document`, `_delete_with_file`), `frontend/src/App.tsx` (`deleteDocument`, `deleteFromRecords`, `RecordDeleteControls`), `frontend/src/records.ts` (`deleteOutcome`, `keepAvailableFilters`) · Görev: T-15, T-17

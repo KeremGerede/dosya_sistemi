@@ -66,6 +66,7 @@ const RETRY_WAIT_MESSAGE = 'Analiz sürerken tekrar denenemez; işlem bitince ye
 const RETRY_SUCCESS_MESSAGE = 'Belge yeniden sınıflandırıldı.'
 const DELETE_BUSY_MESSAGE = 'Belge şu anda başka bir işlemde olduğu için silinmedi; biraz sonra tekrar deneyin.'
 const DELETE_FAILED_MESSAGE = 'Belge silinemedi; kayıt yerinde duruyor. Lütfen tekrar deneyin.'
+const DELETE_DISABLED_MESSAGE = 'Kalıcı silme bu ortamda kapalı; kayıt yerinde duruyor.'
 const DELETE_UNVERIFIED_MESSAGE = 'Silme sonucu doğrulanamadı. Kayıtları yenileyip belgenin durumunu kontrol edin.'
 const DELETE_WAIT_MESSAGE = 'Analiz sürerken belge silinemez; işlem bitince yeniden deneyin.'
 
@@ -277,6 +278,9 @@ async function deleteDocument(documentId: string): Promise<DeleteResult> {
   }
   if (outcome === 'busy') {
     return { deleted: false, error: DELETE_BUSY_MESSAGE }
+  }
+  if (outcome === 'disabled') {
+    return { deleted: false, error: DELETE_DISABLED_MESSAGE }
   }
   const current = await request(`/api/documents/${documentId}`)
   if (current.status === 404) {

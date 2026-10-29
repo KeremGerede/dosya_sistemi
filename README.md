@@ -140,6 +140,7 @@ Değerler `backend/.env` dosyasındadır; bu dosya Git'e girmez. Şablon ve aç�
 | `DATABASE_URL` | Evet | PostgreSQL adresi (psycopg 3). Şablon değeri yerel Docker veritabanını gösterir (`127.0.0.1:5434`, `connect_timeout=10`) |
 | `TESSDATA_PREFIX` | Hayır | Tesseract `tessdata` klasörü; `tur.traineddata` içermelidir. Tanımlı değilse yedek OCR atlanır |
 | `OCR_ENABLED` | Hayır | `true` (varsayılan) veya `false`. `false` iken OCR gereken belge OCR'a girmeden `422` alır (D-055); production Compose `false` verir |
+| `PERMANENT_DELETE_ENABLED` | Hayır | `true` (varsayılan) veya `false`. `false` iken kalıcı silme `403` alır (D-057); production Compose `false` verir |
 
 Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde `localhost` yerine `127.0.0.1` kullanın.
 
@@ -164,7 +165,7 @@ Zorunlu değişkenlerden biri eksikse backend başlamaz. `DATABASE_URL` içinde 
 
 Belge yanıtları AI sonucunu (`document_type`, `institution_id`), kullanıcı onayını (`validated_*`) ve doğrulanmış ifadeleri (`routing_evidence`) ayrı alanlarda döndürür.
 
-**Güvenlik notu:** API'de yetkilendirme yoktur; API'ye erişebilen herkes kalıcı silme dahil her endpoint'i çağırabilir. Yerel adreste dinleme ve CORS'un olmaması yetkilendirme değildir. Dış erişime açmadan önce silme endpoint'i sunucu tarafında korunmalı ya da kapatılmalıdır (D-054).
+**Güvenlik notu:** API'de yetkilendirme yoktur; API'ye erişebilen herkes kalıcı silme dahil her endpoint'i çağırabilir. Yerel adreste dinleme ve CORS'un olmaması yetkilendirme değildir. Dış erişime açmadan önce silme endpoint'i sunucu tarafında korunmalı ya da kapatılmalıdır (D-054); production Compose onu kapatır (D-057).
 
 Başlıca hata kodları: `404` kayıt yok, `409` kaydın durumu işleme uygun değil, `413` boyut, `415` format veya imza, `422` içerik işlenemedi ya da istek geçersiz, `502` Gemini sınıflandırması tamamlanamadı. Yanıt alanları ve tam HTTP sözleşmesi: [`docs/TEKNIK_SARTNAME.md`](docs/TEKNIK_SARTNAME.md) F-08.
 
@@ -187,7 +188,7 @@ Son doğrulanmış baseline (tarih, commit, ortam ve sonuçlar): [`CURRENT_STATE
 
 ## Production Docker
 
-Linux sunucu (ilk hedef AWS Lightsail staging, `/opt/citech/dosya`) için düzen: D-056. **Uygulamada kimlik doğrulama yok; S3 korumaları tamamlanmadan internete açmayın** (D-025, D-054). OCR kapalıdır (D-055).
+Linux sunucu (ilk hedef AWS Lightsail staging, `/opt/citech/dosya`) için düzen: D-056. **Uygulamada kimlik doğrulama yok; S3 korumaları tamamlanmadan internete açmayın** (D-025, D-054). OCR kapalıdır (D-055); kalıcı silme kapalıdır (D-057); DOCX açılım sınırları uygulanır (D-058).
 
 ```bash
 cp deploy/.env.example deploy/.env   # değerleri doldurun; parolalar: openssl rand -hex 32

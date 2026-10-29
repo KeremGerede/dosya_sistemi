@@ -71,6 +71,8 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:?deploy/.env içinde GEMINI_MODEL tanımlı değil}
       # D-055: ilk yayın OCR'sizdir. Bilinçli olarak .env'den okunmaz; değiştirmek yeni karar gerektirir.
       OCR_ENABLED: "false"
+      # D-057: staging'de kalıcı silme kapalı (uygulamada yetkilendirme yok). Bilinçli olarak .env'den okunmaz.
+      PERMANENT_DELETE_ENABLED: "false"
     volumes:
       - storage:/app/storage
     # backend: db ve web ile iç ağ. egress: Gemini API'ye çıkış (iç ağın dışarı çıkışı yoktur).
